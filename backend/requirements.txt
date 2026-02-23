@@ -1,0 +1,68 @@
+# 多模态 AI 互动式教学智能体
+# 服务外包大赛 A04 赛题
+
+# 核心框架
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# 数据库
+sqlalchemy[asyncio]>=2.0.25
+asyncpg>=0.29.0
+
+# 缓存和消息队列
+redis>=5.0.1
+celery>=5.3.0
+
+# Pydantic 和配置
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# 认证
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.1
+
+# 文件处理
+python-multipart>=0.0.6
+aiofiles>=23.2.1
+
+# PDF 解析
+pymupdf>=1.23.0
+
+# Word 解析
+python-docx>=1.1.0
+
+# 视频处理
+opencv-python-headless>=4.8.0
+ffmpeg-python>=0.2.0
+
+# 图片处理和感知哈希
+Pillow>=10.0.0
+imagehash>=4.3.0
+
+# 向量数据库和 RAG
+langchain>=0.1.0
+langchain-chroma>=0.0.1
+langchain-huggingface>=0.0.1
+langchain-openai>=0.0.2
+langchain-experimental>=0.0.1
+rank-bm25>=0.2.2
+
+# LangGraph Agent
+langgraph>=0.0.20
+langgraph-checkpoint>=0.0.1
+
+# 网络搜索
+tavily>=0.2.0
+duckduckgo-search>=7.0.0
+
+# Embeddings
+sentence-transformers>=2.2.0
+
+# 迁移
+alembic>=1.13.0
+
+# 工具
+python-dotenv>=1.0.0
+httpx>=0.26.0
+tenacity>=8.2.0
