@@ -22,9 +22,10 @@ class BM25Index:
     def __init__(self):
         # 存储每个用户的 BM25 索引
         # 结构: {user_id: {"bm25": BM25Okapi, "doc_ids": list, "docs": list}}
+        # key = library_id
         self._indices: dict[int, dict] = {}
     
-    def build_index(self, user_id: int, documents: list[Document]):
+    def build_index(self, library_id: int, documents: list[Document]):
         """
         为用户构建 BM25 索引
         
@@ -51,7 +52,7 @@ class BM25Index:
         # 构建 BM25 索引
         bm25 = BM25Okapi(tokenized_docs)
         
-        self._indices[user_id] = {
+        self._indices[library_id] = {
             "bm25": bm25,
             "doc_ids": doc_ids,
             "documents": documents
@@ -59,7 +60,7 @@ class BM25Index:
         
         logger.info(f"为用户 {user_id} 构建 BM25 索引，包含 {len(documents)} 个文档")
     
-    def search(self, user_id: int, query: str, top_k: int = 10) -> list[tuple[Document, float]]:
+    def search(self, library_id: int, query: str, top_k: int = 10) -> list[tuple[Document, float]]:
         """
         BM25 搜索
         
@@ -71,7 +72,7 @@ class BM25Index:
         Returns:
             [(文档, BM25分数), ...]
         """
-        if user_id not in self._indices:
+        if library_id not in self._indices:
             logger.warning(f"用户 {user_id} 没有 BM25 索引")
             return []
         
@@ -79,7 +80,7 @@ class BM25Index:
         query_tokens = self._tokenize(query)
         
         # 获取 BM25 分数
-        index_data = self._indices[user_id]
+        index_data = self._indices[library_id]
         bm25 = index_data["bm25"]
         doc_ids = index_data["doc_ids"]
         documents = index_data["documents"]
@@ -124,10 +125,10 @@ class BM25Index:
             tokens = [t for t in tokens if len(t) > 1]
             return tokens
     
-    def clear_user_index(self, user_id: int):
+    def clear_library_index(self, library_id: int):
         """清除用户的 BM25 索引"""
-        if user_id in self._indices:
-            del self._indices[user_id]
+        if library_id in self._indices:
+            del self._indices[library_id]
             logger.info(f"清除用户 {user_id} 的 BM25 索引")
 
 
@@ -165,7 +166,7 @@ class HybridRetriever:
         # 缓存的用户文档
         self._user_docs: dict[int, list[Document]] = {}
     
-    def build_bm25_index(self, user_id: int, documents: list[Document]):
+    def build_bm25_index(self, library_id: int, documents: list[Document]):
         """
         为用户构建 BM25 索引
         
@@ -174,64 +175,60 @@ class HybridRetriever:
             documents: 文档列表
         """
         # 缓存文档
-        self._user_docs[user_id] = documents
+        self._user_docs[library_id] = documents
         
         # 构建 BM25 索引
-        self.bm25_index.build_index(user_id, documents)
+        self.bm25_index.build_index(library_id, documents)
     
     def search(
         self,
         query: str,
         user_id: int,
         k: int = 10,
+        library_ids: list[int] | None = None,
         vector_k: int = None,
         bm25_k: int = None
     ) -> list[Document]:
         """
         混合检索
-        
+
         Args:
             query: 查询文本
             user_id: 用户 ID
             k: 最终返回数量
+            library_ids: 知识库 ID 列表（可选，支持多库检索）
             vector_k: 向量检索数量 (默认 k*2)
             bm25_k: BM25 检索数量 (默认 k*2)
-            
+
         Returns:
             排序后的文档列表
         """
-        # 扩大检索范围
         vector_k = vector_k or k * 2
         bm25_k = bm25_k or k * 2
-        
-        # 1. 向量检索
+
+        # 1. 向量检索（支持多库 in 过滤）
         vector_results = self.vector_store.similarity_search(
             query=query,
             user_id=user_id,
-            k=vector_k
+            k=vector_k,
+            library_ids=library_ids
         )
-        
-        # 2. BM25 检索
-        bm25_results = self.bm25_index.search(
-            user_id=user_id,
-            query=query,
-            top_k=bm25_k
-        )
-        
-        # 3. 融合结果
-        if self.fusion_method == "rrf":
-            final_results = self._rrf_fusion(vector_results, bm25_results, k)
+
+        # 2. BM25 检索（对每个 library 分别检索，合并）
+        bm25_results = []
+        if library_ids:
+            for lib_id in library_ids:
+                bm25_results.extend(
+                    self.bm25_index.search(library_id=lib_id, query=query, top_k=bm25_k)
+                )
         else:
-            final_results = self._weighted_fusion(vector_results, bm25_results, k)
-        
-        logger.info(
-            f"混合检索: query={query}, user_id={user_id}, "
-            f"向量结果={len(vector_results)}, BM25结果={len(bm25_results)}, "
-            f"最终结果={len(final_results)}"
-        )
-        
-        return final_results
-    
+            bm25_results = self.bm25_index.search(library_id=user_id, query=query, top_k=bm25_k)
+
+        # 3. 融合
+        if self.fusion_method == "rrf":
+            return self._rrf_fusion(vector_results, bm25_results, k)
+        else:
+            return self._weighted_fusion(vector_results, bm25_results, k)
     def _rrf_fusion(
         self,
         vector_results: list[Document],
@@ -344,7 +341,7 @@ class HybridRetriever:
         # 否则使用 source + chunk_index
         return f"{doc.metadata.get('source', 'unknown')}_{doc.metadata.get('chunk_index', 0)}"
     
-    def add_documents(self, chunks: list, user_id: int, document_ids: list[str] = None):
+    def add_documents(self, chunks: list, user_id: int, library_id: int | None = None, document_ids: list[str] = None):
         """
         添加文档时同步更新 BM25 索引
         
@@ -369,15 +366,18 @@ class HybridRetriever:
             )
             documents.append(doc)
         
+        # 使用 library_id 作为 key（如无则回退到 user_id）
+        key = library_id if library_id is not None else user_id
+        
         # 缓存文档并重建索引
-        if user_id in self._user_docs:
-            self._user_docs[user_id].extend(documents)
+        if key in self._user_docs:
+            self._user_docs[key].extend(documents)
         else:
-            self._user_docs[user_id] = documents
+            self._user_docs[key] = documents
         
-        self.bm25_index.build_index(user_id, self._user_docs[user_id])
+        self.bm25_index.build_index(key, self._user_docs[key])
         
-        logger.info(f"为用户 {user_id} 更新 BM25 索引，当前共 {len(self._user_docs[user_id])} 个文档")
+        logger.info(f"为键 {key} 更新 BM25 索引，当前共 {len(self._user_docs[key])} 个文档")
 
 
 # 全局混合检索器实例
