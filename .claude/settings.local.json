@@ -7,7 +7,8 @@
       "Bash(git stash:*)",
       "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git push origin feature/knowledge-library 2>&1)",
       "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && gh pr create --title \"feat\\(knowledge\\): 多知识库管理系统 —— 隔离检索、管理员公开库、软删除清理\" --body-file /tmp/pr_body.md --base main --head feature/knowledge-library 2>&1)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git branch --set-upstream-to=origin/feature/knowledge-library feature/knowledge-library && git push 2>&1)"
     ]
   }
 }
