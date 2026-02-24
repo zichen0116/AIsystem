@@ -5,7 +5,9 @@
       "Bash(cd D:\\\\Develop\\\\Project\\\\AIsystem:*)",
       "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git filter-branch --msg-filter 'sed \"s/Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>/Co-Authored-By: zzcn <zzcn.leo@qq.com>/g\"' -- a2c9563..HEAD 2>&1)",
       "Bash(git stash:*)",
-      "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git push origin feature/knowledge-library 2>&1)"
+      "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git push origin feature/knowledge-library 2>&1)",
+      "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && gh pr create --title \"feat\\(knowledge\\): 多知识库管理系统 —— 隔离检索、管理员公开库、软删除清理\" --body-file /tmp/pr_body.md --base main --head feature/knowledge-library 2>&1)",
+      "Bash(head:*)"
     ]
   }
 }
