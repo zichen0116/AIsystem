@@ -27,16 +27,24 @@ class KnowledgeAsset(Base):
         nullable=False,
         index=True
     )
+    library_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("knowledge_libraries.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="所属知识库"
+    )
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_type: Mapped[str] = mapped_column(
         String(20),
         nullable=False
     )
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    vector_status: Mapped[bool] = mapped_column(
-        Boolean,
-        default=False,
-        nullable=False
+    vector_status: Mapped[str] = mapped_column(
+        String(20),
+        default="pending",
+        nullable=False,
+        comment="向量化状态: pending/processing/completed/failed"
     )
     chunk_count: Mapped[int] = mapped_column(
         Integer,
@@ -58,6 +66,10 @@ class KnowledgeAsset(Base):
 
     # 关联关系
     user: Mapped["User"] = relationship("User", back_populates="knowledge_assets")
+    library: Mapped["KnowledgeLibrary | None"] = relationship(
+        "KnowledgeLibrary",
+        back_populates="assets"
+    )
 
     def __repr__(self):
         return f"<KnowledgeAsset(id={self.id}, file_name={self.file_name})>"

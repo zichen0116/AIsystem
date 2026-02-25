@@ -32,3 +32,11 @@ class FileType(str, Enum):
     VIDEO = "video"
     IMAGE = "image"
     AUDIO = "audio"
+
+
+class VectorStatus(str, Enum):
+    """向量化状态"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"

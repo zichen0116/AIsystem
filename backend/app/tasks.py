@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Optional
 
 from celery import Task
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, select, update, delete
 from sqlalchemy.orm import Session
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.celery import celery_app
 from app.services.parsers.factory import ParserFactory
 from app.services.rag.vector_store import VectorStore
-from app.services.rag.text_splitter import split_documents
+from app.services.rag.text_splitter import split_documents, split_documents_semantic
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -71,13 +71,14 @@ class KnowledgeAssetProcessor:
             f"MAX_WORD_IMAGES={MAX_WORD_IMAGES}"
         )
 
-    def process(self, asset_id: int, user_id: int) -> dict:
+    def process(self, asset_id: int, user_id: int, library_id: int | None = None) -> dict:
         """
         处理知识资产：解析 + 切片 + 向量化存储
 
         Args:
             asset_id: 知识资产 ID
             user_id: 用户 ID
+            library_id: 知识库 ID（可选）
 
         Returns:
             dict: 处理结果
@@ -94,6 +95,14 @@ class KnowledgeAssetProcessor:
 
             if not asset:
                 raise ValueError(f"知识资产不存在: {asset_id}")
+
+            # 更新状态为处理中
+            db.execute(
+                update(KnowledgeAsset)
+                .where(KnowledgeAsset.id == asset_id)
+                .values(vector_status="processing")
+            )
+            db.commit()
 
             file_path = Path(asset.file_path)
             if not file_path.exists():
@@ -133,7 +142,9 @@ class KnowledgeAssetProcessor:
             vectorstore = VectorStore()
             doc_count = vectorstore.add_documents(
                 split_chunks,
-                user_id=user_id
+                user_id=user_id,
+                library_id=library_id,
+                asset_id=asset_id
             )
 
             # 5. 更新数据库状态
@@ -141,7 +152,7 @@ class KnowledgeAssetProcessor:
                 update(KnowledgeAsset)
                 .where(KnowledgeAsset.id == asset_id)
                 .values(
-                    vector_status=True,
+                    vector_status="completed",
                     chunk_count=len(split_chunks),
                     image_count=image_count
                 )
@@ -182,7 +193,7 @@ processor = KnowledgeAssetProcessor()
     retry_backoff_max=600,
     retry_kwargs={"max_retries": 3}
 )
-def process_knowledge_asset(self, asset_id: int, user_id: int):
+def process_knowledge_asset(self, asset_id: int, user_id: int, library_id: int | None = None):
     """
     处理知识资产：解析 + 切片 + 向量化存储
 
@@ -198,10 +209,10 @@ def process_knowledge_asset(self, asset_id: int, user_id: int):
     Returns:
         dict: 处理结果
     """
-    logger.info(f"开始处理知识资产: asset_id={asset_id}, user_id={user_id}, retry={self.request.retries}")
+    logger.info(f"开始处理知识资产: asset_id={asset_id}, user_id={user_id}, library_id={library_id}, retry={self.request.retries}")
 
     try:
-        return processor.process(asset_id, user_id)
+        return processor.process(asset_id, user_id, library_id)
 
     except Exception as e:
         logger.error(f"处理知识资产失败: {e}", exc_info=True)
@@ -213,7 +224,7 @@ def process_knowledge_asset(self, asset_id: int, user_id: int):
             db.execute(
                 update(KnowledgeAsset)
                 .where(KnowledgeAsset.id == asset_id)
-                .values(vector_status=False)
+                .values(vector_status="failed")
             )
             db.commit()
         except Exception:
@@ -281,6 +292,59 @@ def cleanup_orphaned_images():
             "total_assets": len(assets),
             "total_images": total_images
         }
+
+    finally:
+        db.close()
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.cleanup_library",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_kwargs={"max_retries": 5}
+)
+def cleanup_library(self, library_id: int):
+    """
+    异步清理知识库：删除向量 + 物理文件 + DB 记录
+    软删除之后由此任务执行实际清理
+    """
+    from app.models.knowledge_library import KnowledgeLibrary
+    from app.models.knowledge_asset import KnowledgeAsset
+    from app.services.rag.vector_store import VectorStore
+    import os
+
+    db = get_sync_db()
+    try:
+        # 1. 删除 ChromaDB 向量
+        vs = VectorStore()
+        vs.delete_library_documents(library_id)
+
+        # 2. 获取所有关联文件路径
+        result = db.execute(
+            select(KnowledgeAsset).where(KnowledgeAsset.library_id == library_id)
+        )
+        assets = result.scalars().all()
+
+        # 3. 删除本地文件
+        for asset in assets:
+            try:
+                if asset.file_path and os.path.exists(asset.file_path):
+                    os.remove(asset.file_path)
+            except Exception as e:
+                logger.warning(f"删除文件失败: {asset.file_path}, {e}")
+
+        # 4. 物理删除 DB 记录
+        db.execute(
+            delete(KnowledgeAsset).where(KnowledgeAsset.library_id == library_id)
+        )
+        db.execute(
+            delete(KnowledgeLibrary).where(KnowledgeLibrary.id == library_id)
+        )
+        db.commit()
+
+        logger.info(f"知识库 {library_id} 清理完成")
+        return {"status": "success", "library_id": library_id}
 
     finally:
         db.close()

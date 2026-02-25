@@ -1,0 +1,7 @@
+Defaulting to user installation because normal site-packages is not writeable
+Looking in indexes: https://pypi.tuna.tsinghua.edu.cn/simple
+Collecting pymupdf
+  Downloading https://pypi.tuna.tsinghua.edu.cn/packages/3e/99/fe4a7752990bf65277718fffbead4478de9afd1c7288d7a6d643f79a6fa7/pymupdf-1.27.1-cp310-abi3-win_amd64.whl (19.2 MB)
+     ---------------------------------------- 19.2/19.2 MB 6.3 MB/s eta 0:00:00
+Installing collected packages: pymupdf
+Successfully installed pymupdf-1.27.1

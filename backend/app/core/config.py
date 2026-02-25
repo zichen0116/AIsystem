@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: str = ""
     LLM_MODEL: str = "qwen-plus"
     EMBEDDING_MODEL: str = "tongyi-embedding-vision-flash"
+    RERANK_MODEL: str = "qwen3-vl-rerank"
 
     # ========== 阿里云 OSS ==========
     OSS_ENDPOINT: str = ""

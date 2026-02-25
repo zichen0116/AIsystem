@@ -2,7 +2,7 @@
 用户模型
 """
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, Integer
+from sqlalchemy import String, DateTime, Integer, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -19,6 +19,12 @@ class User(Base):
     phone: Mapped[str] = mapped_column(String(20), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(100), nullable=True)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="是否为系统管理员"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -39,6 +45,11 @@ class User(Base):
     knowledge_assets: Mapped[list["KnowledgeAsset"]] = relationship(
         "KnowledgeAsset",
         back_populates="user",
+        cascade="all, delete-orphan"
+    )
+    knowledge_libraries: Mapped[list["KnowledgeLibrary"]] = relationship(
+        "KnowledgeLibrary",
+        back_populates="owner",
         cascade="all, delete-orphan"
     )
 

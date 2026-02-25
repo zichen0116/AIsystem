@@ -136,13 +136,15 @@ class VectorStore:
 
         logger.info(f"ChromaDB 初始化完成: {self.collection_name}")
 
-    def add_documents(self, chunks: list[ParsedChunk], user_id: int) -> int:
+    def add_documents(self, chunks: list[ParsedChunk], user_id: int, library_id: int | None = None, asset_id: int | None = None) -> int:
         """
         添加文档到向量库
 
         Args:
             chunks: 解析后的文本块列表
             user_id: 用户 ID（用于隔离）
+            library_id: 知识库 ID（可选）
+            asset_id: 资产 ID（可选）
 
         Returns:
             添加的文档数量
@@ -162,8 +164,12 @@ class VectorStore:
             metadata = {
                 **chunk.metadata,
                 "user_id": user_id,
-                "chunk_index": i
+                "chunk_index": i,
             }
+            if library_id is not None:
+                metadata["library_id"] = library_id
+            if asset_id is not None:
+                metadata["asset_id"] = asset_id
 
             doc = Document(
                 page_content=content,
@@ -186,7 +192,8 @@ class VectorStore:
         self,
         query: str,
         user_id: int,
-        k: int = 4
+        k: int = 4,
+        library_ids: list[int] | None = None
     ) -> list[Document]:
         """
         相似性搜索
@@ -195,12 +202,19 @@ class VectorStore:
             query: 查询文本
             user_id: 用户 ID
             k: 返回数量
+            library_ids: 知识库 ID 列表（可选，指定后按库过滤）
 
         Returns:
             文档列表
         """
-        # 过滤当前用户的文档
-        filter_dict = {"user_id": user_id}
+        # 过滤逻辑：优先按 library_ids 过滤，否则按 user_id 过滤
+        if library_ids:
+            if len(library_ids) == 1:
+                filter_dict = {"library_id": library_ids[0]}
+            else:
+                filter_dict = {"library_id": {"$in": library_ids}}
+        else:
+            filter_dict = {"user_id": user_id}
 
         results = self.vectorstore.similarity_search(
             query=query,
@@ -208,7 +222,7 @@ class VectorStore:
             filter=filter_dict
         )
 
-        logger.info(f"相似性搜索: query={query}, user_id={user_id}, 结果数={len(results)}")
+        logger.info(f"相似性搜索: query={query}, library_ids={library_ids}, 结果数={len(results)}")
 
         return results
 
@@ -230,6 +244,31 @@ class VectorStore:
             return True
         except Exception as e:
             logger.error(f"删除向量文档失败: {e}")
+            return False
+
+
+    def delete_library_documents(self, library_id: int) -> bool:
+        """删除某知识库的所有向量"""
+        try:
+            self.vectorstore._collection.delete(where={"library_id": library_id})
+            logger.info(f"删除知识库 {library_id} 的所有向量")
+            return True
+        except Exception as e:
+            logger.error(f"删除知识库向量失败: {e}")
+            return False
+
+    def delete_asset_documents(self, asset_id: int, library_id: int | None = None) -> bool:
+        """删除某文件的向量"""
+        try:
+            if library_id is not None:
+                where = {"$and": [{"asset_id": asset_id}, {"library_id": library_id}]}
+            else:
+                where = {"asset_id": asset_id}
+            self.vectorstore._collection.delete(where=where)
+            logger.info(f"删除资产 {asset_id} 的向量")
+            return True
+        except Exception as e:
+            logger.error(f"删除资产向量失败: {e}")
             return False
 
     def get_collection_info(self) -> dict[str, Any]:

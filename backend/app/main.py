@@ -28,7 +28,9 @@ app = FastAPI(
     title="多模态 AI 互动式教学智能体",
     description="服务外包大赛 A04 赛题后端 API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/doc.html",
+    redoc_url="/redoc.html"
 )
 
 # 配置 CORS
