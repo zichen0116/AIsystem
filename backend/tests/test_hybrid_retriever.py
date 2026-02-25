@@ -2,6 +2,7 @@
 混合检索测试脚本
 测试向量检索 + BM25 混合搜索（使用阿里云 DashScope API）
 """
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ from app.services.rag.vector_store import VectorStore
 from langchain_core.documents import Document
 
 
-def test_hybrid_retrieval():
+async def test_hybrid_retrieval():
     """测试混合检索"""
     
     print("=" * 60)
@@ -144,7 +145,7 @@ def test_hybrid_retrieval():
             print(f"  {i+1}. [{src}] (得分: {score:.2f}) {content}...")
         
         # 混合检索
-        hybrid_results = hybrid_retriever.search(
+        hybrid_results = await hybrid_retriever.search(
             query=query, user_id=user_id, k=3
         )
         print(f"\n[混合检索 Top 3]:")
@@ -169,12 +170,12 @@ def test_hybrid_retrieval():
     # RRF 融合
     hybrid_rrf = HybridRetriever(vector_store=vector_store, bm25_weight=0.5, fusion_method="rrf")
     hybrid_rrf.build_bm25_index(user_id, test_documents)
-    results_rrf = hybrid_rrf.search(query=query, user_id=user_id, k=3)
+    results_rrf = await hybrid_rrf.search(query=query, user_id=user_id, k=3)
     
     # 加权融合
     hybrid_weighted = HybridRetriever(vector_store=vector_store, bm25_weight=0.5, fusion_method="weighted")
     hybrid_weighted.build_bm25_index(user_id, test_documents)
-    results_weighted = hybrid_weighted.search(query=query, user_id=user_id, k=3)
+    results_weighted = await hybrid_weighted.search(query=query, user_id=user_id, k=3)
     
     print(f"\n>>> 查询: {query}")
     print(f"\n[RRF 融合结果]:")
@@ -189,4 +190,4 @@ def test_hybrid_retrieval():
 
 
 if __name__ == "__main__":
-    test_hybrid_retrieval()
+    asyncio.run(test_hybrid_retrieval())
