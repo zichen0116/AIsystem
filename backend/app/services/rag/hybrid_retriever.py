@@ -165,7 +165,19 @@ class HybridRetriever:
         
         # 缓存的用户文档
         self._user_docs: dict[int, list[Document]] = {}
-    
+
+        # Reranker
+        from app.core.config import settings
+        from app.services.rag.reranker import DashScopeReranker
+        if settings.DASHSCOPE_API_KEY:
+            self.reranker = DashScopeReranker(
+                api_key=settings.DASHSCOPE_API_KEY,
+                model=settings.RERANK_MODEL,
+            )
+        else:
+            self.reranker = None
+            logger.warning("未配置 DASHSCOPE_API_KEY，Rerank 功能不可用")
+
     def build_bm25_index(self, library_id: int, documents: list[Document]):
         """
         为用户构建 BM25 索引
@@ -180,7 +192,7 @@ class HybridRetriever:
         # 构建 BM25 索引
         self.bm25_index.build_index(library_id, documents)
     
-    def search(
+    async def search(
         self,
         query: str,
         user_id: int,
@@ -197,14 +209,14 @@ class HybridRetriever:
             user_id: 用户 ID
             k: 最终返回数量
             library_ids: 知识库 ID 列表（可选，支持多库检索）
-            vector_k: 向量检索数量 (默认 k*2)
-            bm25_k: BM25 检索数量 (默认 k*2)
+            vector_k: 向量检索数量 (默认 k*3)
+            bm25_k: BM25 检索数量 (默认 k*3)
 
         Returns:
             排序后的文档列表
         """
-        vector_k = vector_k or k * 2
-        bm25_k = bm25_k or k * 2
+        vector_k = vector_k or k * 3
+        bm25_k = bm25_k or k * 3
 
         # 1. 向量检索（支持多库 in 过滤）
         vector_results = self.vector_store.similarity_search(
@@ -224,11 +236,30 @@ class HybridRetriever:
         else:
             bm25_results = self.bm25_index.search(library_id=user_id, query=query, top_k=bm25_k)
 
-        # 3. 融合
+        # 3. 融合（不截断，保留所有候选给 reranker）
+        candidate_count = len(set(
+            self._get_doc_id(doc) for doc in vector_results
+        ) | set(
+            self._get_doc_id(doc) for doc, _ in bm25_results
+        ))
+        fusion_k = max(candidate_count, k)
+
         if self.fusion_method == "rrf":
-            return self._rrf_fusion(vector_results, bm25_results, k)
+            fused = self._rrf_fusion(vector_results, bm25_results, fusion_k)
         else:
-            return self._weighted_fusion(vector_results, bm25_results, k)
+            fused = self._weighted_fusion(vector_results, bm25_results, fusion_k)
+
+        # 4. Rerank 精排
+        if self.reranker and fused:
+            reranked = await self.reranker.rerank(
+                query=query,
+                documents=fused,
+                top_n=k,
+            )
+            return reranked
+
+        # 无 reranker 时回退到截断
+        return fused[:k]
     def _rrf_fusion(
         self,
         vector_results: list[Document],
