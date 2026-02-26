@@ -1,8 +1,14 @@
 <script setup>
+import { useUserStore } from './stores/user'
+import LoginView from './views/LoginView.vue'
+import Home from './views/Home.vue'
+
+const userStore = useUserStore()
 </script>
 
 <template>
-  <router-view />
+  <LoginView v-if="!userStore.isLoggedIn" />
+  <Home v-else />
 </template>
 
 <style>

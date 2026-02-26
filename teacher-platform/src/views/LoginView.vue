@@ -1,9 +1,7 @@
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 
-const router = useRouter()
 const userStore = useUserStore()
 
 const isLogin = ref(true)
@@ -26,8 +24,7 @@ function handleSubmit() {
   } else {
     userStore.login({ name: form.value.phone, phone: form.value.phone })
   }
-  // 登录成功后跳转到主页
-  router.push('/dashboard')
+  // 登录成功后由 App 自动切换至主页面
 }
 </script>
 
