@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     APP_PORT: int = 8000
     DEBUG: bool = False
 
+    # ========== html 小游戏（OpenAI 兼容接口）==========
+    HTML_LLM_API_KEY: str = ""
+    HTML_LLM_BASE_URL: str = ""
+    HTML_LLM_MODEL: str = ""
+    HTML_UPLOAD_DIR: str = "uploads"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
