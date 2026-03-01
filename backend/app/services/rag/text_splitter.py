@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 # 全局缓存 Embeddings 模型（避免重复初始化）
 _semantic_chunker_embeddings: Optional[DashScopeEmbeddings] = None
 
+# 句子切分正则：中文标点/换行后允许无空格直接切分；英文 ?! 需空白符或文本结尾，英文 . 额外避开缩写边界
+# 避免误切小数点（3.14）、版本号（v1.2.3）和常见缩写（U.S.）等
+_SENTENCE_SPLIT_REGEX = r"(?<=[。？！；\n])\s*|(?<=[?!])(?:\s+|$)|(?<=\.)(?<!\b[A-Za-z]\.)(?:\s+|$)"
+
 
 def _get_semantic_embeddings() -> DashScopeEmbeddings:
     """获取语义分块用的 Embeddings 模型（带缓存）"""
@@ -70,6 +74,7 @@ def split_documents_semantic(
     try:
         text_splitter = SemanticChunker(
             embeddings=embeddings,
+            sentence_split_regex=_SENTENCE_SPLIT_REGEX,
             breakpoint_threshold_type=breakpoint_threshold_type,
             breakpoint_threshold_amount=breakpoint_threshold_amount,
             min_chunk_size=min_chunk_size,
@@ -174,10 +179,15 @@ def split_documents(
             "\n\n\n",  # 段落分隔（三个换行）
             "\n\n",    # 段落分隔（两个换行）
             "\n",      # 换行
-            "。",      # 中文句子
+            "。",      # 中文句号
+            "？",      # 中文问号
+            "！",      # 中文感叹号
+            "；",      # 中文分号
             ". ",      # 英文句子
-            ", ",      # 英文逗号
+            "? ",      # 英文问号
+            "! ",      # 英文感叹号
             "，",      # 中文逗号
+            ", ",      # 英文逗号
             " ",       # 空格
             ""         # 单字符
         ]
@@ -268,7 +278,9 @@ def split_text(
 
     separators = [
         "\n\n\n", "\n\n", "\n",
-        "。", ". ", ", ", "，", " ", ""
+        "。", "？", "！", "；",
+        ". ", "? ", "! ",
+        "，", ", ", " ", ""
     ]
 
     text_splitter = RecursiveCharacterTextSplitter(
