@@ -88,12 +88,16 @@ async def logout(
         if expired_at:
             # 存入黑名单
             token_hash = token_to_hash(token)
-            blacklist_entry = TokenBlacklist(
-                token_hash=token_hash,
-                expired_at=expired_at
+            existing = await db.execute(
+                select(TokenBlacklist).where(TokenBlacklist.token_hash == token_hash)
             )
-            db.add(blacklist_entry)
-            await db.commit()
+            if existing.scalar_one_or_none() is None:
+                blacklist_entry = TokenBlacklist(
+                    token_hash=token_hash,
+                    expired_at=expired_at
+                )
+                db.add(blacklist_entry)
+                await db.commit()
 
     return {"message": "退出成功"}
 
