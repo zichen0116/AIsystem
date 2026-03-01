@@ -25,6 +25,12 @@ class User(Base):
         nullable=False,
         comment="是否为系统管理员"
     )
+    token_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        nullable=False,
+        comment="Token 版本号，修改密码时+1使所有旧token失效"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
