@@ -32,3 +32,9 @@ class UserResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ChangePassword(BaseModel):
+    """修改密码请求"""
+    old_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=6)

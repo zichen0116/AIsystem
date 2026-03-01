@@ -20,11 +20,13 @@ from app.models import *  # noqa: E402, F401
 # Alembic Config 对象
 config = context.config
 
-# 设置数据库 URL
+# 设置数据库 URL（使用异步驱动，从环境变量读取）
 DATABASE_URL = os.getenv(
-    "DATABASE_URL_SYNC",
-    "postgresql://postgres:postgres@localhost:5432/ai_teaching"
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_teaching"
 )
+# 替换为异步驱动
+DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 # 设置日志
