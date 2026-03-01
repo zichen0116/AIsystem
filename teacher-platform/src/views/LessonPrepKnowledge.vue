@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import LottiePlayer from '../components/LottiePlayer.vue'
 import linkFileImg from '../assets/链接文件.png'
 import voiceImg from '../assets/语音.png'
@@ -14,6 +14,25 @@ const tabs = [
   { id: 'knowledge', name: '知识图谱' },
   { id: 'flowchart', name: '思维导图' }
 ]
+
+const props = defineProps({
+  resetKey: {
+    type: Number,
+    default: 0
+  }
+})
+
+function resetState() {
+  activeTab.value = 'knowledge'
+  promptText.value = ''
+}
+
+watch(
+  () => props.resetKey,
+  () => {
+    resetState()
+  }
+)
 </script>
 
 <template>
@@ -69,18 +88,14 @@ const tabs = [
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: transparent;
   margin: 0;
   overflow: hidden;
 }
 
 .knowledge-panel {
-  padding: 48px 32px;
-  background-image:
-    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
-  background-size: 24px 24px;
-  background-color: #fff;
+  padding: 65px 32px 18px;
+  background: transparent;
 }
 
 .knowledge-header {
@@ -126,30 +141,30 @@ const tabs = [
 
 .knowledge-tabs {
   display: inline-flex;
-  background: linear-gradient(90deg, #e0e7ff 0%, #d1fae5 100%);
-  border-radius: 12px;
-  padding: 4px;
-  gap: 4px;
+  gap: 8px;
 }
 
 .knowledge-tab {
-  padding: 10px 24px;
-  border: none;
-  background: transparent;
-  font-size: 14px;
-  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 20px;
+  border: 1px solid transparent;
+  background:rgb(255, 255, 255);
+  font-size: 0.875rem;
+  font-weight: 700;
+  color:rgb(0, 0, 0);
   cursor: pointer;
-  transition: all 0.2s;
-  border-radius: 8px;
+  transition: background 0.1s, border 0.1s;
+  border-radius: 6px;
 }
 
 .knowledge-tab:hover {
-  color: #475569;
+  background:rgba(80, 173, 254, 0.11);
 }
 
 .knowledge-tab.active {
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  color: #fff;
+  background:rgba(129, 194, 255, 0.31);
+  border-color:rgba(129, 194, 255, 0.51);
 }
 
 .knowledge-input-wrap {
@@ -158,13 +173,18 @@ const tabs = [
 }
 
 .knowledge-input-box {
-  border: 2px solid #8b5cf6;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
   background: #fff;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   height: 160px;
+}
+
+.knowledge-input-box:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
 .knowledge-textarea {
@@ -280,5 +300,6 @@ const tabs = [
 
 .generate-icon {
   font-size: 1rem;
+  color: #a3e635;
 }
 </style>

@@ -72,8 +72,8 @@ function goHome() {
           <div class="modal-right">
             <button class="home-btn" @click="goHome">首页</button>
             <div class="form-header">
-              <p class="category">家校沟通</p>
-              <h2>{{ isLogin ? '教师端登录' : '教师端注册' }}</h2>
+              <p class="category">教师备课平台</p>
+              <h2>EduPrep</h2>
             </div>
             
             <form class="auth-form" @submit.prevent="handleSubmit">

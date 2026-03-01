@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import LottiePlayer from '../components/LottiePlayer.vue'
 import linkFileImg from '../assets/链接文件.png'
 import voiceImg from '../assets/语音.png'
@@ -15,6 +15,24 @@ const dataExamples = [
   '北京未来七天气温,做个折线图',
   '帮我生成一个二维码,扫码后打开chatglm.cn'
 ]
+
+const props = defineProps({
+  resetKey: {
+    type: Number,
+    default: 0
+  }
+})
+
+function resetState() {
+  dataInput.value = ''
+}
+
+watch(
+  () => props.resetKey,
+  () => {
+    resetState()
+  }
+)
 </script>
 
 <template>
@@ -53,7 +71,7 @@ const dataExamples = [
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: transparent;
   margin: 0;
   overflow: hidden;
 }
@@ -62,7 +80,7 @@ const dataExamples = [
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 30px 24px;
+  padding: 40px 24px 24px;
   overflow-y: auto;
 }
 
