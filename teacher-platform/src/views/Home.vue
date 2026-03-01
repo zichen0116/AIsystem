@@ -3,7 +3,6 @@ import { ref, provide } from 'vue'
 import { useUserStore } from '../stores/user'
 import LoginRegisterModal from '../components/LoginRegisterModal.vue'
 import LottiePlayer from '../components/LottiePlayer.vue'
-import ThemeToggle from '../components/ThemeToggle.vue'
 import LessonPrep from './LessonPrep.vue'
 import CoursewareManage from './CoursewareManage.vue'
 import KnowledgeBase from './KnowledgeBase.vue'
@@ -24,7 +23,7 @@ const featureCards = [
   {
     id: 'lesson-prep',
     icon: '✏️',
-    title: '智能备课',
+    title: '备课中心',
     desc: '借助AI辅助设计完整教案。根据您的教学目标，秒级生成测验、摘要和活动创意。',
     color: 'blue',
     link: '了解更多 →'
@@ -74,7 +73,7 @@ provide('goToHome', () => { activeSection.value = 'home' })
           <h1 class="logo">EduPrep</h1>
         </div>
       </div>
-      <nav class="nav-center">
+      <nav class="nav-right">
         <button
           v-for="s in sections"
           :key="s.id"
@@ -84,9 +83,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
         >
           {{ s.label }}
         </button>
-      </nav>
-      <div class="nav-right">
-        <ThemeToggle class="nav-theme-toggle" />
         <div
           class="avatar"
           :class="{ 'avatar-logged-in': userStore.isLoggedIn, active: activeSection === 'personal-center' }"
@@ -94,10 +90,10 @@ provide('goToHome', () => { activeSection.value = 'home' })
         >
           <span class="avatar-initial">{{ userStore.userInfo?.name?.[0] || '用' }}</span>
         </div>
-      </div>
+      </nav>
     </header>
 
-    <main class="content-area" :class="{ 'content-area-no-scroll': activeSection === 'lesson-prep' }">
+    <main class="content-area">
       <div v-show="activeSection === 'home'" class="home-content">
         <!-- Hero Section -->
         <section class="hero-section">
@@ -111,23 +107,12 @@ provide('goToHome', () => { activeSection.value = 'home' })
               创建精彩内容、管理课程体系，借助AI取回您最宝贵的时间资源。
             </p>
             <div class="hero-btns">
-              <button class="hero-btn-primary" @click="setSection('lesson-prep')">
-                <span class="hero-btn-text">立即备课</span>
-              </button>
+              <button class="btn-primary" @click="setSection('lesson-prep')">一键备课</button>
             </div>
             <div class="hero-tags">
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                高效
-              </span>
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                AI驱动
-              </span>
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                知识管理
-              </span>
+              <span class="tag">⚡ 高效</span>
+              <span class="tag">🤖 AI驱动</span>
+              <span class="tag">📚 知识管理</span>
             </div>
           </div>
           <div class="hero-right">
@@ -139,8 +124,8 @@ provide('goToHome', () => { activeSection.value = 'home' })
 
         <!-- Feature Cards -->
         <section class="features-section">
-          <h3 class="section-title">核心功能</h3>
-          <p class="section-subtitle">全方位满足您的所有备课需求</p>
+          <h3 class="section-title">一站式满足您的所有需求</h3>
+          <p class="section-subtitle">专为教学卓越打造的精简工具。</p>
           <div class="feature-cards">
             <div
               v-for="card in featureCards"
@@ -178,7 +163,7 @@ provide('goToHome', () => { activeSection.value = 'home' })
 <style scoped>
 .home-page {
   min-height: 100vh;
-  background: linear-gradient(to bottom, #fff 0%, #eff6ff 40%, #dbeafe 100%);
+  background: #fff;
   display: flex;
   flex-direction: column;
 }
@@ -196,15 +181,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
 .nav-left {
   display: flex;
   align-items: center;
-  flex: 1;
-}
-
-.nav-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 24px;
-  flex: 1;
 }
 
 .logo-wrap {
@@ -227,12 +203,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
   display: flex;
   align-items: center;
   gap: 24px;
-  flex: 1;
-  justify-content: flex-end;
-}
-
-.nav-theme-toggle {
-  flex-shrink: 0;
 }
 
 .nav-btn {
@@ -295,11 +265,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
-}
-
-.content-area-no-scroll {
-  overflow: hidden !important;
 }
 
 .home-content {
@@ -352,33 +317,20 @@ provide('goToHome', () => { activeSection.value = 'home' })
   margin-bottom: 24px;
 }
 
-.hero-btn-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 24px;
-  font-weight: 600;
-  font-size: 1rem;
-  color: #2563eb;
-  background: #fff;
-  border: 1px solid #93c5fd;
+.btn-primary {
+  padding: 12px 22px;
+  background: #2563eb;
+  color: #fff;
+  border: none;
   border-radius: 8px;
+  font-size: 17px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  transition: background 0.2s;
 }
 
-.hero-btn-primary:hover {
-  background: #eff6ff;
-  border-color: #60a5fa;
-  transform: translateY(-1px);
-}
-
-.hero-btn-primary:active {
-  transform: translateY(0);
-}
-
-.hero-btn-text {
-  color: #2563eb;
+.btn-primary:hover {
+  background: #1d4ed8;
 }
 
 .btn-outline {
@@ -404,24 +356,8 @@ provide('goToHome', () => { activeSection.value = 'home' })
 }
 
 .tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 1rem;
-  color: #374151;
-}
-
-.tag-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background:rgb(80, 216, 130);
-  color: #fff;
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: 1.05rem;
+  color: #6b7280;
 }
 
 .hero-right {
@@ -437,7 +373,7 @@ provide('goToHome', () => { activeSection.value = 'home' })
 /* Features */
 .features-section {
   padding: 32px 48px 40px;
-  background:rgb(250, 252, 255);
+  background: #f9fafb;
 }
 
 .section-title {

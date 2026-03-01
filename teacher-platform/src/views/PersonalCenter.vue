@@ -7,7 +7,7 @@ const userStore = useUserStore()
 const coursewareStore = useCoursewareStore()
 const openLoginModal = inject('openLoginModal', null)
 const activeSideItem = ref('profile')
-const sidebarCollapsed = inject('sidebarCollapsed', ref(false))
+const sidebarCollapsed = ref(false)
 const favoriteFilter = ref('all')
 const viewMode = ref('grid')
 const currentPage = ref(1)
@@ -149,6 +149,15 @@ function on2FACodeKeydown(index, e) {
       <div class="main-layout">
         <!-- 左侧导航 -->
         <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+          <div class="sidebar-header">
+            <button type="button" class="sidebar-toggle" title="伸缩侧栏" @click="sidebarCollapsed = !sidebarCollapsed" aria-label="伸缩侧栏">
+              <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="4" x2="12" y2="20"/>
+                <path d="M8 9l-3 3 3 3"/>
+                <path d="M16 9l3 3-3 3"/>
+              </svg>
+            </button>
+          </div>
           <nav class="side-nav">
             <button
               v-for="item in sideItems"
@@ -191,10 +200,7 @@ function on2FACodeKeydown(index, e) {
         </aside>
 
         <!-- 主内容区 -->
-        <main class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-          <div class="main-content-header">
-            <!-- 悬浮切换已移到布局层 -->
-          </div>
+        <main class="main-content">
           <!-- 个人信息 -->
           <div v-if="activeSideItem === 'profile'" class="content-panel">
 
@@ -474,7 +480,7 @@ function on2FACodeKeydown(index, e) {
 <style scoped>
 .personal-page {
   min-height: 100%;
-  background: linear-gradient(180deg, #f3f8ff 0%, #f7fbff 100%);
+  background: #f8fafc;
   display: flex;
   flex-direction: column;
 }
@@ -505,12 +511,13 @@ function on2FACodeKeydown(index, e) {
   min-width: 56px;
 }
 
-.main-content-header {
+.sidebar-header {
   flex-shrink: 0;
   display: flex;
+  justify-content: flex-end;
   align-items: center;
-  padding: 12px 16px 12px 20px;
-  background: #fff;
+  padding: 12px 10px;
+  margin-bottom: 8px;
 }
 
 .sidebar-toggle {
@@ -532,13 +539,13 @@ function on2FACodeKeydown(index, e) {
   color: #1e293b;
 }
 
-.toggle-icon {
+.sidebar .toggle-icon {
   width: 18px;
   height: 18px;
   transition: transform 0.2s;
 }
 
-.main-content.sidebar-collapsed .toggle-icon {
+.sidebar.collapsed .toggle-icon {
   transform: rotate(180deg);
 }
 

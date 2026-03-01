@@ -278,7 +278,7 @@ function deleteResource(target, id) {
 <style scoped>
 .knowledge-page {
   min-height: 100%;
-  background: linear-gradient(180deg, #f3f8ff 0%, #f7fbff 100%);
+  background: #f8fafc;
   display: flex;
   flex-direction: column;
 }

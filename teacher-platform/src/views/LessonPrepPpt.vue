@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import arrowGreenImg from '../assets/arrow-green.png'
 import voiceImg from '../assets/语音.png'
 import { useVoiceInput } from '../composables/useVoiceInput'
@@ -15,34 +15,10 @@ const pptStyles = [
   { id: 'minimal', name: '极简' },
   { id: 'pro', name: '专业' }
 ]
-
-const props = defineProps({
-  resetKey: {
-    type: Number,
-    default: 0
-  }
-})
-
-function resetState() {
-  pptTopic.value = ''
-  pptStyleTab.value = 'style'
-  selectedStyle.value = 'free'
-}
-
-watch(
-  () => props.resetKey,
-  () => {
-    resetState()
-  }
-)
 </script>
 
 <template>
   <div class="content-panel ppt-panel">
-    <div class="ppt-hero">
-      <h1 class="ppt-hero-title">PPT与教案生成</h1>
-      <p class="ppt-hero-sub">输入主题，AI自动生成专业PPT内容。支持多种风格模板，智能内容填充，让备课更高效</p>
-    </div>
     <div class="ppt-chatbox">
       <div class="ppt-chatbox-top">
         <button class="style-btn-inline active">自由风格</button>
@@ -124,7 +100,7 @@ watch(
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: transparent;
+  background: #fff;
   margin: 0;
   overflow: hidden;
 }
@@ -134,48 +110,19 @@ watch(
   overflow-y: auto;
 }
 
-.ppt-hero {
-  max-width: 960px;
-  margin: 12px auto 8px auto;
-  text-align: center;
-  padding: 24px 12px 8px 12px;
-}
-
-.ppt-hero-title {
-  font-size: 42px;
-  background: linear-gradient(90deg, #2b5496 0%, #4080e8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-fill-color: transparent;
-  margin: -28px 0 12px 0;
-  font-weight: 700;
-}
-
-.ppt-hero-sub {
-  color: #6b7f99;
-  font-size: 16px;
-  margin: -5px;
-}
-
 .ppt-chatbox {
   width: 75%;
   aspect-ratio: 7 / 1;
   min-height: 150px;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #fff;
-  margin: 15px auto 24px auto;
+  border-radius: 16px;
+  background:rgb(255, 255, 255);
+  margin: 45px auto 24px auto;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   box-sizing: border-box;
-}
-
-.ppt-chatbox:focus-within {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
 .ppt-chatbox-top {
@@ -304,7 +251,7 @@ watch(
 .ppt-tabs {
   display: flex;
   gap: 8px;
-  margin-bottom: 15px;
+  margin-bottom: 20px;
   max-width: 960px;
   margin-left: auto;
   margin-right: auto;
@@ -338,8 +285,8 @@ watch(
 }
 
 .style-card {
-  width: 220px; /* 修复：添加空格，规范书写 */
-  height: 130px; /* 修复：添加空格，规范书写 */
+  width:220px;
+  height:130px;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
@@ -357,8 +304,8 @@ watch(
 }
 
 .style-preview {
-  width: 100%; /* 修复：添加空格，规范书写 */
-  height: 78%; /* 修复：添加空格，规范书写 */
+  width:100%;
+  height:78%;
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -489,7 +436,6 @@ watch(
   color: #475569;
   background: #fff;
   border-top: 1px solid #f1f5f9;
-  display: block; /* 修复：span 标签添加块级显示，确保样式生效 */
 }
 
 @media (max-width: 900px) {
