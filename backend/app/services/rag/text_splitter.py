@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 # 全局缓存 Embeddings 模型（避免重复初始化）
 _semantic_chunker_embeddings: Optional[DashScopeEmbeddings] = None
 
-# 句子切分正则：中文标点/换行后允许无空格直接切分；英文标点必须跟空白符才切，
-# 避免误切小数点（3.14）、版本号（v1.2.3）、缩写（U.S.）等
-_SENTENCE_SPLIT_REGEX = r"(?<=[。？！；\n])\s*|(?<=[.?!])\s+"
+# 句子切分正则：中文标点/换行后允许无空格直接切分；英文 ?! 需空白符或文本结尾，英文 . 额外避开缩写边界
+# 避免误切小数点（3.14）、版本号（v1.2.3）和常见缩写（U.S.）等
+_SENTENCE_SPLIT_REGEX = r"(?<=[。？！；\n])\s*|(?<=[?!])(?:\s+|$)|(?<=\.)(?<!\b[A-Za-z]\.)(?:\s+|$)"
 
 
 def _get_semantic_embeddings() -> DashScopeEmbeddings:
