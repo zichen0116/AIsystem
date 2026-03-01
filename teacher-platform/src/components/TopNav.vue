@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import LoginRegisterModal from './LoginRegisterModal.vue'
+import ThemeToggle from './ThemeToggle.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -43,6 +44,7 @@ function goTo(path) {
       >
         {{ item.label }}
       </button>
+      <ThemeToggle class="nav-theme-toggle" />
       <div
         class="avatar"
         :class="{ 'avatar-logged-in': userStore.isLoggedIn }"
@@ -131,5 +133,9 @@ function goTo(path) {
 
 .avatar:hover {
   transform: scale(1.05);
+}
+
+.nav-theme-toggle {
+  margin-right: 4px;
 }
 </style>

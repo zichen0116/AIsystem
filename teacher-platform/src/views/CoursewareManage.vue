@@ -229,7 +229,7 @@ function getThumbnailBg(type) {
 <style scoped>
 .courseware-page {
   min-height: 100%;
-  background: #fff;
+  background: linear-gradient(180deg, #f3f8ff 0%, #f7fbff 100%);
   display: flex;
   flex-direction: column;
 }

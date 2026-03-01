@@ -8,6 +8,13 @@ import LessonPrepData from './LessonPrepData.vue'
 const activeTab = ref('ppt')
 const sidebarCollapsed = ref(false)
 
+const resetKeys = ref({
+  ppt: 0,
+  animation: 0,
+  knowledge: 0,
+  data: 0
+})
+
 const tabs = [
   { id: 'ppt', label: 'PPT与教案生成' },
   { id: 'animation', label: '动画与小游戏制作' },
@@ -24,21 +31,26 @@ const currentComponent = computed(() => {
   }
   return map[activeTab.value]
 })
+
+const currentResetKey = computed(() => resetKeys.value[activeTab.value])
+
+function startNewConversation() {
+  const id = activeTab.value
+  resetKeys.value[id] = (resetKeys.value[id] || 0) + 1
+}
 </script>
 
 <template>
   <div class="lesson-prep-page">
     <div class="lesson-prep-body">
       <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
-        <div class="sidebar-header">
-          <button type="button" class="sidebar-toggle" title="伸缩侧栏" @click="sidebarCollapsed = !sidebarCollapsed" aria-label="伸缩侧栏">
-            <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="4" x2="12" y2="20"/>
-              <path d="M8 9l-3 3 3 3"/>
-              <path d="M16 9l3 3-3 3"/>
-            </svg>
-          </button>
-        </div>
+        <button type="button" class="sidebar-toggle sidebar-toggle-float" title="伸缩侧栏" @click="sidebarCollapsed = !sidebarCollapsed" aria-label="伸缩侧栏">
+          <svg class="toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="4" x2="12" y2="20"/>
+            <path d="M8 9l-3 3 3 3"/>
+            <path d="M16 9l3 3-3 3"/>
+          </svg>
+        </button>
         <nav class="sidebar-nav">
           <button
             v-for="tab in tabs"
@@ -83,10 +95,24 @@ const currentComponent = computed(() => {
             <span class="nav-label">{{ tab.label }}</span>
           </button>
         </nav>
+        <div class="sidebar-footer">
+          <button type="button" class="new-conversation-btn" @click="startNewConversation">
+            <span class="new-conversation-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </span>
+            <span class="new-conversation-label">新对话</span>
+          </button>
+        </div>
       </aside>
 
-      <main class="main-content">
-        <component :is="currentComponent" />
+      <main class="main-content" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
+        <div class="main-content-body">
+          <keep-alive>
+            <component :is="currentComponent" :reset-key="currentResetKey" />
+          </keep-alive>
+        </div>
       </main>
     </div>
   </div>
@@ -94,8 +120,10 @@ const currentComponent = computed(() => {
 
 <style scoped>
 .lesson-prep-page {
-  min-height: 100%;
-  background: #f8fafc;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg,rgba(248, 251, 255, 0.57) 0%,rgb(240, 246, 255) 100%);
   display: flex;
   flex-direction: column;
 }
@@ -107,6 +135,7 @@ const currentComponent = computed(() => {
 }
 
 .sidebar {
+  position: relative;
   width: 220px;
   min-width: 220px;
   background: #fff;
@@ -121,13 +150,19 @@ const currentComponent = computed(() => {
   min-width: 56px;
 }
 
-.sidebar-header {
-  flex-shrink: 0;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 12px 10px;
-  border-bottom: 1px solid #f1f5f9;
+.sidebar-toggle-float {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 8px;
+}
+
+.sidebar-toggle-float:hover {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .sidebar-toggle {
@@ -155,7 +190,7 @@ const currentComponent = computed(() => {
   transition: transform 0.2s;
 }
 
-.sidebar.collapsed .toggle-icon {
+.main-content.sidebar-collapsed .toggle-icon {
   transform: rotate(180deg);
 }
 
@@ -175,11 +210,56 @@ const currentComponent = computed(() => {
   justify-content: center;
 }
 
+.sidebar.collapsed .new-conversation-label {
+  display: none;
+}
+
+.sidebar.collapsed .new-conversation-btn {
+  justify-content: center;
+  padding: 10px;
+}
+
 .sidebar-nav {
   padding: 20px 13px;
+  margin-top: 28px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.sidebar-footer {
+  padding: 0 13px 20px;
+}
+
+.new-conversation-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: none;
+  border-radius: 999px;
+  background: #E8F2FF;
+  color: #1677FF;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.new-conversation-btn:hover {
+  background: #dbe8ff;
+}
+
+.new-conversation-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.new-conversation-icon svg {
+  width: 100%;
+  height: 100%;
 }
 
 .nav-item {
@@ -234,6 +314,16 @@ const currentComponent = computed(() => {
 
 .main-content {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.main-content-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
