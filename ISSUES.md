@@ -2,32 +2,48 @@
 
 # 现在需要完善RAG系统的后端部分，要求如下：
 
-1. 检索加上rerank重排序模型
+现有的分块逻辑为主调用语义分块，递归分块负责兜底有问题，你认为这种方案对于此次教学智能体赛题的项目合理吗？要不要采取其他方案？
+现有方案需要优化的点如下：
 
-对接阿里云百炼平台的qwen3-vl-rerank模型，APIkey为sk-98db5cc157b344db851b93ac7780dcd9
+1. 语义分块，默认正则只认英文句号 `.`、问号 `?`、感叹号 `!` 后跟空格作为句子边界，**完全不支持中文标点**（`。`、`？`、`！`等）。对于中文教育场景，这意味着整段中文文本不会被拆分成句子，导致语义分块几乎失效。中文句子后通常没有空格（`\s+`）
 
-API接口文档说明在 阿里云百炼重排序模型API调用说明.md 中，对接接口时有不清楚的内容可以查询此文档
+2. 修复建议：
 
-API代码示例为
+   在 [split_documents_semantic](vscode-file://vscode-app/d:/DevelopTools/VScode/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 中传入自定义的 `sentence_split_regex`：
 
-```curl
-curl --location 'https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank' \
---header "Authorization: Bearer $DASHSCOPE_API_KEY" \
---header 'Content-Type: application/json' \
---data '{
-    "model": "qwen3-vl-rerank",
-    "input":{
-         "query": "什么是文本排序模型",
-         "documents": [
-            {"text": "文本排序模型广泛用于搜索引擎和推荐系统中，它们根据文本相关性对候选文本进行排序"},
-            {"image": "https://img.alicdn.com/imgextra/i3/O1CN01rdstgY1uiZWt8gqSL_!!6000000006071-0-tps-1970-356.jpg"},
-            {"video": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20250107/lbcemt/new+video.mp4"}
-         ]
-    },
-    "parameters": {
-        "return_documents": true,
-        "top_n": 2,
-        "fps": 1.0
-    }
-}'
-```
+   ```
+   text_splitter = SemanticChunker(
+       embeddings=embeddings,
+       sentence_split_regex=r"(?<=[.?!。？！；\n])\s*",  # 支持中文标点，允许无空格
+       breakpoint_threshold_type=breakpoint_threshold_type,
+       breakpoint_threshold_amount=breakpoint_threshold_amount,
+       min_chunk_size=min_chunk_size,
+       add_start_index=True
+   )
+   ```
+
+   关键改动：
+
+   - `[.?!。？！；\n]` — 加入中文句号、问号、感叹号、分号、换行
+   - `\s*` 替换 `\s+` — 中文标点后通常无空格
+
+3. 递归分块缺少 `？`、`！`、`；`，
+
+4. 建议优化：
+
+   separators = [
+       "\n\n\n",   # 段落分隔（三个换行）
+       "\n\n",     # 段落分隔（两个换行）
+       "\n",       # 换行
+       "。",       # 中文句号
+       "？",       # 中文问号
+       "！",       # 中文感叹号
+       "；",       # 中文分号
+       ". ",       # 英文句子
+       "? ",       # 英文问号
+       "! ",       # 英文感叹号
+       "，",       # 中文逗号
+       ", ",       # 英文逗号
+       " ",        # 空格
+       ""          # 单字符
+   ]
