@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import LottiePlayer from '../components/LottiePlayer.vue'
 import linkFileImg from '../assets/链接文件.png'
 import voiceImg from '../assets/语音.png'
@@ -28,25 +28,122 @@ const lottieSize = computed(() => {
 const hasSentMessages = ref(false)
 const messages = ref([])
 const codeTab = ref('content') // 'content' | 'preview'
+const isSending = ref(false)
+const htmlMode = ref(false) // HTML代码模式开关
 
-const initialGeneratedCode = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>二次函数概念演示</title>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif; }
-    body { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  </style>
-</head>
-<body>
-  <h1>二次函数概念演示</h1>
-</body>
-</html>`
+const fileInput = ref(null)
+const uploadResult = ref(null) // { file_id, filename, extracted_length, preview, ... }
 
-const generatedCode = ref(initialGeneratedCode)
+function getApiBase() {
+  const base = (import.meta.env?.VITE_API_BASE || '').trim()
+  return (base || 'http://127.0.0.1:8000').replace(/\/+$/, '')
+}
+
+async function postJson(path, body, timeoutMs = 300000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(`${getApiBase()}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(text || res.statusText)
+    return text ? JSON.parse(text) : null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function uploadFileToBackend(file, timeoutMs = 180000) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${getApiBase()}/api/v1/html/upload`, {
+      method: 'POST',
+      body: form,
+      signal: controller.signal
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      const detail = data?.detail || res.statusText
+      throw new Error(detail)
+    }
+    return data
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function extractHtml(text) {
+  const raw = (text || '').trim()
+  if (!raw) return null
+
+  // ```html ... ```（或任意 fenced code block）
+  const fence = raw.match(/```([a-zA-Z0-9_-]+)?\s*[\r\n]+([\s\S]*?)```/)
+  if (fence) {
+    const lang = (fence[1] || '').trim().toLowerCase()
+    const code = (fence[2] || '').trim()
+    if (lang === 'html') return code
+    const upper = code.toUpperCase()
+    if (upper.includes('<!DOCTYPE HTML') || upper.includes('<HTML')) return code
+  }
+
+  // 直接输出整页 HTML（无 fence）
+  const upper = raw.toUpperCase()
+  if (upper.includes('<!DOCTYPE HTML') || upper.includes('<HTML')) return raw
+
+  return null
+}
+
+function buildPrompt(mode, userText, forceHtml) {
+  if (!forceHtml) {
+    return userText
+  }
+  const forceHtmlOnly =
+    '【HTML代码模式】你只返回完整可运行的 HTML 源代码：不要解释文字，不要 Markdown 代码块标记，不要分段说明。'
+  const target =
+    mode === 'game'
+      ? '请生成一个教学互动小游戏（HTML5），包含玩法说明、得分/反馈机制，单文件可运行。'
+      : '请生成一个教学互动式动画/演示（HTML5），包含交互控件（按钮/滑块等），单文件可运行。'
+  return `${forceHtmlOnly}\n${target}\n\n需求：\n${userText}`
+}
+
+function triggerUpload() {
+  fileInput.value?.click()
+}
+
+function clearUpload() {
+  uploadResult.value = null
+  if (fileInput.value) fileInput.value.value = ''
+}
+
+async function onFileSelect(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const res = await uploadFileToBackend(file)
+    uploadResult.value = res
+    messages.value.push({
+      role: 'assistant',
+      content: `已上传「${res.filename}」，已提取 ${res.extracted_length} 字。后续生成会结合该文件内容。`
+    })
+    await nextTick()
+  } catch (err) {
+    messages.value.push({
+      role: 'assistant',
+      content: '上传失败：' + (err?.message || String(err))
+    })
+  } finally {
+    e.target.value = ''
+  }
+}
+
+const generatedCode = ref('')
 
 const props = defineProps({
   resetKey: {
@@ -61,23 +158,77 @@ function resetState() {
   hasSentMessages.value = false
   messages.value = []
   codeTab.value = 'content'
-  generatedCode.value = initialGeneratedCode
+  generatedCode.value = ''
+  uploadResult.value = null
+  isSending.value = false
 }
 
-function handleSend() {
+async function handleSend() {
   const text = animationInput.value?.trim()
-  if (!text) return
-  messages.value.push({ role: 'user', content: text })
-  animationInput.value = ''
-  messages.value.push({
-    role: 'assistant',
-    content: '好的，我已经为您分析了需求。如果是需要生成动画，请点击右侧的预览选项查看效果。'
-  })
-  hasSentMessages.value = true
+  if (!text || isSending.value) return
+
+  isSending.value = true
+  try {
+    messages.value.push({ role: 'user', content: text })
+    animationInput.value = ''
+    hasSentMessages.value = true
+
+    const wantHtml = htmlMode.value
+    const prompt = buildPrompt(activeMode.value, text, wantHtml)
+    const res = await postJson('/api/v1/html/chat', {
+      message: prompt,
+      context_file_id: uploadResult.value?.file_id || undefined
+    })
+
+    const replyText = res?.message || ''
+    const html = extractHtml(replyText)
+
+    if (html) {
+      generatedCode.value = html
+      codeTab.value = 'preview'
+      messages.value.push({
+        role: 'assistant',
+        content: '已生成 HTML，右侧切换到「预览」即可查看效果。'
+      })
+    } else {
+      messages.value.push({
+        role: 'assistant',
+        content: replyText || '生成失败：返回为空'
+      })
+    }
+
+    await nextTick()
+  } catch (err) {
+    messages.value.push({
+      role: 'assistant',
+      content: '发送失败：' + (err?.message || String(err))
+    })
+  } finally {
+    isSending.value = false
+  }
 }
+
+const copySuccess = ref(false)
 
 function copyCode() {
-  navigator.clipboard?.writeText(generatedCode.value)
+  if (!generatedCode.value) return
+  navigator.clipboard?.writeText(generatedCode.value).then(() => {
+    copySuccess.value = true
+    setTimeout(() => { copySuccess.value = false }, 2000)
+  })
+}
+
+function downloadCode() {
+  if (!generatedCode.value) return
+  const blob = new Blob([generatedCode.value], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `generated_${Date.now()}.html`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 function clearCode() {
@@ -94,6 +245,13 @@ watch(
 
 <template>
   <div class="content-panel animation-panel">
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".pdf,.doc,.docx,.ppt,.pptx,.txt"
+      style="display:none"
+      @change="onFileSelect"
+    />
     <!-- 发送前：初始布局 -->
     <div v-if="!hasSentMessages" class="animation-content">
       <div class="animation-top-slot">
@@ -119,6 +277,23 @@ watch(
       </div>
       <div class="animation-chatbox-wrap">
         <div class="animation-chatbox">
+          <div class="chatbox-top-bar">
+            <button
+              type="button"
+              class="html-mode-btn"
+              :class="{ active: htmlMode }"
+              @click="htmlMode = !htmlMode"
+            >
+              <span class="html-mode-icon">&lt;/&gt;</span>
+              HTML代码模式
+            </button>
+          </div>
+          <div v-if="uploadResult" class="upload-banner" role="status" aria-live="polite">
+            <span class="upload-banner-title">已选择文件</span>
+            <span class="upload-banner-name">{{ uploadResult.filename }}</span>
+            <span class="upload-banner-meta">提取 {{ uploadResult.extracted_length }} 字</span>
+            <button type="button" class="upload-banner-remove" title="移除附件" @click="clearUpload">×</button>
+          </div>
           <textarea
             v-model="animationInput"
             class="animation-input"
@@ -127,20 +302,20 @@ watch(
           ></textarea>
           <div class="animation-chatbox-bottom">
             <div class="animation-chatbox-left">
-              <img :src="linkFileImg" class="attach-icon" alt="上传文件" title="上传文件" />
+              <img :src="linkFileImg" class="attach-icon" alt="上传文件" title="上传文件" @click="triggerUpload" />
               <button v-if="isSupported" class="voice-btn" :class="{ recording: isRecording }" title="语音输入" @click="toggleRecording">
                 <img :src="voiceImg" class="voice-icon-img" alt="语音" />
               </button>
             </div>
-            <button class="send-btn" @click="handleSend"><img :src="sendImg" class="send-btn-icon" alt="" /></button>
+            <button class="send-btn" :disabled="isSending" @click="handleSend"><img :src="sendImg" class="send-btn-icon" alt="" /></button>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- 发送后：左右两栏布局 -->
-    <div v-else class="animation-two-column">
-      <div class="animation-left">
+    <!-- 发送后：根据是否有HTML决定布局 -->
+    <div v-else class="animation-two-column" :class="{ 'no-code-panel': !generatedCode }">
+      <div class="animation-left" :class="{ 'full-width': !generatedCode }">
         <div class="animation-chat-messages">
           <div
             v-for="(msg, i) in messages"
@@ -153,6 +328,23 @@ watch(
           </div>
         </div>
         <div class="animation-chatbox-compact">
+          <div class="chatbox-top-bar">
+            <button
+              type="button"
+              class="html-mode-btn"
+              :class="{ active: htmlMode }"
+              @click="htmlMode = !htmlMode"
+            >
+              <span class="html-mode-icon">&lt;/&gt;</span>
+              HTML代码模式
+            </button>
+          </div>
+          <div v-if="uploadResult" class="upload-banner upload-banner-compact" role="status" aria-live="polite">
+            <span class="upload-banner-title">已选择文件</span>
+            <span class="upload-banner-name">{{ uploadResult.filename }}</span>
+            <span class="upload-banner-meta">提取 {{ uploadResult.extracted_length }} 字</span>
+            <button type="button" class="upload-banner-remove" title="移除附件" @click="clearUpload">×</button>
+          </div>
           <textarea
             v-model="animationInput"
             class="animation-input"
@@ -161,26 +353,26 @@ watch(
           ></textarea>
           <div class="animation-chatbox-bottom">
             <div class="animation-chatbox-left">
-              <img :src="linkFileImg" class="attach-icon" alt="上传文件" title="上传文件" />
+              <img :src="linkFileImg" class="attach-icon" alt="上传文件" title="上传文件" @click="triggerUpload" />
               <button v-if="isSupported" class="voice-btn" :class="{ recording: isRecording }" title="语音输入" @click="toggleRecording">
                 <img :src="voiceImg" class="voice-icon-img" alt="语音" />
               </button>
             </div>
-            <button class="send-btn" @click="handleSend"><img :src="sendImg" class="send-btn-icon" alt="" /></button>
+            <button class="send-btn" :disabled="isSending" @click="handleSend"><img :src="sendImg" class="send-btn-icon" alt="" /></button>
           </div>
         </div>
       </div>
-      <div class="animation-right">
+      <div v-if="generatedCode" class="animation-right">
         <div class="code-panel-header">
           <h3 class="code-panel-title">代码 (HTML)</h3>
           <div class="code-panel-actions">
-            <button class="code-action-btn" @click="copyCode">
+            <button class="code-action-btn" :class="{ success: copySuccess }" @click="copyCode">
               <span class="code-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               </span>
-              复制
+              {{ copySuccess ? '已复制' : '复制' }}
             </button>
-            <button class="code-action-btn">
+            <button class="code-action-btn" @click="downloadCode">
               <span class="code-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               </span>
@@ -213,10 +405,9 @@ watch(
           </div>
         </div>
         <div class="code-panel-body">
-          <pre v-show="codeTab === 'content'" class="code-display"><code>{{ generatedCode }}</code></pre>
-          <div v-show="codeTab === 'preview'" class="preview-display">
-            <iframe v-if="generatedCode" :srcdoc="generatedCode" class="preview-iframe" sandbox="allow-scripts" title="预览" />
-            <div v-else class="preview-empty">暂无内容可预览</div>
+          <pre v-if="codeTab === 'content'" class="code-display"><code>{{ generatedCode }}</code></pre>
+          <div v-else class="preview-display">
+            <iframe :srcdoc="generatedCode" class="preview-iframe" sandbox="allow-scripts allow-forms allow-modals allow-same-origin" title="预览" />
           </div>
         </div>
       </div>
@@ -232,6 +423,8 @@ watch(
   background: transparent;
   margin: 0;
   overflow: hidden;
+  height: 100%;
+  max-height: 100%;
 }
 
 .animation-panel {
@@ -241,6 +434,8 @@ watch(
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
   overflow: hidden;
 }
 
@@ -339,6 +534,61 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 140px;
+}
+
+.upload-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+}
+
+.upload-banner-title {
+  font-weight: 600;
+  color: #0f172a;
+  flex-shrink: 0;
+}
+
+.upload-banner-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.upload-banner-meta {
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.upload-banner-remove {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #64748b;
+  line-height: 1;
+}
+
+.upload-banner-remove:hover {
+  color: #dc2626;
+  border-color: #fecaca;
+  background: #fff5f5;
+}
+
+.upload-banner-compact {
+  margin-bottom: 8px;
 }
 
 .animation-chatbox:focus-within {
@@ -448,7 +698,9 @@ watch(
   display: flex;
   flex: 1;
   min-height: 0;
+  max-height: 100%;
   gap: 16px;
+  overflow: hidden;
 }
 
 .animation-left {
@@ -457,6 +709,18 @@ watch(
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  height: calc(100vh - 140px);
+  max-height: calc(100vh - 140px);
+  overflow: hidden;
+}
+
+.animation-left.full-width {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.animation-two-column.no-code-panel {
+  justify-content: center;
 }
 
 /* 对话部分单独滚动，整体页面不动 */
@@ -466,6 +730,12 @@ watch(
   overflow-y: auto;
   overflow-x: hidden;
   padding: 12px 0;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+.animation-chat-messages::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
 }
 
 .chat-msg {
@@ -518,6 +788,44 @@ watch(
   min-height: 80px;
 }
 
+.chatbox-top-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.html-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.html-mode-btn:hover {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.html-mode-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.html-mode-icon {
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .animation-chatbox-compact:focus-within {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
@@ -529,6 +837,8 @@ watch(
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  height: calc(100vh - 140px);
+  max-height: calc(100vh - 140px);
   background: #fff;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
@@ -575,6 +885,12 @@ watch(
 .code-action-btn:hover {
   background: #f8fafc;
   border-color: #DCDCDC;
+}
+
+.code-action-btn.success {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
 }
 
 .code-action-icon {
@@ -635,8 +951,14 @@ watch(
 .code-panel-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.code-panel-body::-webkit-scrollbar {
+  display: none;
 }
 
 .code-display {
@@ -657,13 +979,14 @@ watch(
 
 .preview-display {
   flex: 1;
-  min-height: 300px;
+  min-height: 0;
+  height: 100%;
 }
 
 .preview-iframe {
   width: 100%;
   height: 100%;
-  min-height: 300px;
+  min-height: calc(100vh - 260px);
   border: none;
 }
 
