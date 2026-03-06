@@ -39,7 +39,7 @@ function getApiBase() {
   return (base || 'http://127.0.0.1:8000').replace(/\/+$/, '')
 }
 
-async function postJson(path, body, timeoutMs = 300000) {
+async function postJson(path, body, timeoutMs = 900000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -144,6 +144,7 @@ async function onFileSelect(e) {
 }
 
 const generatedCode = ref('')
+const isFullscreen = ref(false)
 
 const props = defineProps({
   resetKey: {
@@ -161,6 +162,7 @@ function resetState() {
   generatedCode.value = ''
   uploadResult.value = null
   isSending.value = false
+  isFullscreen.value = false
 }
 
 async function handleSend() {
@@ -168,41 +170,95 @@ async function handleSend() {
   if (!text || isSending.value) return
 
   isSending.value = true
+  messages.value.push({ role: 'user', content: text })
+  animationInput.value = ''
+  hasSentMessages.value = true
+
+  const wantHtml = htmlMode.value
+  const prompt = buildPrompt(activeMode.value, text, wantHtml)
+  const assistantIndex = messages.value.length
+  messages.value.push({ role: 'assistant', content: '' })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 900000)
+
   try {
-    messages.value.push({ role: 'user', content: text })
-    animationInput.value = ''
-    hasSentMessages.value = true
-
-    const wantHtml = htmlMode.value
-    const prompt = buildPrompt(activeMode.value, text, wantHtml)
-    const res = await postJson('/api/v1/html/chat', {
-      message: prompt,
-      context_file_id: uploadResult.value?.file_id || undefined
+    const res = await fetch(`${getApiBase()}/api/v1/html/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: prompt,
+        context_file_id: uploadResult.value?.file_id || undefined
+      }),
+      signal: controller.signal
     })
-
-    const replyText = res?.message || ''
-    const html = extractHtml(replyText)
-
+    if (!res.ok) throw new Error(res.statusText || '请求失败')
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('无法读取响应流')
+    const decoder = new TextDecoder()
+    let fullText = ''
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (value) buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() || ''
+      for (const ev of events) {
+        const line = ev.split('\n')[0]
+        if (line?.startsWith('data: ')) {
+          const raw = line.slice(6).trim()
+          if (raw === '[DONE]') continue
+          try {
+            const obj = JSON.parse(raw)
+            const content = obj?.content ?? obj?.text ?? ''
+            const err = obj?.error
+            if (err) {
+              fullText = `错误：${err}`
+              break
+            }
+            if (content) {
+              fullText += content
+              messages.value[assistantIndex].content = fullText
+              await nextTick()
+            }
+          } catch (_) {}
+        }
+      }
+      if (done) {
+        if (buffer) {
+          const line = buffer.split('\n')[0]
+          if (line?.startsWith('data: ')) {
+            const raw = line.slice(6).trim()
+            if (raw !== '[DONE]') {
+              try {
+                const obj = JSON.parse(raw)
+                const content = obj?.content ?? obj?.text ?? ''
+                if (content) {
+                  fullText += content
+                  messages.value[assistantIndex].content = fullText
+                }
+              } catch (_) {}
+            }
+          }
+        }
+        break
+      }
+    }
+    clearTimeout(timer)
+    const html = extractHtml(fullText)
     if (html) {
       generatedCode.value = html
       codeTab.value = 'preview'
-      messages.value.push({
-        role: 'assistant',
-        content: '已生成 HTML，右侧切换到「预览」即可查看效果。'
-      })
-    } else {
-      messages.value.push({
-        role: 'assistant',
-        content: replyText || '生成失败：返回为空'
-      })
+      messages.value[assistantIndex].content =
+        fullText.trim() || '已生成 HTML，右侧切换到「预览」即可查看效果。'
+    } else if (!fullText.trim()) {
+      messages.value[assistantIndex].content = '生成失败：返回为空'
     }
-
     await nextTick()
   } catch (err) {
-    messages.value.push({
-      role: 'assistant',
-      content: '发送失败：' + (err?.message || String(err))
-    })
+    clearTimeout(timer)
+    messages.value[assistantIndex].content =
+      '发送失败：' + (err?.message || String(err))
   } finally {
     isSending.value = false
   }
@@ -231,8 +287,8 @@ function downloadCode() {
   URL.revokeObjectURL(url)
 }
 
-function clearCode() {
-  generatedCode.value = ''
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
 }
 
 watch(
@@ -314,7 +370,11 @@ watch(
     </div>
 
     <!-- 发送后：根据是否有HTML决定布局 -->
-    <div v-else class="animation-two-column" :class="{ 'no-code-panel': !generatedCode }">
+    <div
+      v-else
+      class="animation-two-column"
+      :class="{ 'no-code-panel': !generatedCode, 'fullscreen-mode': isFullscreen }"
+    >
       <div class="animation-left" :class="{ 'full-width': !generatedCode }">
         <div class="animation-chat-messages">
           <div
@@ -362,7 +422,7 @@ watch(
           </div>
         </div>
       </div>
-      <div v-if="generatedCode" class="animation-right">
+      <div v-if="generatedCode" class="animation-right" :class="{ fullscreen: isFullscreen }">
         <div class="code-panel-header">
           <h3 class="code-panel-title">代码 (HTML)</h3>
           <div class="code-panel-actions">
@@ -384,17 +444,11 @@ watch(
               </span>
               导出图片
             </button>
-            <button class="code-action-btn">
+            <button class="code-action-btn" @click="toggleFullscreen">
               <span class="code-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
               </span>
-              全屏
-            </button>
-            <button class="code-action-btn" @click="clearCode">
-              <span class="code-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              </span>
-              清空
+              {{ isFullscreen ? '退出全屏' : '全屏' }}
             </button>
           </div>
         </div>
@@ -703,6 +757,14 @@ watch(
   overflow: hidden;
 }
 
+.animation-two-column.fullscreen-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  padding: 24px 32px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
 .animation-left {
   flex: 1;
   display: flex;
@@ -740,6 +802,16 @@ watch(
 
 .chat-msg {
   margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-msg.user {
+  align-items: flex-end;
+}
+
+.chat-msg.assistant {
+  align-items: flex-start;
 }
 
 /* 图1：用户与助手均有圆角气泡，用户浅蓝、助手白底，均有轻微阴影；小助手标签蓝色 */
@@ -843,6 +915,26 @@ watch(
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   overflow: hidden;
+}
+
+.animation-right.fullscreen {
+  height: 100%;
+  max-height: none;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
+}
+
+.animation-two-column.fullscreen-mode .animation-left {
+  display: none;
+}
+
+.animation-right.fullscreen .code-panel-body {
+  justify-content: center;
+  align-items: center;
+}
+
+.animation-right.fullscreen .preview-iframe {
+  min-height: 0;
+  height: calc(100vh - 220px);
 }
 
 .code-panel-header {
