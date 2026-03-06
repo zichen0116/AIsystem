@@ -1,5 +1,6 @@
 """大模型对话服务。支持任意 OpenAI 兼容的 Chat API（OpenAI / 智谱 / 通义 / DeepSeek 等）。"""
-from typing import Optional
+from typing import Optional, AsyncGenerator
+import json
 import httpx
 from app.core.config import settings
 
@@ -145,3 +146,66 @@ async def chat_with_llm(
         "帮我把教学内容改写成适合学生理解的说法",
     ]
     return content, suggestions
+
+
+async def chat_with_llm_stream(
+    message: str,
+    context_text: Optional[str] = None,
+) -> AsyncGenerator[str, None]:
+    """流式调用大模型，逐个 yield 文本片段。若未配置 API Key 则 yield 空后结束。"""
+    if not settings.HTML_LLM_API_KEY:
+        return
+
+    base = (settings.HTML_LLM_BASE_URL or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.HTML_LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    system = (
+        "你是教学对话小助手，擅长帮教师理解和重构教学内容，"
+        "可以结合用户上传的教案（若有）进行解释、总结和改写。"
+        "回答要简洁、清晰、友好。"
+    )
+    if context_text:
+        system += f"\n\n以下是用户上传教学材料的摘要（供参考）：\n{context_text[:2000]}"
+
+    payload = {
+        "model": settings.HTML_LLM_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": message},
+        ],
+        "max_tokens": 6000,
+        "stream": True,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                        choices = obj.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = (choices[0] or {}).get("delta") or {}
+                        content = delta.get("content") or ""
+                        if content:
+                            yield content
+                    except json.JSONDecodeError:
+                        continue
+    except httpx.HTTPStatusError as e:
+        print(
+            "LLM stream HTTP error:",
+            e.response.status_code,
+            e.response.text[:500] if e.response is not None else "",
+        )
+    except Exception as e:
+        print("LLM stream general error:", repr(e))
