@@ -30,11 +30,40 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     ffmpeg \
+    # Playwright/Chromium runtime deps
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxext6 \
+    libxrender1 \
+    libxshmfence1 \
+    libpangocairo-1.0-0 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libglib2.0-0 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # 从构建阶段复制虚拟环境
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+
+# 安装 Chromium（用于导出 GIF 渲染）
+RUN python -m playwright install chromium
 
 # 复制应用代码
 COPY app/ ./app/
