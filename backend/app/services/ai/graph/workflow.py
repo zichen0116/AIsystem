@@ -135,6 +135,7 @@ async def run_agent(
         query: 用户问题
         user_id: 用户ID
         chat_history: 历史消息（可选）
+        system_library_ids: 系统知识库 ID 列表（非空时绑定图谱工具）
         max_retries: Self-RAG 最大重试次数
 
     Returns:
@@ -223,6 +224,7 @@ async def run_agent_with_checkpoint(
         user_id: 用户ID
         thread_id: 线程ID（用于 resume），如果不传则自动生成
         chat_history: 历史消息（可选）
+        system_library_ids: 系统知识库 ID 列表（非空时绑定图谱工具）
         max_retries: Self-RAG 最大重试次数
 
     Returns:

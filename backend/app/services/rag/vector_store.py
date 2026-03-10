@@ -282,3 +282,31 @@ class VectorStore:
         except Exception as e:
             logger.error(f"获取集合信息失败: {e}")
             return {}
+
+    def get_documents_by_metadata(self, library_id: int, asset_id: int) -> list[str]:
+        """
+        按 metadata 获取文档文本列表
+
+        Args:
+            library_id: 知识库 ID
+            asset_id: 知识资产 ID
+
+        Returns:
+            文档文本列表
+        """
+        try:
+            results = self.vectorstore._collection.get(
+                where={
+                    "$and": [
+                        {"library_id": library_id},
+                        {"asset_id": asset_id},
+                    ]
+                },
+                include=["documents"],
+            )
+            if results and results.get("documents"):
+                return [doc for doc in results["documents"] if doc and doc.strip()]
+            return []
+        except Exception as e:
+            logger.error(f"获取资产文档失败: asset_id={asset_id}, {e}")
+            return []

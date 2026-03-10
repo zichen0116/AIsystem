@@ -5,6 +5,7 @@ LightRAG 图存储服务
 """
 import os
 import logging
+import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -106,6 +107,14 @@ async def dashscope_embed_func(texts: list[str]) -> np.ndarray:
         raise
 
 
+# 在模块加载时设置 Neo4j 环境变量（LightRAG Neo4JStorage 从 env 读取）
+# 仅在已配置时设置，避免覆盖外部配置
+if settings.NEO4J_URI:
+    os.environ["NEO4J_URI"] = settings.NEO4J_URI
+    os.environ["NEO4J_USERNAME"] = settings.NEO4J_USERNAME
+    os.environ["NEO4J_PASSWORD"] = settings.NEO4J_PASSWORD
+
+
 # ==================== GraphStore ====================
 
 
@@ -118,6 +127,7 @@ class GraphStore:
     """
 
     _instances: LRUCache = LRUCache(maxsize=16)  # LRU 淘汰，防止内存无限增长
+    _init_lock: asyncio.Lock = asyncio.Lock()  # 防止并发初始化同一 library_id
 
     @classmethod
     async def get_instance(cls, library_id: int):
@@ -125,25 +135,26 @@ class GraphStore:
         if library_id in cls._instances:
             return cls._instances[library_id]
 
-        from lightrag import LightRAG
-        from lightrag.base import EmbeddingFunc
+        async with cls._init_lock:
+            # double-check：另一协程可能在等锁期间已完成初始化
+            if library_id in cls._instances:
+                return cls._instances[library_id]
 
-        workspace = f"library_{library_id}"
-        working_dir = str(
-            Path(settings.LIGHTRAG_WORKING_DIR) / workspace
-        )
-        Path(working_dir).mkdir(parents=True, exist_ok=True)
+            from lightrag import LightRAG
+            from lightrag.base import EmbeddingFunc
 
-        # 设置 Neo4j 环境变量（LightRAG Neo4JStorage 从 env 读取）
-        os.environ["NEO4J_URI"] = settings.NEO4J_URI
-        os.environ["NEO4J_USERNAME"] = settings.NEO4J_USERNAME
-        os.environ["NEO4J_PASSWORD"] = settings.NEO4J_PASSWORD
+            workspace = f"library_{library_id}"
+            working_dir = str(
+                Path(settings.LIGHTRAG_WORKING_DIR) / workspace
+            )
+            Path(working_dir).mkdir(parents=True, exist_ok=True)
 
-        embedding_func = EmbeddingFunc(
-            embedding_dim=1024,
-            max_token_size=2048,
-            func=dashscope_embed_func,
-        )
+            embedding_func = EmbeddingFunc(
+                # DashScope tongyi-embedding-vision-flash 输出 1024 维
+                embedding_dim=1024,
+                max_token_size=2048,
+                func=dashscope_embed_func,
+            )
 
         rag = LightRAG(
             working_dir=working_dir,

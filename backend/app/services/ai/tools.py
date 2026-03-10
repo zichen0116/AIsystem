@@ -6,7 +6,7 @@ AI 工具定义
 """
 import os
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.documents import Document
@@ -47,7 +47,7 @@ class GraphSearchInput(BaseModel):
     query: str = Field(
         description="搜索查询，用于从知识图谱中检索全局上下文和实体关系"
     )
-    mode: str = Field(
+    mode: Literal["local", "global", "hybrid"] = Field(
         default="hybrid",
         description="检索模式: local(局部实体), global(全局关系), hybrid(混合)"
     )
