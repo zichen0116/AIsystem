@@ -320,6 +320,20 @@ def cleanup_library(self, library_id: int):
         vs = VectorStore()
         vs.delete_library_documents(library_id)
 
+        # 1.5 清理 Neo4j 图谱数据（如果是系统知识库）
+        try:
+            from app.models.knowledge_library import KnowledgeLibrary as KLModel
+            lib_result = db.execute(
+                select(KLModel).where(KLModel.id == library_id)
+            )
+            lib = lib_result.scalar_one_or_none()
+            if lib and lib.is_system:
+                from app.services.rag.graph_store import GraphStore
+                asyncio.run(GraphStore.delete_library(library_id))
+                logger.info(f"Neo4j 图谱数据清理完成: library_id={library_id}")
+        except Exception as e:
+            logger.warning(f"图谱清理失败（非致命）: library_id={library_id}, {e}")
+
         # 2. 获取所有关联文件路径
         result = db.execute(
             select(KnowledgeAsset).where(KnowledgeAsset.library_id == library_id)
@@ -345,6 +359,107 @@ def cleanup_library(self, library_id: int):
 
         logger.info(f"知识库 {library_id} 清理完成")
         return {"status": "success", "library_id": library_id}
+
+    finally:
+        db.close()
+
+
+@celery_app.task(
+    bind=True,
+    base=CallbackTask,
+    name="app.tasks.build_graph_index",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_kwargs={"max_retries": 3},
+)
+def build_graph_index(self, library_id: int, asset_ids: list[int]):
+    """
+    为系统知识库构建 LightRAG 图索引。
+
+    从 PostgreSQL 查出指定资产的已解析文本，调用 GraphStore 插入图谱。
+    去重由 LightRAG 内部的文档哈希校验自动完成。
+
+    Args:
+        library_id: 系统知识库 ID
+        asset_ids: 要索引的知识资产 ID 列表
+    """
+    from app.models.knowledge_asset import KnowledgeAsset
+    from app.services.rag.graph_store import GraphStore
+
+    logger.info(
+        f"开始构建图索引: library_id={library_id}, "
+        f"asset_ids={asset_ids}, retry={self.request.retries}"
+    )
+
+    db = get_sync_db()
+    try:
+        # 查出已完成向量化的资产
+        result = db.execute(
+            select(KnowledgeAsset).where(
+                KnowledgeAsset.id.in_(asset_ids),
+                KnowledgeAsset.library_id == library_id,
+                KnowledgeAsset.vector_status == "completed",
+            )
+        )
+        assets = result.scalars().all()
+
+        if not assets:
+            logger.warning(f"未找到可索引的资产: library_id={library_id}")
+            return {"status": "skipped", "message": "无可索引资产"}
+
+        # 收集所有文本内容
+        # 直接通过 ChromaDB collection.get() 按 library_id 获取已索引文本
+        from app.services.rag.vector_store import VectorStore
+
+        vs = VectorStore()
+        collection = vs.vectorstore._collection
+        all_texts = []
+
+        # 按资产逐个获取，确保只拉取 asset_ids 指定的资产
+        for asset in assets:
+            try:
+                chroma_results = collection.get(
+                    where={
+                        "$and": [
+                            {"library_id": library_id},
+                            {"asset_id": asset.id},
+                        ]
+                    },
+                    include=["documents"],
+                )
+                if chroma_results and chroma_results.get("documents"):
+                    for doc_text in chroma_results["documents"]:
+                        if doc_text and doc_text.strip():
+                            all_texts.append(doc_text)
+            except Exception as e:
+                logger.warning(
+                    f"获取资产文本失败 asset_id={asset.id}: {e}"
+                )
+
+        if not all_texts:
+            logger.warning(f"资产中无文本内容: library_id={library_id}")
+            return {"status": "skipped", "message": "资产无文本内容"}
+
+        logger.info(
+            f"准备插入图谱: library_id={library_id}, "
+            f"texts={len(all_texts)}"
+        )
+
+        # 使用 asyncio.run 桥接异步调用
+        asyncio.run(GraphStore.insert_documents(library_id, all_texts))
+
+        logger.info(f"图索引构建完成: library_id={library_id}")
+        return {
+            "status": "success",
+            "library_id": library_id,
+            "indexed_assets": len(assets),
+            "total_texts": len(all_texts),
+        }
+
+    except Exception as e:
+        logger.error(f"图索引构建失败: {e}", exc_info=True)
+        raise
 
     finally:
         db.close()
