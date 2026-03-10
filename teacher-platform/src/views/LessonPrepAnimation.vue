@@ -177,7 +177,10 @@ async function handleSend() {
   const wantHtml = htmlMode.value
   const prompt = buildPrompt(activeMode.value, text, wantHtml)
   const assistantIndex = messages.value.length
-  messages.value.push({ role: 'assistant', content: '' })
+  messages.value.push({
+    role: 'assistant',
+    content: wantHtml ? '正在生成 HTML 代码，请稍候…' : ''
+  })
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 900000)
@@ -218,8 +221,10 @@ async function handleSend() {
             }
             if (content) {
               fullText += content
-              messages.value[assistantIndex].content = fullText
-              await nextTick()
+              if (!wantHtml) {
+                messages.value[assistantIndex].content = fullText
+                await nextTick()
+              }
             }
           } catch (_) {}
         }
@@ -235,7 +240,9 @@ async function handleSend() {
                 const content = obj?.content ?? obj?.text ?? ''
                 if (content) {
                   fullText += content
-                  messages.value[assistantIndex].content = fullText
+                  if (!wantHtml) {
+                    messages.value[assistantIndex].content = fullText
+                  }
                 }
               } catch (_) {}
             }
@@ -249,8 +256,9 @@ async function handleSend() {
     if (html) {
       generatedCode.value = html
       codeTab.value = 'preview'
-      messages.value[assistantIndex].content =
-        fullText.trim() || '已生成 HTML，右侧切换到「预览」即可查看效果。'
+      messages.value[assistantIndex].content = wantHtml
+        ? '已生成 HTML，已在右侧代码区域展示，可切换「预览」查看效果。'
+        : fullText.trim() || '已生成 HTML，右侧切换到「预览」即可查看效果。'
     } else if (!fullText.trim()) {
       messages.value[assistantIndex].content = '生成失败：返回为空'
     }
