@@ -30,6 +30,7 @@ const messages = ref([])
 const codeTab = ref('content') // 'content' | 'preview'
 const isSending = ref(false)
 const htmlMode = ref(false) // HTML代码模式开关
+const htmlDynamicMode = ref(false) // HTML代码动态模式开关
 
 const fileInput = ref(null)
 const uploadResult = ref(null) // { file_id, filename, extracted_length, preview, ... }
@@ -100,17 +101,37 @@ function extractHtml(text) {
   return null
 }
 
-function buildPrompt(mode, userText, forceHtml) {
-  if (!forceHtml) {
+function buildPrompt(mode, userText, forceHtml, autoPlay) {
+  // 两个开关都关时，按普通对话处理
+  if (!forceHtml && !autoPlay) {
     return userText
   }
-  const forceHtmlOnly =
-    '【HTML代码模式】你只返回完整可运行的 HTML 源代码：不要解释文字，不要 Markdown 代码块标记，不要分段说明。'
+
+  const sections = []
+
+  if (forceHtml || autoPlay) {
+    sections.push(
+      '【HTML代码模式】只返回单文件可运行的 HTML 源代码：不要解释文字、不要 Markdown 代码块标记（```），不要分段说明。'
+    )
+  }
+
   const target =
     mode === 'game'
       ? '请生成一个教学互动小游戏（HTML5），包含玩法说明、得分/反馈机制，单文件可运行。'
       : '请生成一个教学互动式动画/演示（HTML5），包含交互控件（按钮/滑块等），单文件可运行。'
-  return `${forceHtmlOnly}\n${target}\n\n需求：\n${userText}`
+  sections.push(target)
+
+  if (autoPlay) {
+    sections.push(
+      '【动态演示要求】页面加载后应自动开始演示关键交互：例如通过 JavaScript 定时器自动改变滑块/参数并更新图像，' +
+        '无需用户点击即可看到函数/图表/动画的变化。演示可循环播放 5~10 秒左右，并保留用户后续手动交互能力。'
+    )
+  }
+
+  sections.push('以下是具体需求：')
+  sections.push(userText)
+
+  return sections.join('\n')
 }
 
 function triggerUpload() {
@@ -145,6 +166,7 @@ async function onFileSelect(e) {
 
 const generatedCode = ref('')
 const isFullscreen = ref(false)
+const isExportingGif = ref(false)
 
 const props = defineProps({
   resetKey: {
@@ -163,6 +185,8 @@ function resetState() {
   uploadResult.value = null
   isSending.value = false
   isFullscreen.value = false
+   htmlMode.value = false
+   htmlDynamicMode.value = false
 }
 
 async function handleSend() {
@@ -174,8 +198,10 @@ async function handleSend() {
   animationInput.value = ''
   hasSentMessages.value = true
 
-  const wantHtml = htmlMode.value
-  const prompt = buildPrompt(activeMode.value, text, wantHtml)
+  // 动态模式基于 HTML 代码模式：开启动态时也强制返回 HTML
+  const wantHtml = htmlMode.value || htmlDynamicMode.value
+  const wantAutoPlay = htmlDynamicMode.value
+  const prompt = buildPrompt(activeMode.value, text, wantHtml, wantAutoPlay)
   const assistantIndex = messages.value.length
   messages.value.push({
     role: 'assistant',
@@ -295,6 +321,52 @@ function downloadCode() {
   URL.revokeObjectURL(url)
 }
 
+async function exportGif() {
+  if (!generatedCode.value || isExportingGif.value) return
+  isExportingGif.value = true
+  try {
+    const res = await fetch(`${getApiBase()}/api/v1/html/export/gif`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        html: generatedCode.value,
+        width: 960,
+        height: 540,
+        duration_sec: 6,
+        fps: 12,
+        start_delay_ms: 300,
+        filename: `demo_${Date.now()}.gif`
+      })
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      try {
+        const obj = JSON.parse(text)
+        throw new Error(obj?.detail || text || res.statusText || '导出失败')
+      } catch (_) {
+        throw new Error(text || res.statusText || '导出失败')
+      }
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `demo_${Date.now()}.gif`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    messages.value.push({
+      role: 'assistant',
+      content: '导出 GIF 失败：' + (err?.message || String(err))
+    })
+    await nextTick()
+  } finally {
+    isExportingGif.value = false
+  }
+}
+
 function toggleFullscreen() {
   isFullscreen.value = !isFullscreen.value
 }
@@ -303,6 +375,15 @@ watch(
   () => props.resetKey,
   () => {
     resetState()
+  }
+)
+
+watch(
+  () => htmlMode.value,
+  (val) => {
+    if (!val) {
+      htmlDynamicMode.value = false
+    }
   }
 )
 </script>
@@ -350,6 +431,16 @@ watch(
             >
               <span class="html-mode-icon">&lt;/&gt;</span>
               HTML代码模式
+            </button>
+            <button
+              type="button"
+              class="html-mode-btn secondary"
+              :class="{ active: htmlDynamicMode, disabled: !htmlMode && !htmlDynamicMode }"
+              :disabled="!htmlMode && !htmlDynamicMode"
+              @click="htmlDynamicMode = !htmlDynamicMode"
+            >
+              <span class="html-mode-icon">▶</span>
+              HTML代码动态模式
             </button>
           </div>
           <div v-if="uploadResult" class="upload-banner" role="status" aria-live="polite">
@@ -406,6 +497,16 @@ watch(
               <span class="html-mode-icon">&lt;/&gt;</span>
               HTML代码模式
             </button>
+            <button
+              type="button"
+              class="html-mode-btn secondary"
+              :class="{ active: htmlDynamicMode, disabled: !htmlMode && !htmlDynamicMode }"
+              :disabled="!htmlMode && !htmlDynamicMode"
+              @click="htmlDynamicMode = !htmlDynamicMode"
+            >
+              <span class="html-mode-icon">▶</span>
+              HTML代码动态模式
+            </button>
           </div>
           <div v-if="uploadResult" class="upload-banner upload-banner-compact" role="status" aria-live="polite">
             <span class="upload-banner-title">已选择文件</span>
@@ -446,11 +547,11 @@ watch(
               </span>
               下载
             </button>
-            <button class="code-action-btn">
+            <button class="code-action-btn" :disabled="isExportingGif" @click="exportGif">
               <span class="code-action-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
               </span>
-              导出图片
+              {{ isExportingGif ? '导出中…' : '导出GIF' }}
             </button>
             <button class="code-action-btn" @click="toggleFullscreen">
               <span class="code-action-icon" aria-hidden="true">
@@ -497,7 +598,6 @@ watch(
   flex: 1;
   min-height: 0;
   max-height: 100%;
-  overflow: hidden;
   overflow: hidden;
 }
 
@@ -889,6 +989,12 @@ watch(
   transition: all 0.2s ease;
 }
 
+.html-mode-btn.secondary {
+  margin-left: 8px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
 .html-mode-btn:hover {
   background: #e2e8f0;
   color: #475569;
@@ -898,6 +1004,12 @@ watch(
   background: #3b82f6;
   color: #fff;
   border-color: #3b82f6;
+}
+
+.html-mode-btn.disabled,
+.html-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .html-mode-icon {
