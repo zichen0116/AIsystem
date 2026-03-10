@@ -10,7 +10,7 @@ import os
 import logging
 from typing import Literal
 
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 
@@ -44,9 +44,10 @@ AGENT_SYSTEM_PROMPT = """你是一个专业的教学智能体。
 
 ## 工具使用策略
 
-- **优先使用本地知识库**：涉及课程内容、定义、公式等，必须先搜索本地
-- **本地无结果时再搜索网络**：用于补充最新信息或外部案例
-- **必要时结合两者**：理论（本地）+ 案例（网络）
+- **具体细节查询**：涉及定义、公式、原文引用、具体步骤等，使用 search_local_knowledge
+- **全局概述查询**：涉及总结、概述、知识脉络、关系梳理或对比分析，使用 search_knowledge_graph（仅当可用时）
+- **复杂教学设计**：可同时调用 search_local_knowledge 和 search_knowledge_graph，先获取全局框架再补充具体细节
+- **本地无结果时**：搜索网络补充最新信息或外部案例
 
 回答问题要专业、准确、完整。"""
 
@@ -57,9 +58,9 @@ def create_agent_node():
     """
     创建 Agent 节点
 
-    绑定 Tools 的 Qwen-Plus 模型，负责决策：
-    - 调用工具（search_local_knowledge / search_web）
-    - 或直接生成答案
+    工具列表根据 state 中 system_library_ids 动态绑定：
+    - system_library_ids 非空 → 向量 + 图谱 + 网络搜索
+    - system_library_ids 为空 → 向量 + 网络搜索
 
     Returns:
         agent_node 函数
@@ -68,17 +69,6 @@ def create_agent_node():
 
     # 获取 LLM
     llm_service = get_llm_service()
-    llm = llm_service.llm
-
-    # 获取工具
-    tools = get_search_tools()
-    tool_map = {tool.name: tool for tool in tools}
-
-    # 绑定工具
-    llm_with_tools = llm.bind(
-        tools=[convert_to_openai_function(tool) for tool in tools],
-        tool_choice="auto"
-    )
 
     async def agent_node(state: AgentState) -> AgentState:
         """
@@ -91,6 +81,7 @@ def create_agent_node():
         messages = state["messages"]
         user_id = state.get("user_id", 0)
         current_query = state.get("current_query", "")
+        system_library_ids = state.get("system_library_ids") or []
 
         # 如果是第一条消息，提取用户查询
         if not current_query and messages:
@@ -98,14 +89,29 @@ def create_agent_node():
             if isinstance(last_msg, HumanMessage):
                 current_query = last_msg.content
 
-        # 构造消息列表（带系统提示）
-        system_msg = {"role": "system", "content": AGENT_SYSTEM_PROMPT}
+        # 动态获取工具列表
+        tools = get_search_tools(
+            system_library_ids=system_library_ids if system_library_ids else None
+        )
+
+        # 动态绑定工具到 LLM（每次请求根据 state 决定工具列表）
+        llm = llm_service.llm
+        llm_with_tools = llm.bind(
+            tools=[convert_to_openai_function(tool) for tool in tools],
+            tool_choice="auto"
+        )
+
+        # 构造消息列表（SystemMessage 而非 dict，避免混入 BaseMessage 列表后类型不兼容）
+        system_msg = SystemMessage(content=AGENT_SYSTEM_PROMPT)
         all_messages = [system_msg] + messages
 
-        logger.info(f"Agent 节点执行: user_id={user_id}, 消息数={len(messages)}")
+        logger.info(
+            f"Agent 节点执行: user_id={user_id}, 消息数={len(messages)}, "
+            f"工具数={len(tools)}, 系统库={system_library_ids}"
+        )
 
-        # 调用 LLM
-        response = await llm_service.ainvoke(all_messages)
+        # 调用 LLM（使用绑定了工具的版本）
+        response = await llm_with_tools.ainvoke(all_messages)
 
         # 检查是否需要调用工具
         tool_calls = []
@@ -127,17 +133,16 @@ def create_agent_node():
             }
         else:
             # 无工具调用，生成最终答案
-            # 提取检索到的文档
             documents = state.get("documents", [])
 
             # 构建上下文
             context = ""
             if documents:
                 context_parts = []
-                for i, doc in enumerate(documents[:5], 1):  # 最多5个文档
+                for i, doc in enumerate(documents[:5], 1):
                     source = doc.metadata.get("source", "未知")
                     page = doc.metadata.get("page", "")
-                    content = doc.page_content[:300]  # 截断
+                    content = doc.page_content[:300]
 
                     ref = f"[Ref: {source}"
                     if page:
@@ -211,12 +216,8 @@ def create_tools_node():
     """
     from langgraph.prebuilt import ToolNode
 
-    # 获取工具
-    tools = get_search_tools()
-    tool_map = {tool.name: tool for tool in tools}
-
-    # 创建 ToolNode
-    tool_node = ToolNode(tools)
+    # 注意：ToolNode 需要在调用时根据 state 动态构建
+    # 因为工具列表可能包含图谱工具
 
     async def tools_node(state: AgentState) -> AgentState:
         """
@@ -226,20 +227,23 @@ def create_tools_node():
         """
         messages = state["messages"]
         user_id = state.get("user_id", 0)
+        system_library_ids = state.get("system_library_ids") or []
 
         # 获取最后一条消息（应该包含 tool_calls）
         last_msg = messages[-1]
 
         if not hasattr(last_msg, "additional_kwargs") or \
            "tool_calls" not in last_msg.additional_kwargs:
-            # 没有工具调用，直接返回
             return {"messages": []}
 
-        # 执行工具
+        # 动态构建 ToolNode
+        tools = get_search_tools(
+            system_library_ids=system_library_ids if system_library_ids else None
+        )
+        tool_node = ToolNode(tools)
+
         logger.info(f"Tools 节点执行: user_id={user_id}")
 
-        # 这里的 ToolNode 需要同步调用
-        # LangGraph 的 ToolNode 返回 ToolMessage 列表
         tool_messages = await tool_node.ainvoke(last_msg)
 
         # 收集检索到的文档
@@ -250,13 +254,10 @@ def create_tools_node():
             content = msg.content
             tool_call_results.append(content)
 
-            # 尝试解析为文档（如果是从知识库检索的）
             if "【文档" in content:
-                # 简单解析，实际可用更复杂的解析逻辑
                 docs = _parse_retrieved_docs(content)
                 documents.extend(docs)
 
-        # 更新状态
         return {
             "messages": tool_messages,
             "documents": documents,
@@ -604,7 +605,7 @@ def create_finalize_node():
 }}
 ```
 
-请直接输出 JSON，不要有其他解释。""""
+请直接输出 JSON，不要有其他解释。"""
 
     async def finalize_node(state: AgentState) -> AgentState:
         """

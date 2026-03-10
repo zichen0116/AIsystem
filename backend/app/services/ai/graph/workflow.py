@@ -125,6 +125,7 @@ async def run_agent(
     query: str,
     user_id: int,
     chat_history: List = None,
+    system_library_ids: List[int] = None,
     max_retries: int = 3
 ) -> dict:
     """
@@ -167,7 +168,8 @@ async def run_agent(
         "web_search_needed": False,
         "user_id": user_id,
         "tool_calls": [],
-        "current_query": query
+        "current_query": query,
+        "system_library_ids": system_library_ids,
     }
 
     # 获取图并执行
@@ -208,6 +210,7 @@ async def run_agent_with_checkpoint(
     user_id: int,
     thread_id: str = None,
     chat_history: List = None,
+    system_library_ids: List[int] = None,
     max_retries: int = 3
 ) -> dict:
     """
@@ -263,7 +266,8 @@ async def run_agent_with_checkpoint(
         "current_query": query,
         "outline": None,
         "user_feedback": None,
-        "approved": False
+        "approved": False,
+        "system_library_ids": system_library_ids,
     }
 
     # 获取图并执行
