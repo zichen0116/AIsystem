@@ -1,8 +1,10 @@
 <script setup>
 import { ref, computed, inject, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { useCoursewareStore } from '../stores/courseware'
 
+const router = useRouter()
 const userStore = useUserStore()
 const coursewareStore = useCoursewareStore()
 const openLoginModal = inject('openLoginModal', null)
@@ -22,6 +24,7 @@ const showNewPwd = ref(false)
 const showConfirmPwd = ref(false)
 const twoFACode = ref(['', '', '', '', '', ''])
 const resendCountdown = ref(59)
+const showLogoutConfirm = ref(false)
 
 const sideItems = [
   { id: 'profile', label: '个人信息', icon: '👤' },
@@ -95,7 +98,17 @@ const loginHistory = [
 ]
 
 function logout() {
+  showLogoutConfirm.value = true
+}
+
+function confirmLogout() {
   userStore.logout()
+  showLogoutConfirm.value = false
+  router.push('/')
+}
+
+function cancelLogout() {
+  showLogoutConfirm.value = false
 }
 
 const passwordStrength = computed(() => {
@@ -389,6 +402,23 @@ function on2FACodeKeydown(index, e) {
 
     <!-- 修改密码弹框 -->
     <Teleport to="body">
+      <!-- 退出登录确认弹窗 -->
+      <div v-if="showLogoutConfirm" class="modal-overlay" @click.self="cancelLogout">
+        <div class="modal-box confirm-modal">
+          <div class="modal-header">
+            <h3>退出登录</h3>
+            <button class="modal-close" @click="cancelLogout">×</button>
+          </div>
+          <div class="modal-body">
+            <p class="confirm-text">确定要退出登录吗？</p>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click="cancelLogout">取消</button>
+            <button class="save-btn danger" @click="confirmLogout">确定退出</button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="showPasswordModal" class="modal-overlay" @click.self="showPasswordModal = false">
         <div class="modal-box password-modal">
           <div class="modal-header">
@@ -1283,6 +1313,17 @@ function on2FACodeKeydown(index, e) {
   overflow-y: auto;
 }
 
+.confirm-modal {
+  width: 380px;
+}
+
+.confirm-text {
+  margin: 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -1384,6 +1425,14 @@ function on2FACodeKeydown(index, e) {
   gap: 12px;
   padding: 16px 24px;
   border-top: 1px solid #f1f5f9;
+}
+
+.save-btn.danger {
+  background: #ef4444;
+}
+
+.save-btn.danger:hover {
+  filter: brightness(0.95);
 }
 
 .twofa-modal .modal-body {

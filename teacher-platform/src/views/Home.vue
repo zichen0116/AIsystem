@@ -1,24 +1,7 @@
 <script setup>
-import { ref, provide } from 'vue'
-import { useUserStore } from '../stores/user'
-import LoginRegisterModal from '../components/LoginRegisterModal.vue'
+import { inject } from 'vue'
 import LottiePlayer from '../components/LottiePlayer.vue'
-import ThemeToggle from '../components/ThemeToggle.vue'
-import LessonPrep from './LessonPrep.vue'
-import CoursewareManage from './CoursewareManage.vue'
-import KnowledgeBase from './KnowledgeBase.vue'
-import PersonalCenter from './PersonalCenter.vue'
-
-const userStore = useUserStore()
-const showLoginModal = ref(false)
-const activeSection = ref('home')
-
-const sections = [
-  { id: 'home', label: '首页' },
-  { id: 'lesson-prep', label: '备课中心' },
-  { id: 'courseware', label: '课件管理' },
-  { id: 'knowledge-base', label: '知识库' }
-]
+const openLoginModal = inject('openLoginModal', null)
 
 const featureCards = [
   {
@@ -52,54 +35,22 @@ const stats = [
   { value: '10k+', title: '资源库', desc: '集成经过验证的学术数据库和教学材料。' },
   { value: '98%', title: '教师满意度', desc: '由教育者打造，为教育者服务。在易用性和可靠性方面评分最高。' }
 ]
-
-function setSection(id) {
-  activeSection.value = id
-}
-
-function handleAvatarClick() {
-  activeSection.value = 'personal-center'
-}
-
-provide('openLoginModal', () => { showLoginModal.value = true })
-provide('goToHome', () => { activeSection.value = 'home' })
 </script>
 
 <template>
   <div class="home-page">
-    <header class="top-nav">
-      <div class="nav-left">
-        <div class="logo-wrap">
-          <span class="logo-icon">📖</span>
-          <h1 class="logo">EduPrep</h1>
-        </div>
+    <header class="landing-topbar">
+      <div class="logo-wrap">
+        <span class="logo-icon">📖</span>
+        <h1 class="logo">EduPrep</h1>
       </div>
-      <nav class="nav-center">
-        <button
-          v-for="s in sections"
-          :key="s.id"
-          class="nav-btn"
-          :class="{ active: activeSection === s.id }"
-          @click="setSection(s.id)"
-        >
-          {{ s.label }}
-        </button>
-      </nav>
-      <div class="nav-right">
-        <ThemeToggle class="nav-theme-toggle" />
-        <div
-          class="avatar"
-          :class="{ 'avatar-logged-in': userStore.isLoggedIn, active: activeSection === 'personal-center' }"
-          @click="handleAvatarClick"
-        >
-          <span class="avatar-initial">{{ userStore.userInfo?.name?.[0] || '用' }}</span>
-        </div>
-      </div>
+      <button class="login-btn" type="button" @click="openLoginModal?.()">
+        <span class="login-btn-text">登录</span>
+      </button>
     </header>
 
-    <main class="content-area" :class="{ 'content-area-no-scroll': activeSection === 'lesson-prep' }">
-      <div v-show="activeSection === 'home'" class="home-content">
-        <!-- Hero Section -->
+    <main class="content-area">
+      <div class="home-content">
         <section class="hero-section">
           <div class="hero-left">
             <h2 class="hero-title">
@@ -111,23 +62,14 @@ provide('goToHome', () => { activeSection.value = 'home' })
               创建精彩内容、管理课程体系，借助AI取回您最宝贵的时间资源。
             </p>
             <div class="hero-btns">
-              <button class="hero-btn-primary" @click="setSection('lesson-prep')">
+              <button class="hero-btn-primary" type="button" @click="openLoginModal?.()">
                 <span class="hero-btn-text">立即备课</span>
               </button>
             </div>
             <div class="hero-tags">
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                高效
-              </span>
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                AI驱动
-              </span>
-              <span class="tag">
-                <span class="tag-check">✓</span>
-                知识管理
-              </span>
+              <span class="tag"><span class="tag-check">✓</span>高效</span>
+              <span class="tag"><span class="tag-check">✓</span>AI驱动</span>
+              <span class="tag"><span class="tag-check">✓</span>知识管理</span>
             </div>
           </div>
           <div class="hero-right">
@@ -137,17 +79,11 @@ provide('goToHome', () => { activeSection.value = 'home' })
           </div>
         </section>
 
-        <!-- Feature Cards -->
         <section class="features-section">
           <h3 class="section-title">核心功能</h3>
           <p class="section-subtitle">全方位满足您的所有备课需求</p>
           <div class="feature-cards">
-            <div
-              v-for="card in featureCards"
-              :key="card.id"
-              class="feature-card"
-              @click="setSection(card.id)"
-            >
+            <div v-for="card in featureCards" :key="card.id" class="feature-card" @click="openLoginModal?.()">
               <div class="card-icon" :class="card.color">{{ card.icon }}</div>
               <h4 class="card-title">{{ card.title }}</h4>
               <p class="card-desc">{{ card.desc }}</p>
@@ -156,7 +92,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
           </div>
         </section>
 
-        <!-- Stats -->
         <section class="stats-section">
           <div v-for="(stat, i) in stats" :key="i" class="stat-item">
             <span class="stat-value">{{ stat.value }}</span>
@@ -165,13 +100,7 @@ provide('goToHome', () => { activeSection.value = 'home' })
           </div>
         </section>
       </div>
-      <LessonPrep v-show="activeSection === 'lesson-prep'" class="embed-content" />
-      <CoursewareManage v-show="activeSection === 'courseware'" class="embed-content" />
-      <KnowledgeBase v-show="activeSection === 'knowledge-base'" class="embed-content" />
-      <PersonalCenter v-show="activeSection === 'personal-center'" class="embed-content" />
     </main>
-
-    <LoginRegisterModal v-model="showLoginModal" />
   </div>
 </template>
 
@@ -183,7 +112,7 @@ provide('goToHome', () => { activeSection.value = 'home' })
   flex-direction: column;
 }
 
-.top-nav {
+.landing-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -191,20 +120,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
   background: #fff;
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
-}
-
-.nav-left {
-  display: flex;
-  align-items: center;
-  flex: 1;
-}
-
-.nav-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 24px;
-  flex: 1;
 }
 
 .logo-wrap {
@@ -223,72 +138,39 @@ provide('goToHome', () => { activeSection.value = 'home' })
   color: #1e293b;
 }
 
-.nav-right {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  flex: 1;
-  justify-content: flex-end;
-}
-
-.nav-theme-toggle {
-  flex-shrink: 0;
-}
-
-.nav-btn {
-  padding: 8px 20px;
-  border: none;
-  background: transparent;
-  color: #475569;
-  font-size: 15px;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: all 0.2s;
-}
-
-.nav-btn:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.nav-btn.active {
-  color: #3b82f6;
-  background: #eff6ff;
-}
-
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #e5e7eb;
-  display: flex;
+.login-btn {
+  position: relative;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.avatar-logged-in {
-  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-}
-
-.avatar.active {
-  box-shadow: 0 0 0 2px #3b82f6;
-}
-
-.avatar-initial {
+  padding: 8px 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(37, 99, 235, 0.15);
+  background: radial-gradient(circle at 0 0, rgba(191, 219, 254, 0.8), transparent 55%),
+    linear-gradient(135deg, #2563eb, #3b82f6);
   color: #fff;
+  font-size: 14px;
   font-weight: 600;
-  font-size: 1rem;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
-.avatar-icon {
-  font-size: 1.2rem;
-  opacity: 0.7;
+.login-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.4);
+  border-color: rgba(37, 99, 235, 0.35);
 }
 
-.avatar:hover {
-  transform: scale(1.05);
+.login-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.32);
+}
+
+.login-btn-text {
+  position: relative;
+  z-index: 1;
+  letter-spacing: 0.02em;
 }
 
 .content-area {
@@ -296,10 +178,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
-}
-
-.content-area-no-scroll {
-  overflow: hidden !important;
 }
 
 .home-content {
@@ -573,11 +451,6 @@ provide('goToHome', () => { activeSection.value = 'home' })
   font-size: 0.9rem;
   color: #64748b;
   line-height: 1.5;
-}
-
-.embed-content {
-  height: 100%;
-  min-height: calc(100vh - 72px);
 }
 
 @media (max-width: 900px) {

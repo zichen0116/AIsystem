@@ -1,8 +1,12 @@
 <script setup>
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import smartImg from '../assets/智能.png'
 
 const userStore = useUserStore()
+const router = useRouter()
+const route = useRoute()
 
 const isLogin = ref(true)
 
@@ -12,6 +16,12 @@ const form = ref({
   confirmPassword: '',
   code: ''
 })
+
+function setMode(nextIsLogin) {
+  if (isLogin.value === nextIsLogin) return
+  isLogin.value = nextIsLogin
+  form.value = { phone: '', password: '', confirmPassword: '', code: '' }
+}
 
 function switchMode() {
   isLogin.value = !isLogin.value
@@ -24,144 +34,218 @@ function handleSubmit() {
   } else {
     userStore.login({ name: form.value.phone, phone: form.value.phone })
   }
-  // 登录成功后由 App 自动切换至主页面
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  router.replace(redirect || '/lesson-prep')
 }
 </script>
 
 <template>
-  <div class="login-page">
-    <div class="login-container">
-      <div class="login-left" :class="{ 'mode-register': !isLogin }">
-        <div class="illustration">
-          <div class="illustration-figure">📄</div>
-        </div>
-        <div class="left-text">
-          <h3 v-if="isLogin">还没有账号?</h3>
-          <h3 v-else>已有账号?</h3>
-          <p v-if="isLogin">请使用手机号注册账号</p>
-          <p v-else>如果已有账号,请使用用户名和密码登录</p>
-        </div>
-        <button class="switch-btn" @click="switchMode">
-          {{ isLogin ? '注册' : '登录' }}
-        </button>
-      </div>
+  <div class="auth-page">
+    <div class="auth-card">
+      <section class="auth-left" aria-hidden="true">
+        <div class="auth-left-inner">
+          <div class="illus-bg">
+            <div class="blob blob-1"></div>
+            <div class="blob blob-2"></div>
+            <div class="spark spark-1"></div>
+            <div class="spark spark-2"></div>
+          </div>
 
-      <div class="login-right">
-        <div class="form-header">
-          <p class="category">家校沟通</p>
-          <h2>{{ isLogin ? '教师端登录' : '教师端注册' }}</h2>
+          <div class="illus-hero">
+            <img class="auth-illus-img" :src="smartImg" alt="" />
+          </div>
+        </div>
+      </section>
+
+      <section class="auth-right">
+        <h1 class="welcome-title">欢迎使用 EduPrep 教师备课平台</h1>
+        <div class="mode-tabs" role="tablist" aria-label="登录注册切换">
+          <button type="button" class="tab" :class="{ active: !isLogin }" @click="setMode(false)">注册账号</button>
+          <button type="button" class="tab" :class="{ active: isLogin }" @click="setMode(true)">登录账号</button>
         </div>
 
         <form class="auth-form" @submit.prevent="handleSubmit">
-          <input v-model="form.phone" type="tel" placeholder="手机号" class="form-input" required />
-          <input v-model="form.password" type="password" placeholder="密码" class="form-input" required />
+          <label class="field">
+            <span class="label">Phone</span>
+            <input v-model="form.phone" type="tel" placeholder="手机号" class="input" required />
+          </label>
+
+          <label class="field">
+            <span class="label">Password</span>
+            <input v-model="form.password" type="password" placeholder="密码" class="input" required />
+          </label>
+
           <template v-if="!isLogin">
-            <input v-model="form.confirmPassword" type="password" placeholder="确认密码" class="form-input" required />
+            <label class="field">
+              <span class="label">Confirm password</span>
+              <input v-model="form.confirmPassword" type="password" placeholder="确认密码" class="input" required />
+            </label>
+
             <div class="code-row">
-              <input v-model="form.code" type="text" placeholder="验证码" class="form-input" required />
+              <label class="field field-code">
+                <span class="label">Code</span>
+                <input v-model="form.code" type="text" placeholder="验证码" class="input" required />
+              </label>
               <button type="button" class="code-btn">获取验证码</button>
             </div>
           </template>
+
           <button type="submit" class="submit-btn">{{ isLogin ? '登录' : '注册' }}</button>
-          <button v-if="!isLogin" type="button" class="back-btn" @click="switchMode">返回登录</button>
         </form>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.login-page {
+.auth-page {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+  background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 60%, #ffffff 100%);
+  padding: 24px;
 }
 
-.login-container {
+.auth-card {
   display: flex;
-  width: 720px;
-  max-width: 95vw;
-  min-height: 480px;
+  width: 1150px;
+  max-width: 100%;
+  height: 665px;
   background: #fff;
-  border-radius: 16px;
+  border-radius: 18px;
   overflow: hidden;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.06);
 }
 
-.login-left {
-  flex: 1;
-  background: linear-gradient(135deg, #a8b5e8 0%, #f0c4c4 100%);
-  padding: 40px 32px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
+.auth-left {
+  flex: 1.1;
+  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 45%, #dbeafe 100%);
+  position: relative;
 }
 
-.login-left.mode-register {
-  background: linear-gradient(135deg, #a8b5e8 0%, #e8c4d4 100%);
-}
-
-.illustration {
-  flex: 1;
+.auth-left-inner {
+  height: 100%;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 6rem;
+  padding: 28px;
 }
 
-.left-text {
-  text-align: center;
-  margin-bottom: 24px;
+.illus-hero {
+  position: relative;
+  width: 100%;
+  width: 560px;
+  height: 400px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.left-text h3 {
-  color: rgba(255, 255, 255, 0.95);
-  font-size: 1.25rem;
-  margin-bottom: 8px;
+.auth-illus-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
-.left-text p {
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 0.9rem;
+.illus-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
 }
 
-.switch-btn {
-  padding: 12px 40px;
-  background: #93c5fd;
+.blob {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(0px);
+}
+
+.blob-1 {
+  width: 320px;
+  height: 320px;
+  left: -80px;
+  top: -60px;
+  background: radial-gradient(circle at 30% 30%, rgba(59,130,246,0.18), rgba(59,130,246,0));
+}
+
+.blob-2 {
+  width: 360px;
+  height: 360px;
+  right: -120px;
+  bottom: -120px;
+  background: radial-gradient(circle at 60% 40%, rgba(99,102,241,0.18), rgba(99,102,241,0));
+}
+
+.spark {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.5);
+}
+
+.spark-1 { left: 22%; top: 38%; opacity: 0.6; }
+.spark-2 { right: 26%; top: 28%; opacity: 0.35; background: rgba(99,102,241,0.5); }
+
+.illus-hero {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  height: 360px;
+}
+
+
+.auth-right {
+  flex: 0.9;
+  padding: 64px 72px;
+}
+
+.welcome-title {
+  margin: 0 0 18px;
+  font-size: 30px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.mode-tabs {
+  display: flex;
+  gap: 18px;
+  margin-bottom: 30px;
+}
+
+.tab {
   border: none;
-  border-radius: 10px;
-  color: #fff;
-  font-size: 1rem;
-  font-weight: 500;
+  background: transparent;
+  padding: 4px 0;
+  font-size: 16px;
+  color: #94a3b8;
   cursor: pointer;
+  position: relative;
+}
+
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -8px;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
   transition: background 0.2s;
 }
 
-.switch-btn:hover {
-  background: #60a5fa;
+.tab.active {
+  color: #3b82f6;
+  font-weight: 600;
 }
 
-.login-right {
-  flex: 1;
-  padding: 40px 48px;
-}
-
-.form-header {
-  margin-bottom: 32px;
-}
-
-.category {
-  font-size: 0.875rem;
-  color: #64748b;
-  margin-bottom: 4px;
-}
-
-.form-header h2 {
-  font-size: 1.5rem;
-  color: #1e293b;
+.tab.active::after {
+  background: #3b82f6;
 }
 
 .auth-form {
@@ -170,62 +254,89 @@ function handleSubmit() {
   gap: 16px;
 }
 
-.form-input {
-  padding: 12px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  font-size: 15px;
-  outline: none;
-  transition: border-color 0.2s;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.form-input:focus {
-  border-color: #60a5fa;
+.label {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.input {
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #fff;
+}
+
+.input:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 4px rgba(59,130,246,0.12);
+}
+
+.code-btn {
+  height: 46px;
+  padding: 0 22px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  align-self: end;
+  transition: filter 0.2s;
+}
+
+.submit-btn {
+  margin-top: 8px;
+  height: 50px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+
+.submit-btn:hover,
+.code-btn:hover {
+  filter: brightness(0.95);
 }
 
 .code-row {
   display: flex;
   gap: 12px;
+  align-items: flex-end;
 }
 
-.code-row .form-input {
+.field-code {
   flex: 1;
 }
 
-.code-btn {
-  padding: 12px 20px;
-  background: #93c5fd;
-  border: none;
-  border-radius: 10px;
-  color: #fff;
-  font-size: 14px;
-  white-space: nowrap;
-  cursor: pointer;
-}
+@media (max-width: 900px) {
+  .auth-card {
+    width: 100%;
+    min-height: auto;
+    flex-direction: column;
+  }
 
-.submit-btn {
-  padding: 14px;
-  background: #93c5fd;
-  border: none;
-  border-radius: 10px;
-  color: #fff;
-  font-size: 1rem;
-  font-weight: 500;
-  cursor: pointer;
-  margin-top: 8px;
-}
+  .auth-left {
+    min-height: 260px;
+  }
 
-.submit-btn:hover {
-  background: #60a5fa;
-}
+  .auth-right {
+    padding: 28px 22px 30px;
+  }
 
-.back-btn {
-  padding: 12px;
-  background: #fff;
-  border: 1px solid #93c5fd;
-  border-radius: 10px;
-  color: #3b82f6;
-  font-size: 14px;
-  cursor: pointer;
+  .illus-hero { height: 260px; }
 }
 </style>

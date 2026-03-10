@@ -1,14 +1,13 @@
 <script setup>
-import { ref } from 'vue'
+import { inject } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import LoginRegisterModal from './LoginRegisterModal.vue'
 import ThemeToggle from './ThemeToggle.vue'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
-const showLoginModal = ref(false)
+const openLoginModal = inject('openLoginModal', null)
 
 const navItems = [
   { path: '/lesson-prep', label: '进入备课' },
@@ -20,7 +19,7 @@ function handleAvatarClick() {
   if (userStore.isLoggedIn) {
     router.push('/personal-center')
   } else {
-    showLoginModal.value = true
+    openLoginModal?.()
   }
 }
 
@@ -50,15 +49,11 @@ function goTo(path) {
         :class="{ 'avatar-logged-in': userStore.isLoggedIn }"
         @click="handleAvatarClick"
       >
-        <span v-if="userStore.isLoggedIn" class="avatar-initial">
-          {{ userStore.userInfo?.name?.[0] || '用' }}
-        </span>
-        <span v-else class="avatar-icon">👤</span>
+        <span v-if="userStore.isLoggedIn" class="avatar-initial">{{ userStore.userInfo?.name?.[0] || '用' }}</span>
+        <span v-else class="login-btn-text">登录</span>
       </div>
     </nav>
   </header>
-
-  <LoginRegisterModal v-model="showLoginModal" />
 </template>
 
 <style scoped>
@@ -129,6 +124,12 @@ function goTo(path) {
 .avatar-icon {
   font-size: 1.2rem;
   opacity: 0.7;
+}
+
+.login-btn-text {
+  font-size: 14px;
+  color: #475569;
+  padding: 0 10px;
 }
 
 .avatar:hover {
