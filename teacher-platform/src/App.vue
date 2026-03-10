@@ -1,14 +1,21 @@
 <script setup>
-import { useUserStore } from './stores/user'
-import LoginView from './views/LoginView.vue'
-import Home from './views/Home.vue'
+import { provide, computed } from 'vue'
+import { useRoute, useRouter, RouterView } from 'vue-router'
+import LayoutWithNav from './components/LayoutWithNav.vue'
 
-const userStore = useUserStore()
+const route = useRoute()
+const router = useRouter()
+
+provide('openLoginModal', () => { router.push('/login') })
+provide('goToHome', () => { router.push('/') })
+
+const layoutComponent = computed(() => (route.meta?.layout === 'nav' ? LayoutWithNav : 'div'))
 </script>
 
 <template>
-  <LoginView v-if="!userStore.isLoggedIn" />
-  <Home v-else />
+  <component :is="layoutComponent">
+    <RouterView />
+  </component>
 </template>
 
 <style>

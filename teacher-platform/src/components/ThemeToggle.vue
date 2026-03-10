@@ -83,9 +83,9 @@ function persistTheme(e) {
   border: 0;
 }
 
-/* 图1 样式：太阳 | 椭圆轨道+白把手 | 月亮 */
+/* 还原为左右太阳+月亮的简单样式，整体稍微缩小 */
 .theme--sun-moon {
-  gap: 10px;
+  gap: 8px;
 }
 
 .theme__sun,
@@ -93,8 +93,8 @@ function persistTheme(e) {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   color: #4B5563;
   transition: color var(--transDur);
 }
@@ -107,8 +107,8 @@ function persistTheme(e) {
 
 .theme__track {
   display: block;
-  width: 44px;
-  height: 24px;
+  width: 40px;
+  height: 22px;
   border-radius: 999px;
   background-color: #D1D5DB;
   position: relative;
@@ -118,8 +118,8 @@ function persistTheme(e) {
 
 .theme__knob {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
@@ -127,7 +127,7 @@ function persistTheme(e) {
 }
 
 .theme__toggle:checked ~ .theme__track .theme__knob {
-  transform: translateX(20px);
+  transform: translateX(18px);
 }
 
 .theme__toggle:checked ~ .theme__track {

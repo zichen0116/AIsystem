@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
 
 const systemSearch = ref('')
 const personalSearch = ref('')
@@ -11,9 +14,9 @@ const systemResources = ref([
 ])
 
 const personalResources = ref([
-  { id: 1, title: '第4周 - 几何入门笔记', desc: '文本文档 · 今日修改', iconType: 'file' },
-  { id: 2, title: '文艺复兴艺术展示.pdf', desc: 'PDF文件 · 2.4 MB · 3天前', iconType: 'pdf' },
-  { id: 3, title: '化学YouTube播放列表', desc: '外部链接 · 上周修改', iconType: 'link' }
+  { id: 1, title: '第4周 - 几何入门笔记', desc: '文本文档 · 今日修改', tags: ['数学', '课堂笔记'], time: '今日修改', iconType: 'file' },
+  { id: 2, title: '文艺复兴艺术展示.pdf', desc: 'PDF文件 · 2.4 MB', tags: ['历史', '艺术'], time: '3天前更新', iconType: 'pdf' },
+  { id: 3, title: '化学YouTube播放列表', desc: '外部链接 · 上周修改', tags: ['化学', '视频资源'], time: '上周更新', iconType: 'link' }
 ])
 
 const systemPage = ref(1)
@@ -34,7 +37,9 @@ const filteredSystemList = computed(() => {
 const filteredPersonalList = computed(() => {
   const q = personalSearch.value
   return personalResources.value.filter(r =>
-    matchSearch(r.title, q) || matchSearch(r.desc, q)
+    matchSearch(r.title, q) ||
+    matchSearch(r.desc, q) ||
+    (r.tags && r.tags.some(t => matchSearch(t, q)))
   )
 })
 
@@ -154,6 +159,16 @@ function deleteResource(target, id) {
     personalResources.value = personalResources.value.filter(r => r.id !== id)
   }
 }
+
+function openDetail(target, item) {
+  router.push({
+    path: `/knowledge-base/${item.id}`,
+    query: {
+      title: item.title,
+      target
+    }
+  })
+}
 </script>
 
 <template>
@@ -176,7 +191,12 @@ function deleteResource(target, id) {
             <input v-model="systemSearch" type="text" placeholder="搜索精选资源..." />
           </div>
           <div class="resource-cards">
-            <div v-for="(r, i) in paginatedSystemList" :key="r.id" class="resource-card system-card">
+            <div
+              v-for="(r, i) in paginatedSystemList"
+              :key="r.id"
+              class="resource-card system-card"
+              @click="openDetail('system', r)"
+            >
               <div class="card-toolbar">
                 <button type="button" class="card-action-btn" title="编辑" @click.stop="openEditModal('system', r)">编辑</button>
                 <button type="button" class="card-action-btn delete" title="删除" @click.stop="deleteResource('system', r.id)">删除</button>
@@ -225,7 +245,12 @@ function deleteResource(target, id) {
             <input v-model="personalSearch" type="text" placeholder="搜索我的笔记和文件..." />
           </div>
           <div class="resource-cards">
-            <div v-for="(r, i) in filteredPersonalList" :key="r.id" class="resource-card personal-card">
+            <div
+              v-for="(r, i) in filteredPersonalList"
+              :key="r.id"
+              class="resource-card personal-card"
+              @click="openDetail('personal', r)"
+            >
               <div class="card-actions">
                 <button type="button" class="card-action-btn" title="编辑" @click.stop="openEditModal('personal', r)">编辑</button>
                 <button type="button" class="card-action-btn delete" title="删除" @click.stop="deleteResource('personal', r.id)">删除</button>
@@ -237,6 +262,10 @@ function deleteResource(target, id) {
               </div>
               <h4 class="card-title">{{ r.title }}</h4>
               <p class="card-desc">{{ r.desc }}</p>
+              <div class="card-tags">
+                <span v-for="tag in r.tags" :key="tag" class="tag">{{ tag }}</span>
+              </div>
+              <span class="card-time">🕐 {{ r.time }}</span>
             </div>
           </div>
         </div>
@@ -353,12 +382,12 @@ function deleteResource(target, id) {
 }
 
 .add-kb-btn {
-  padding: 6px 14px;
+  padding: 8px 18px;
   border: 1px solid #3b82f6;
   background: #fff;
   color: #3b82f6;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -482,11 +511,11 @@ function deleteResource(target, id) {
 }
 
 .card-action-btn {
-  padding: 2px 8px;
+  padding: 5px 12px;
   border: 1px solid #e2e8f0;
   background: #fff;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: #64748b;
   cursor: pointer;
 }
@@ -582,11 +611,11 @@ function deleteResource(target, id) {
 }
 
 .card-actions .card-action-btn {
-  padding: 2px 8px;
+  padding: 5px 12px;
   border: 1px solid #e2e8f0;
   background: #fff;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: #64748b;
   cursor: pointer;
 }

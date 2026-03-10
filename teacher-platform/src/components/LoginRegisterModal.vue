@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, inject } from 'vue'
+import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 
 const goToHome = inject('goToHome', null)
@@ -11,6 +12,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const userStore = useUserStore()
+const router = useRouter()
 const isLogin = ref(true)
 
 const show = computed({
@@ -41,6 +43,7 @@ function handleSubmit() {
     userStore.login({ name: form.value.phone, phone: form.value.phone })
   }
   closeModal()
+  router.push('/lesson-prep')
 }
 
 function goHome() {
