@@ -3,6 +3,7 @@
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 import os
 
 
@@ -48,6 +49,17 @@ class Settings(BaseSettings):
 
     # ========== Tavily 网络搜索 ==========
     TAVILY_API_KEY: str = ""
+
+    # ========== Neo4j 图数据库 ==========
+    NEO4J_URI: str = ""
+    NEO4J_USERNAME: str = "neo4j"
+    NEO4J_PASSWORD: str = ""
+
+    # ========== LightRAG ==========
+    # 动态绝对路径，锚定 backend/ 目录，避免 CWD 差异导致路径分裂
+    LIGHTRAG_WORKING_DIR: str = str(
+        Path(__file__).resolve().parent.parent.parent / "lightrag_data"
+    )
 
     # 应用
     APP_HOST: str = "0.0.0.0"

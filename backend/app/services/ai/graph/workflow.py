@@ -125,6 +125,7 @@ async def run_agent(
     query: str,
     user_id: int,
     chat_history: List = None,
+    system_library_ids: List[int] = None,
     max_retries: int = 3
 ) -> dict:
     """
@@ -134,6 +135,7 @@ async def run_agent(
         query: 用户问题
         user_id: 用户ID
         chat_history: 历史消息（可选）
+        system_library_ids: 系统知识库 ID 列表（非空时绑定图谱工具）
         max_retries: Self-RAG 最大重试次数
 
     Returns:
@@ -167,7 +169,8 @@ async def run_agent(
         "web_search_needed": False,
         "user_id": user_id,
         "tool_calls": [],
-        "current_query": query
+        "current_query": query,
+        "system_library_ids": system_library_ids,
     }
 
     # 获取图并执行
@@ -208,6 +211,7 @@ async def run_agent_with_checkpoint(
     user_id: int,
     thread_id: str = None,
     chat_history: List = None,
+    system_library_ids: List[int] = None,
     max_retries: int = 3
 ) -> dict:
     """
@@ -220,6 +224,7 @@ async def run_agent_with_checkpoint(
         user_id: 用户ID
         thread_id: 线程ID（用于 resume），如果不传则自动生成
         chat_history: 历史消息（可选）
+        system_library_ids: 系统知识库 ID 列表（非空时绑定图谱工具）
         max_retries: Self-RAG 最大重试次数
 
     Returns:
@@ -263,7 +268,8 @@ async def run_agent_with_checkpoint(
         "current_query": query,
         "outline": None,
         "user_feedback": None,
-        "approved": False
+        "approved": False,
+        "system_library_ids": system_library_ids,
     }
 
     # 获取图并执行

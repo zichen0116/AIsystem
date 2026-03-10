@@ -70,3 +70,8 @@ tenacity>=8.2.0
 #html小游戏
 PyPDF2==3.0.1
 python-pptx==0.6.23
+
+# 知识图谱
+lightrag-hku
+neo4j>=5.0.0
+cachetools
