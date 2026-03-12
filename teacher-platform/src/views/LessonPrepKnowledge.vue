@@ -94,7 +94,7 @@ watch(
 }
 
 .knowledge-panel {
-  padding: 65px 32px 18px;
+  padding: 72px 40px 24px;
   background: transparent;
 }
 
@@ -104,15 +104,15 @@ watch(
 }
 
 .knowledge-lottie {
-  width: 160px;
-  height: 160px;
+  width: 190px;
+  height: 190px;
   margin: 0 auto 24px;
 }
 
 .knowledge-lottie :deep(.lottie-container) {
   min-height: 0;
-  width: 160px;
-  height: 160px;
+  width: 190px;
+  height: 190px;
 }
 
 .knowledge-title {
@@ -124,8 +124,8 @@ watch(
 }
 
 .knowledge-subtitle {
-  font-size: 0.95rem;
-  color: #64748b;
+  font-size: 1.05rem;
+  color: #4b5563;
   line-height: 1.6;
   margin: 0;
   max-width: 560px;
@@ -136,35 +136,39 @@ watch(
 .knowledge-tabs-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 48px;
+  margin-bottom: 40px;
 }
 
 .knowledge-tabs {
   display: inline-flex;
-  gap: 8px;
+  padding: 3px;
+  gap: 0;
+  background: #e8f1ff;
+  border-radius: 999px;
 }
 
 .knowledge-tab {
   display: inline-flex;
   align-items: center;
-  padding: 8px 20px;
-  border: 1px solid transparent;
-  background:rgb(255, 255, 255);
-  font-size: 0.875rem;
-  font-weight: 700;
-  color:rgb(0, 0, 0);
+  padding: 9px 24px;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #64748b;
   cursor: pointer;
-  transition: background 0.1s, border 0.1s;
-  border-radius: 6px;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: 999px;
 }
 
 .knowledge-tab:hover {
-  background:rgba(80, 173, 254, 0.11);
+  color: #2563eb;
 }
 
 .knowledge-tab.active {
-  background:rgba(129, 194, 255, 0.31);
-  border-color:rgba(129, 194, 255, 0.51);
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
 }
 
 .knowledge-input-wrap {
@@ -173,13 +177,13 @@ watch(
 }
 
 .knowledge-input-box {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #cbd5e1;
   border-radius: 14px;
-  background: #fff;
+  background: #fdfefe;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  height: 160px;
+  height: 180px;
 }
 
 .knowledge-input-box:focus-within {
@@ -192,7 +196,7 @@ watch(
   padding: 20px 20px 12px;
   border: none;
   outline: none;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
   resize: none;
   font-family: inherit;

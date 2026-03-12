@@ -21,7 +21,8 @@ const currentLottieData = computed(() =>
 )
 
 const lottieSize = computed(() => {
-  return activeMode.value === 'game' ? 280 : 170
+  // 放大动画展示区域尺寸（小游戏模式稍大一些）
+  return activeMode.value === 'game' ? 345 : 230
 })
 
 // 发送后布局
@@ -412,11 +413,44 @@ watch(
           <button
             v-for="tab in tabs"
             :key="tab.id"
+            type="button"
             class="animation-tab"
             :class="{ active: activeMode === tab.id }"
             @click="activeMode = tab.id"
           >
-            {{ tab.name }}
+            <span class="animation-tab-icon" aria-hidden="true">
+              <!-- 动画：场记板图标 -->
+              <svg
+                v-if="tab.id === 'animation'"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="7" width="18" height="13" rx="2" />
+                <path d="M3 11h18" />
+                <path d="M5 7l2.5-4L11 7M13 7l2.5-4L21 7" />
+              </svg>
+              <!-- 小游戏：手柄图标 -->
+              <svg
+                v-else
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M6 12h4M8 10v4" />
+                <path d="M15 13h.01M18 11h.01M17 15h.01M20 10h.01" />
+                <path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8z" />
+              </svg>
+            </span>
+            <span class="animation-tab-label">
+              {{ tab.id === 'animation' ? '动画制作' : '小游戏制作' }}
+            </span>
           </button>
         </div>
       </div>
@@ -611,7 +645,7 @@ watch(
 
 /* 顶部动画区固定高度，切换选项时说明/选项/聊天框位置不变 */
 .animation-top-slot {
-  height: 200px;
+  height: 250px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -643,30 +677,52 @@ watch(
 
 .animation-tabs {
   display: inline-flex;
-  gap: 8px;
+  padding: 3px;
+  gap: 0;
+  background: #e8f1ff;
+  border-radius: 999px;
 }
 
 .animation-tab {
   display: inline-flex;
   align-items: center;
-  padding: 8px 20px;
-  border: 1px solid transparent;
-  background:rgba(255, 255, 255, 0.5);
-  font-size: 0.875rem;
-  font-weight: 700;
-  color:rgb(0, 0, 0);
+  gap: 8px;
+  padding: 10px 26px;
+  border: none;
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #64748b;
   cursor: pointer;
-  transition: background 0.1s, border 0.1s;
-  border-radius: 6px;
+  border-radius: 999px;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .animation-tab:hover {
-  background:rgba(80, 173, 254, 0.11);
+  color: #2563eb;
 }
 
 .animation-tab.active {
-  background:rgba(129, 194, 255, 0.31);
-  border-color:rgba(129, 194, 255, 0.51);
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
+}
+
+.animation-tab-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.animation-tab-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.animation-tab-label {
+  line-height: 1;
 }
 
 .animation-header h3 {
@@ -676,22 +732,22 @@ watch(
 }
 
 .animation-header p {
-  font-size: 0.95rem;
-  color: #64748b;
+  font-size: 1.05rem;
+  color: #4b5563;
   line-height: 1.6;
   margin: 0;
 }
 
 .animation-chatbox-wrap {
-  max-width: 740px;
+  max-width: 860px;
   margin: 0 auto;
-  width: 80%;
+  width: 90%;
 }
 
 .animation-chatbox {
-  border: 1px solid #e2e8f0;
+  border: 1px solid #cbd5e1;
   border-radius: 14px;
-  background: #fff;
+  background: #fdfefe;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -762,7 +818,7 @@ watch(
   flex: 1;
   border: none;
   outline: none;
-  font-size: 15px;
+  font-size: 16px;
   resize: none;
   padding: 0;
   font-family: inherit;
@@ -930,7 +986,7 @@ watch(
   border-radius: 12px;
   display: inline-block;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .chat-msg.assistant .chat-msg-content {
@@ -940,7 +996,7 @@ watch(
   border-radius: 12px;
   display: inline-block;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .chat-msg-label {
