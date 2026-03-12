@@ -52,3 +52,7 @@ Thumbs.db
 
 # LightRAG 本地工作目录
 lightrag_data/
+
+# analysis输出
+backend/media/data_analysis/outputs/
+backend/media/data_analysis/uploads/
