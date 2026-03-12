@@ -1,0 +1,30 @@
+{
+  "task_id": "c4c147e5fc7e4343a08d897eeabec358",
+  "file_id": "6598ad341bd54142a630b39384c6597c",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_81c4d4",
+      "type": "histogram",
+      "title": "语文成绩分布直方图",
+      "description": "展示学生语文成绩在不同分数区间的分布情况，清晰看出成绩集中趋势和离散程度。",
+      "columns": [
+        "语文"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

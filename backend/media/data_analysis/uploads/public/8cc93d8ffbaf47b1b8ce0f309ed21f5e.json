@@ -1,0 +1,104 @@
+{
+  "file_id": "8cc93d8ffbaf47b1b8ce0f309ed21f5e",
+  "filename": "班级成绩单.xlsx",
+  "scope": "public",
+  "sheet_name": "班级成绩单",
+  "rows": 100,
+  "columns": 5,
+  "analysis_summary": "这是一个包含100名学生的班级成绩单，记录了每位学生的语文、数学、英语三科成绩。数据完整无缺失，每科成绩分布较广，存在高分和低分，适合进行成绩分布、学科对比、相关性及个体表现分析。",
+  "suggested_charts": [
+    {
+      "id": "histogram_bbdcf7",
+      "type": "histogram",
+      "title": "各科成绩分布直方图",
+      "description": "分别展示语文、数学、英语三科成绩的分布情况，了解每科的成绩集中区间和整体分布形态。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "boxplot_6a5f84",
+      "type": "boxplot",
+      "title": "三科成绩箱线图对比",
+      "description": "通过箱线图对比语文、数学、英语三科成绩的中位数、四分位数及离群点，直观比较各科成绩分布差异。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_94a3b4",
+      "type": "scatter",
+      "title": "数学与英语成绩散点图",
+      "description": "分析数学成绩与英语成绩之间的相关性，观察两科成绩是否存在关联趋势。",
+      "columns": [
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "bar_count_35db10",
+      "type": "bar_count",
+      "title": "各分数段学生人数统计",
+      "description": "将单科成绩按分数段（如0-59, 60-79, 80-100）分组，用柱状图展示各分段的学生人数，了解成绩梯队情况。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "corr_heatmap_c665c0",
+      "type": "corr_heatmap",
+      "title": "三科成绩相关性热力图",
+      "description": "展示语文、数学、英语三科成绩之间的相关系数，快速识别哪些学科成绩关联性较强。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_d6da78",
+      "type": "scatter",
+      "title": "语文与数学成绩散点图",
+      "description": "分析语文成绩与数学成绩之间的相关性，观察文理学科成绩是否存在关联。",
+      "columns": [
+        "语文",
+        "数学"
+      ]
+    },
+    {
+      "id": "histogram_e49495",
+      "type": "histogram",
+      "title": "学生总分分布直方图",
+      "description": "计算每位学生的三科总分，绘制总分分布直方图，了解班级整体成绩水平分布。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "boxplot_587d66",
+      "type": "boxplot",
+      "title": "单科成绩离群点分析",
+      "description": "针对单科（如数学）绘制箱线图，重点识别该科成绩中的极高或极低离群点，定位特殊表现学生。",
+      "columns": [
+        "数学"
+      ]
+    },
+    {
+      "id": "bar_count_8ce28a",
+      "type": "bar_count",
+      "title": "各科优秀/及格人数对比",
+      "description": "设定统一标准（如>=80为优秀，>=60为及格），用分组柱状图对比三科达到优秀和及格的学生人数。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ]
+}

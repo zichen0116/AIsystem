@@ -1,0 +1,30 @@
+{
+  "task_id": "1d1a6585ee1c4bc2989478408ca2a304",
+  "file_id": "362b20686c264bb1b8b6bfab2d8cd3b2",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_41fdcb",
+      "type": "histogram",
+      "title": "语文成绩分布直方图",
+      "description": "展示语文成绩在不同分数段的学生人数分布，快速了解整体成绩集中在哪个区间。",
+      "columns": [
+        "语文"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

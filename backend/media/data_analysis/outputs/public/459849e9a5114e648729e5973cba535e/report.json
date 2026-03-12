@@ -1,0 +1,50 @@
+{
+  "task_id": "459849e9a5114e648729e5973cba535e",
+  "file_id": "1ea0fad365b4415caeed09ad4f2d00a7",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_4d0fbf",
+      "type": "histogram",
+      "title": "语文成绩分布直方图",
+      "description": "展示语文成绩在不同分数区间的学生人数分布，快速了解整体成绩结构（如是否正态分布、偏态情况）。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "scatter_b8d99d",
+      "type": "scatter",
+      "title": "语文与数学成绩散点图",
+      "description": "分析语文成绩和数学成绩之间是否存在相关性，观察两科成绩都高或都低的学生群体。",
+      "columns": [
+        "语文",
+        "数学"
+      ]
+    },
+    {
+      "id": "scatter_daf0cc",
+      "type": "scatter",
+      "title": "语文与英语成绩散点图",
+      "description": "分析语文成绩和英语成绩之间是否存在相关性，观察语言类科目成绩的关联性。",
+      "columns": [
+        "语文",
+        "英语"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

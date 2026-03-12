@@ -1,0 +1,43 @@
+{
+  "task_id": "349fc5b3f168431684f27509318284b9",
+  "file_id": "b8a687728b9f4115ac03073fe89d881f",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "corr_heatmap_e8cf39",
+      "type": "corr_heatmap",
+      "title": "三科成绩相关性热力图",
+      "description": "用颜色深浅直观展示语文、数学、英语三科成绩两两之间的相关系数。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "boxplot_64370e",
+      "type": "boxplot",
+      "title": "三科成绩箱线图对比",
+      "description": "并排比较语文、数学、英语的中位数、四分位数及离群点，直观对比各科整体水平和波动范围。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

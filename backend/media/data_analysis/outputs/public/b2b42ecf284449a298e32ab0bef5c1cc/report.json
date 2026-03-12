@@ -1,0 +1,26 @@
+{
+  "task_id": "b2b42ecf284449a298e32ab0bef5c1cc",
+  "file_id": "2d251253042f40e2bd1ce38a7a1dc8ee",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_302968",
+      "type": "histogram",
+      "title": "语文成绩分布直方图",
+      "description": "展示语文成绩的分布情况，了解学生成绩集中在哪个分数段。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "histogram_45e2d9",
+      "type": "histogram",
+      "title": "数学成绩分布直方图",
+      "description": "展示数学成绩的分布情况，了解学生成绩集中在哪个分数段。",
+      "columns": [
+        "数学"
+      ]
+    }
+  ],
+  "rows_used": 100
+}

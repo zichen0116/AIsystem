@@ -1,0 +1,85 @@
+{
+  "file_id": "98f5957225c146928d0669953898cda0",
+  "filename": "班级成绩单.xlsx",
+  "scope": "public",
+  "sheet_name": "班级成绩单",
+  "rows": 100,
+  "columns": 5,
+  "analysis_summary": "这是一份包含100名学生的班级成绩单，记录了每位学生的学号、姓名以及语文、数学、英语三科成绩。数据完整无缺失，适合进行成绩分布、学科对比、学生表现及科目相关性分析。",
+  "suggested_charts": [
+    {
+      "id": "histogram_a192c4",
+      "type": "histogram",
+      "title": "各科成绩分布直方图",
+      "description": "展示语文、数学、英语三科成绩的整体分布情况，了解成绩集中区间和离散程度。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "boxplot_68c8a6",
+      "type": "boxplot",
+      "title": "三科成绩箱线图对比",
+      "description": "对比语文、数学、英语三科成绩的中位数、四分位数及离群点，识别各科表现差异和极端分数。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_1babca",
+      "type": "scatter",
+      "title": "数学与英语成绩散点图",
+      "description": "分析数学和英语成绩之间的相关性，观察两科成绩是否具有联动趋势。",
+      "columns": [
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "bar_count_920ad4",
+      "type": "bar_count",
+      "title": "各分数段学生人数统计",
+      "description": "按自定义分数段（如优秀、良好、及格等）统计学生人数，直观展示整体成绩水平。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "corr_heatmap_f1bc7f",
+      "type": "corr_heatmap",
+      "title": "三科成绩相关性热力图",
+      "description": "用热力图清晰展示语文、数学、英语三科成绩之间的相关系数，识别强相关或弱相关科目。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "pie_825634",
+      "type": "pie",
+      "title": "单科成绩等级占比饼图",
+      "description": "选择任一科目，展示不同成绩等级（如优、良、中、差）的学生人数占比。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "line_dfde2a",
+      "type": "line",
+      "title": "学生总分排名趋势线",
+      "description": "按学号或自定义排序，绘制学生三科总分的变化趋势线，观察整体成绩波动。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ]
+}

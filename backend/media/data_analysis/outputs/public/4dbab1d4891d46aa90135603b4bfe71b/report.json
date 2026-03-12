@@ -1,0 +1,19 @@
+{
+  "task_id": "4dbab1d4891d46aa90135603b4bfe71b",
+  "file_id": "98f5957225c146928d0669953898cda0",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "bar_count_920ad4",
+      "type": "bar_count",
+      "title": "各分数段学生人数统计",
+      "description": "按自定义分数段（如优秀、良好、及格等）统计学生人数，直观展示整体成绩水平。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ],
+  "rows_used": 100
+}

@@ -1,0 +1,30 @@
+{
+  "task_id": "339f6895ec6b4d7894a7dc048a77b988",
+  "file_id": "f3ae557072f24fe3a7a659fb36c7d9ab",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "pie_037433",
+      "type": "pie",
+      "title": "单科成绩等级占比饼图",
+      "description": "选择某一科目（如数学），根据预设的等级标准，展示各等级学生人数的占比情况。",
+      "columns": [
+        "数学"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

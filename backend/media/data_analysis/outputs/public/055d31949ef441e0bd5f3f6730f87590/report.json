@@ -1,0 +1,71 @@
+{
+  "task_id": "055d31949ef441e0bd5f3f6730f87590",
+  "file_id": "6598ad341bd54142a630b39384c6597c",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_81c4d4",
+      "type": "histogram",
+      "title": "语文成绩分布直方图",
+      "description": "展示学生语文成绩在不同分数区间的分布情况，清晰看出成绩集中趋势和离散程度。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "boxplot_434726",
+      "type": "boxplot",
+      "title": "语数英三科成绩箱线图对比",
+      "description": "同时比较语文、数学、英语三科成绩的中位数、四分位距和离群点，快速了解各科整体水平和分数波动。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_7167e3",
+      "type": "scatter",
+      "title": "语文与数学成绩散点图",
+      "description": "分析语文和数学成绩之间的相关性，观察是否存在“文科好理科就好”或偏科现象。",
+      "columns": [
+        "语文",
+        "数学"
+      ]
+    },
+    {
+      "id": "bar_count_3f033f",
+      "type": "bar_count",
+      "title": "语文成绩分段人数统计（条形图）",
+      "description": "将语文成绩按优、良、中、差分段，用条形图显示各分段学生人数，便于进行等级评估。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "corr_heatmap_4aa94b",
+      "type": "corr_heatmap",
+      "title": "语数英三科成绩相关性热力图",
+      "description": "用颜色深浅直观展示语文、数学、英语三科成绩两两之间的相关系数，揭示科目间的关联强度。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "task_id": "82316d79a0eb4ca1adbd1f584226ca5a",
+  "file_id": "d2bca4998a314b3abcf104d4536a66d5",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "histogram_c34179",
+      "type": "histogram",
+      "title": "数学成绩分布直方图",
+      "description": "展示数学成绩在不同分数段的学生人数分布，直观看出成绩集中区域和整体形态。",
+      "columns": [
+        "数学"
+      ]
+    }
+  ],
+  "rows_used": 100,
+  "font_config": {
+    "DATA_ANALYSIS_FONT_PATH": "media/fonts/SourceHanSansSC-Regular.otf",
+    "matplotlib_font_family": [
+      "Source Han Sans SC"
+    ],
+    "matplotlib_sans_serif": [
+      "Arial",
+      "DejaVu Sans",
+      "Liberation Sans",
+      "Bitstream Vera Sans",
+      "sans-serif"
+    ]
+  }
+}

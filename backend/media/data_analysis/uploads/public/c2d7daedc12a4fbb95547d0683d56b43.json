@@ -1,0 +1,111 @@
+{
+  "file_id": "c2d7daedc12a4fbb95547d0683d56b43",
+  "filename": "班级成绩单.xlsx",
+  "scope": "public",
+  "sheet_name": "班级成绩单",
+  "rows": 100,
+  "columns": 5,
+  "analysis_summary": "这是一份包含100名学生的班级成绩单，记录了每位学生的学号、姓名以及语文、数学、英语三门科目的分数。数据完整无缺失，每门科目分数分布较广，存在一些极端值（如数学有0分和100分），适合进行成绩分布、科目对比及学生个体分析。",
+  "suggested_charts": [
+    {
+      "id": "histogram_a0f234",
+      "type": "histogram",
+      "title": "语文成绩分布",
+      "description": "展示语文成绩的分布情况，了解大多数学生的分数集中在哪个区间。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "histogram_11912f",
+      "type": "histogram",
+      "title": "数学成绩分布",
+      "description": "展示数学成绩的分布情况，识别是否存在两极分化或集中趋势。",
+      "columns": [
+        "数学"
+      ]
+    },
+    {
+      "id": "histogram_0f9bc6",
+      "type": "histogram",
+      "title": "英语成绩分布",
+      "description": "展示英语成绩的分布情况，分析该科目的整体表现。",
+      "columns": [
+        "英语"
+      ]
+    },
+    {
+      "id": "boxplot_35f3e3",
+      "type": "boxplot",
+      "title": "三科成绩箱线图对比",
+      "description": "并排比较语文、数学、英语的成绩分布中位数、四分位距及离群点。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_0acb48",
+      "type": "scatter",
+      "title": "语文与数学成绩关系",
+      "description": "分析语文和数学成绩之间是否存在相关性，例如语文好的学生数学是否也好。",
+      "columns": [
+        "语文",
+        "数学"
+      ]
+    },
+    {
+      "id": "scatter_549a3d",
+      "type": "scatter",
+      "title": "数学与英语成绩关系",
+      "description": "探索数学和英语成绩之间的关联模式。",
+      "columns": [
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "scatter_feb652",
+      "type": "scatter",
+      "title": "语文与英语成绩关系",
+      "description": "查看语文和英语成绩是否存在正相关或其它关系。",
+      "columns": [
+        "语文",
+        "英语"
+      ]
+    },
+    {
+      "id": "bar_count_6b3a99",
+      "type": "bar_count",
+      "title": "各分数段学生人数（如语文）",
+      "description": "将语文成绩分段（如0-59, 60-79, 80-100），统计各分段学生人数，直观显示成绩结构。",
+      "columns": [
+        "语文"
+      ]
+    },
+    {
+      "id": "corr_heatmap_2cf1db",
+      "type": "corr_heatmap",
+      "title": "三科成绩相关性热力图",
+      "description": "用热力图清晰展示语文、数学、英语三科成绩之间的相关系数。",
+      "columns": [
+        "语文",
+        "数学",
+        "英语"
+      ]
+    },
+    {
+      "id": "line_e0e479",
+      "type": "line",
+      "title": "学生三科成绩趋势（前20名示例）",
+      "description": "选取部分学生（如学号前20），用折线图对比其语数英三科成绩，分析个体优劣势科目。",
+      "columns": [
+        "姓名",
+        "语文",
+        "数学",
+        "英语"
+      ]
+    }
+  ]
+}

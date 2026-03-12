@@ -1,0 +1,18 @@
+{
+  "task_id": "ba33e3364eb74b58a6706ab165177001",
+  "file_id": "e235961273144f2c9901829edbc1be80",
+  "sheet_name": "班级成绩单",
+  "selected_charts": [
+    {
+      "id": "scatter_a36f13",
+      "type": "scatter",
+      "title": "数学与英语成绩散点图",
+      "description": "分析数学成绩和英语成绩之间的相关性，观察两门学科成绩是否存在关联趋势。",
+      "columns": [
+        "数学",
+        "英语"
+      ]
+    }
+  ],
+  "rows_used": 100
+}
