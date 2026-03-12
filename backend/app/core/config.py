@@ -72,6 +72,15 @@ class Settings(BaseSettings):
     HTML_LLM_MODEL: str = ""
     HTML_UPLOAD_DIR: str = "uploads"
 
+    # ========== 数据分析（Excel -> 图表）==========
+    # 上传的 Excel 存放目录（相对于 backend/ 运行目录）
+    DATA_ANALYSIS_UPLOAD_DIR: str = "media/data_analysis/uploads"
+    # 生成的图表与报告目录（相对于 backend/ 运行目录）
+    DATA_ANALYSIS_OUTPUT_DIR: str = "media/data_analysis/outputs"
+    # 可选：指定 Matplotlib 中文字体文件路径（ttf/ttc/otf）
+    # 例如 Windows: C:/Windows/Fonts/msyh.ttc
+    DATA_ANALYSIS_FONT_PATH: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

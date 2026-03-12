@@ -37,6 +37,10 @@ function handleSubmit() {
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
   router.replace(redirect || '/lesson-prep')
 }
+
+function goHome() {
+  router.push('/')
+}
 </script>
 
 <template>
@@ -44,6 +48,7 @@ function handleSubmit() {
     <div class="auth-card">
       <section class="auth-left" aria-hidden="true">
         <div class="auth-left-inner">
+          <button type="button" class="home-btn" @click.stop="goHome">首页</button>
           <div class="illus-bg">
             <div class="blob blob-1"></div>
             <div class="blob blob-2"></div>
@@ -132,6 +137,32 @@ function handleSubmit() {
   align-items: center;
   justify-content: center;
   padding: 28px;
+}
+
+.home-btn {
+  position: absolute;
+  left: 18px;
+  top: 18px;
+  height: 46px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(96, 165, 250, 0.55);
+  background: #ffffff;
+  color: rgba(96, 165, 250, 0.95);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 2;
+  backdrop-filter: blur(6px);
+}
+
+.home-btn:hover {
+  background: rgba(96, 165, 250, 0.08);
+  border-color: rgba(96, 165, 250, 0.70);
+}
+
+.home-btn:active {
+  transform: translateY(1px);
 }
 
 .illus-hero {
