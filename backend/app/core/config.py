@@ -3,6 +3,7 @@
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pathlib import Path
 import os
 
 
@@ -49,6 +50,17 @@ class Settings(BaseSettings):
     # ========== Tavily 网络搜索 ==========
     TAVILY_API_KEY: str = ""
 
+    # ========== Neo4j 图数据库 ==========
+    NEO4J_URI: str = ""
+    NEO4J_USERNAME: str = "neo4j"
+    NEO4J_PASSWORD: str = ""
+
+    # ========== LightRAG ==========
+    # 动态绝对路径，锚定 backend/ 目录，避免 CWD 差异导致路径分裂
+    LIGHTRAG_WORKING_DIR: str = str(
+        Path(__file__).resolve().parent.parent.parent / "lightrag_data"
+    )
+
     # 应用
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
@@ -59,6 +71,15 @@ class Settings(BaseSettings):
     HTML_LLM_BASE_URL: str = ""
     HTML_LLM_MODEL: str = ""
     HTML_UPLOAD_DIR: str = "uploads"
+
+    # ========== 数据分析（Excel -> 图表）==========
+    # 上传的 Excel 存放目录（相对于 backend/ 运行目录）
+    DATA_ANALYSIS_UPLOAD_DIR: str = "media/data_analysis/uploads"
+    # 生成的图表与报告目录（相对于 backend/ 运行目录）
+    DATA_ANALYSIS_OUTPUT_DIR: str = "media/data_analysis/outputs"
+    # 可选：指定 Matplotlib 中文字体文件路径（ttf/ttc/otf）
+    # 例如 Windows: C:/Windows/Fonts/msyh.ttc
+    DATA_ANALYSIS_FONT_PATH: str = ""
 
     class Config:
         env_file = ".env"

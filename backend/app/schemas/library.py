@@ -37,3 +37,14 @@ class KnowledgeLibraryListResponse(BaseModel):
     """知识库列表响应"""
     items: list[KnowledgeLibraryResponse]
     total: int
+
+
+class AddToGraphRequest(BaseModel):
+    """添加到知识图谱请求"""
+    asset_ids: list[int] = Field(..., min_length=1, description="知识资产 ID 列表")
+
+
+class AddToGraphResponse(BaseModel):
+    """添加到知识图谱响应"""
+    task_id: str
+    message: str

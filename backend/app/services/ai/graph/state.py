@@ -50,3 +50,8 @@ class AgentState(TypedDict):
 
     # 是否已通过用户确认
     approved: bool
+
+    # ====== 知识图谱相关字段 ======
+
+    # 用户选中的系统知识库 ID 列表（非空时绑定图谱搜索工具）
+    system_library_ids: Optional[List[int]]

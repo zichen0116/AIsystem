@@ -7,13 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
 from app.core.database import get_db
-from app.core.auth import CurrentUser
+from app.core.auth import CurrentUser, AdminUser
 from app.models.knowledge_library import KnowledgeLibrary
 from app.schemas.library import (
     KnowledgeLibraryCreate,
     KnowledgeLibraryUpdate,
     KnowledgeLibraryResponse,
     KnowledgeLibraryListResponse,
+    AddToGraphRequest,
+    AddToGraphResponse,
 )
 
 router = APIRouter(prefix="/libraries", tags=["知识库"])
@@ -146,3 +148,43 @@ async def delete_library(
     cleanup_task.delay(library_id)
 
     return None
+
+
+@router.post(
+    "/{library_id}/add-to-graph",
+    response_model=AddToGraphResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def add_to_graph(
+    library_id: int,
+    data: AddToGraphRequest,
+    current_user: AdminUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    将知识资产添加到知识图谱（仅管理员，仅系统知识库）。
+    异步执行，返回 Celery task_id。
+    """
+    # 校验知识库存在且为系统库
+    result = await db.execute(
+        select(KnowledgeLibrary).where(
+            KnowledgeLibrary.id == library_id,
+            KnowledgeLibrary.is_system == True,
+            KnowledgeLibrary.is_deleted == False,
+        )
+    )
+    library = result.scalar_one_or_none()
+    if not library:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="系统知识库不存在",
+        )
+
+    # 推入 Celery 队列
+    from app.tasks import build_graph_index
+    task = build_graph_index.delay(library_id, data.asset_ids)
+
+    return AddToGraphResponse(
+        task_id=task.id,
+        message=f"图索引构建任务已提交，共 {len(data.asset_ids)} 个资产",
+    )

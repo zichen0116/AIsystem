@@ -46,18 +46,14 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1")
 
 # ==================== 静态文件映射 ====================
-# 挂载 extracted 目录，用于预览解析出的图片
-# 访问路径: http://host:port/media/extracted/xxx.jpg
-extracted_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "media", "extracted")
-if os.path.exists(extracted_dir):
-    app.mount(
-        "/media/extracted",
-        StaticFiles(directory=extracted_dir),
-        name="extracted"
-    )
-    print(f"静态文件映射: /media/extracted -> {extracted_dir}")
+# 挂载 backend/media 目录，用于下载 PPT/图表/解析图片等
+# 访问路径: http://host:port/media/...
+media_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "media")
+if os.path.exists(media_dir):
+    app.mount("/media", StaticFiles(directory=media_dir), name="media")
+    print(f"静态文件映射: /media -> {media_dir}")
 else:
-    print(f"警告: 静态文件目录不存在: {extracted_dir}")
+    print(f"警告: media 目录不存在: {media_dir}")
 
 
 @app.get("/health")

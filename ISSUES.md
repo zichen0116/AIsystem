@@ -2,48 +2,11 @@
 
 # 现在需要完善RAG系统的后端部分，要求如下：
 
-现有的分块逻辑为主调用语义分块，递归分块负责兜底有问题，你认为这种方案对于此次教学智能体赛题的项目合理吗？要不要采取其他方案？
-现有方案需要优化的点如下：
+我将采用的方案是保留原有 LangChain+Chroma 向量检索，并新增基于 LightRAG的图检索
 
-1. 语义分块，默认正则只认英文句号 `.`、问号 `?`、感叹号 `!` 后跟空格作为句子边界，**完全不支持中文标点**（`。`、`？`、`！`等）。对于中文教育场景，这意味着整段中文文本不会被拆分成句子，导致语义分块几乎失效。中文句子后通常没有空格（`\s+`）
+对于「混合 / 选择 / 备选」的选择策略，请先给出你的想法，我的想法是如下：对于宏观总结类查询（“请结合全书总结本课程的四大核心教学目标”），再路由给 LightRAG 处理。当遇到复杂教学设计时，将 Chroma 捞回的具体细节片段，与 LightRAG 捞回的全局知识图谱上下文拼接到一起喂给大模型。最后给出选择策略的建议。
 
-2. 修复建议：
+另外，我还想和你讨论一下，因为GraphRAG极其消耗token，我打算只给系统级知识库做Graph，而且不同知识库还要做好隔离，目前有两种方案，标签隔离和属性隔离，你更推荐哪一种，或者有没有更好的方案，说说你的想法。如果你有不清楚的地方，先与我商量清楚后再去执行代码生成工作
 
-   在 [split_documents_semantic](vscode-file://vscode-app/d:/DevelopTools/VScode/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 中传入自定义的 `sentence_split_regex`：
+知识图谱存储使用neo4j Aura，连接信息见 backend/.env
 
-   ```
-   text_splitter = SemanticChunker(
-       embeddings=embeddings,
-       sentence_split_regex=r"(?<=[.?!。？！；\n])\s*",  # 支持中文标点，允许无空格
-       breakpoint_threshold_type=breakpoint_threshold_type,
-       breakpoint_threshold_amount=breakpoint_threshold_amount,
-       min_chunk_size=min_chunk_size,
-       add_start_index=True
-   )
-   ```
-
-   关键改动：
-
-   - `[.?!。？！；\n]` — 加入中文句号、问号、感叹号、分号、换行
-   - `\s*` 替换 `\s+` — 中文标点后通常无空格
-
-3. 递归分块缺少 `？`、`！`、`；`，
-
-4. 建议优化：
-
-   separators = [
-       "\n\n\n",   # 段落分隔（三个换行）
-       "\n\n",     # 段落分隔（两个换行）
-       "\n",       # 换行
-       "。",       # 中文句号
-       "？",       # 中文问号
-       "！",       # 中文感叹号
-       "；",       # 中文分号
-       ". ",       # 英文句子
-       "? ",       # 英文问号
-       "! ",       # 英文感叹号
-       "，",       # 中文逗号
-       ", ",       # 英文逗号
-       " ",        # 空格
-       ""          # 单字符
-   ]

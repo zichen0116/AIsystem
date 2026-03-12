@@ -6,7 +6,7 @@ AI 工具定义
 """
 import os
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.documents import Document
@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.services.rag.hybrid_retriever import HybridRetriever
 from app.services.rag.vector_store import VectorStore
+from app.services.rag.graph_store import GraphStore
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,17 @@ class WebSearchInput(BaseModel):
     """联网搜索输入"""
     query: str = Field(
         description="搜索关键词，应简洁准确"
+    )
+
+
+class GraphSearchInput(BaseModel):
+    """知识图谱检索输入"""
+    query: str = Field(
+        description="搜索查询，用于从知识图谱中检索全局上下文和实体关系"
+    )
+    mode: Literal["local", "global", "hybrid"] = Field(
+        default="hybrid",
+        description="检索模式: local(局部实体), global(全局关系), hybrid(混合)"
     )
 
 
@@ -207,21 +219,77 @@ def _search_web_fallback(query: str) -> str:
         return f"网络搜索失败: {str(e)}"
 
 
+def _create_graph_search_impl(system_library_ids: List[int]):
+    """
+    创建知识图谱检索实现函数（通过闭包注入 library_ids）
+
+    Args:
+        system_library_ids: 当前会话选中的系统知识库 ID 列表
+    """
+
+    async def search_knowledge_graph_impl(query: str, mode: str = "hybrid") -> str:
+        """
+        知识图谱检索（异步实现）
+
+        ToolNode 在异步上下文中调用工具，因此必须使用 async 函数，
+        而非 asyncio.run()（会因已有事件循环而崩溃）。
+
+        遍历所有选中的系统知识库，合并图谱检索结果。
+
+        Args:
+            query: 搜索查询
+            mode: 检索模式 (local/global/hybrid)
+
+        Returns:
+            格式化的图谱检索结果字符串
+        """
+        try:
+            logger.info(
+                f"执行知识图谱检索: query={query}, mode={mode}, "
+                f"libraries={system_library_ids}"
+            )
+
+            all_results = []
+            for lib_id in system_library_ids:
+                try:
+                    result = await GraphStore.query(lib_id, query, mode=mode)
+                    if result and "检索失败" not in result:
+                        all_results.append(
+                            f"【知识库 {lib_id}】\n{result}"
+                        )
+                except Exception as e:
+                    logger.warning(f"图谱检索失败 library_id={lib_id}: {e}")
+
+            if not all_results:
+                return "知识图谱中未找到相关内容。"
+
+            return "\n\n".join(all_results)
+
+        except Exception as e:
+            logger.error(f"知识图谱检索失败: {e}")
+            return f"知识图谱检索暂不可用: {str(e)}"
+
+    return search_knowledge_graph_impl
+
+
 # ==================== 导出 StructuredTools ====================
 
-def get_search_tools() -> List[BaseTool]:
+def get_search_tools(system_library_ids: Optional[List[int]] = None) -> List[BaseTool]:
     """
-    获取所有搜索工具
+    获取搜索工具列表
+
+    Args:
+        system_library_ids: 系统知识库 ID 列表。非空时额外绑定知识图谱工具。
 
     Returns:
-        [search_local_knowledge, search_web]
+        工具列表
     """
     tools = [
         StructuredTool.from_function(
             name="search_local_knowledge",
             description=(
                 "用于查询用户上传的教学资料（PDF/Word/视频/图片）。"
-                "涉及具体课程内容、定义、公式时**必须优先使用**此工具。"
+                "涉及具体课程内容、定义、公式、原文引用时**必须优先使用**此工具。"
                 "输入需要提供 query（问题）和 user_id（用户ID）。"
             ),
             args_schema=LocalSearchInput,
@@ -241,9 +309,20 @@ def get_search_tools() -> List[BaseTool]:
         ),
     ]
 
+    # 当用户选中了系统知识库时，额外绑定图谱工具
+    if system_library_ids:
+        graph_impl = _create_graph_search_impl(system_library_ids)
+        tools.append(
+            StructuredTool.from_function(
+                name="search_knowledge_graph",
+                description=(
+                    "搜索系统知识图谱，获取全局上下文、实体关系和知识脉络。"
+                    "适用于总结、概述、关系梳理、对比分析等宏观问题。"
+                    "当需要全局视角或知识框架时使用此工具。"
+                ),
+                args_schema=GraphSearchInput,
+                coroutine=graph_impl,  # 异步函数，用 coroutine 而非 func
+            )
+        )
+
     return tools
-
-
-# 导出单例工具（方便直接导入使用）
-search_local_knowledge = get_search_tools()[0]
-search_web = get_search_tools()[1]

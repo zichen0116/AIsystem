@@ -6,12 +6,29 @@
 
 多模态 AI 互动式教学智能体 — 全栈智能备课平台。后端 Python/FastAPI，前端 Vue 3/Vite。
 
+# Rules
+
 在进行开发之前需要向用户提问，确保双方完全理解需求或用户要求后再完成开发任务。
 
 开发任务要求见ISSUES.md文档,在开发前必须确保当前处在非main分支上
 
-赛题要求可以参见赛题信息.md
+赛题要求可以参见赛题信息.md 
+
 git提交记录不要包含Co-Authored-By
+
+# Git Commit Rules
+
+## Behavior
+When generating git commit messages:
+- **Strictly Forbidden**: Never include text indicating the message was AI-generated (e.g., "Written by Claude", "AI-generated").
+- **No Footers**: Do not append "Signed-off-by" or "Co-authored-by" lines unless explicitly told to do so for a specific human user.
+- **Direct Output**: Output the commit message immediately without introductory text (e.g., skip "Sure, here is the commit...").
+
+## Format Standard
+- Use the Conventional Commits format: `<type>(<scope>): <subject>`
+- Allowed types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+- Keep the first line under 72 characters.
+
 ## 开发命令
 
 ### 后端（在 `backend/` 目录下执行）

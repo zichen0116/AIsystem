@@ -16,6 +16,13 @@ from app.schemas.knowledge import (
     KnowledgeAssetResponse,
     KnowledgeAssetListResponse,
 )
+from app.schemas.data_analysis import (
+    UploadAndAnalyzeResponse,
+    GenerateChartsRequest,
+    GenerateChartsResponse,
+    ChartOption,
+    DataColumnInfo,
+)
 
 __all__ = [
     "UserRegister",
@@ -34,4 +41,9 @@ __all__ = [
     "KnowledgeAssetUpdate",
     "KnowledgeAssetResponse",
     "KnowledgeAssetListResponse",
+    "UploadAndAnalyzeResponse",
+    "GenerateChartsRequest",
+    "GenerateChartsResponse",
+    "ChartOption",
+    "DataColumnInfo",
 ]
