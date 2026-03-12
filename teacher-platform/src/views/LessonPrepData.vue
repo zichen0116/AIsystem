@@ -348,20 +348,20 @@ async function generateCharts() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 24px 24px 16px;
+  padding: 40px 32px 20px;
   overflow: hidden;
 }
 
 .data-header {
   text-align: center;
-  max-width: 560px;
-  margin-bottom: 16px;
+  max-width: 640px;
+  margin-bottom: 20px;
 }
 
 .data-icon {
-  width: 200px;
-  height: 200px;
-  margin: 0 auto 16px;
+  width: 240px;
+  height: 230px;
+  margin: 0 auto 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -369,8 +369,8 @@ async function generateCharts() {
 
 .data-icon :deep(.lottie-container) {
   min-height: 0;
-  width: 200px;
-  height: 200px;
+  width: 240px;
+  height: 230px;
 }
 
 .data-title {
@@ -381,8 +381,8 @@ async function generateCharts() {
 }
 
 .data-desc {
-  font-size: 0.95rem;
-  color: #64748b;
+  font-size: 1.05rem;
+  color: #4b5563;
   line-height: 1.6;
   margin: 0 0 16px;
   margin-top: -22px;
@@ -408,29 +408,29 @@ async function generateCharts() {
 .data-examples {
   display: flex;
   gap: 16px;
-  margin-bottom: 48px;
+  margin-bottom: 40px;
   flex-wrap: wrap;
   justify-content: center;
 }
 
 .example-card {
-  padding: 16px 24px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
+  padding: 18px 26px;
+  border: 1px solid #cbd5e1;
+  background: #fdfefe;
   border-radius: 12px;
-  font-size: 0.95rem;
-  color: #475569;
+  font-size: 1rem;
+  color: #374151;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .example-card:hover {
-  border-color: #cbd5e1;
-  background: #f8fafc;
+  border-color: #94a3b8;
+  background: #eef2ff;
 }
 
 .data-input-area {
-  width: 70%;
+  width: 75%;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -477,11 +477,11 @@ async function generateCharts() {
 }
 
 .bubble {
-  max-width: 82%;
+  max-width: 86%;
   border-radius: 14px;
   padding: 12px 12px;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  background: #f9fafb;
 }
 
 .chat-row.user .bubble {
@@ -544,7 +544,8 @@ async function generateCharts() {
   position: sticky;
   bottom: 0;
   background: linear-gradient(180deg, rgba(248,250,252,0) 0%, rgba(248,250,252,0.85) 18%, rgba(248,250,252,1) 100%);
-  padding-top: 12px;
+  padding-top: 4px;
+  margin-top: -8px;
   z-index: 1; /* 确保输入区在聊天区之上，可正常点击输入 */
 }
 
@@ -587,8 +588,8 @@ async function generateCharts() {
 }
 
 .file-name {
-  font-size: 14px;
-  color: #64748b;
+  font-size: 15px;
+  color: #4b5563;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

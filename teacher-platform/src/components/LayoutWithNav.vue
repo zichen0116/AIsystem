@@ -1,5 +1,5 @@
 <script setup>
-import { ref, provide, computed } from 'vue'
+import { ref, provide, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import ThemeToggle from './ThemeToggle.vue'
@@ -19,10 +19,55 @@ const primaryItems = [
 ]
 
 function goToPrimary(path) {
+  if (!path.startsWith('/lesson-prep')) lessonPrepOpen.value = false
   router.push(path)
 }
 
+const lessonPrepTabs = [
+  { id: 'ppt', label: 'PPT生成', icon: 'ppt' },
+  { id: 'animation', label: '动游制作', icon: 'animation' },
+  { id: 'knowledge', label: '知识图谱', icon: 'knowledge' },
+  { id: 'data', label: '数据分析', icon: 'data' }
+]
+
+const isLessonPrepRoute = computed(() => route.path.startsWith('/lesson-prep'))
+const activeLessonPrepTab = computed(() => {
+  const t = route.query.tab
+  const tab = typeof t === 'string' ? t : ''
+  const valid = lessonPrepTabs.map(i => i.id)
+  return valid.includes(tab) ? tab : 'ppt'
+})
+
+const lessonPrepOpen = ref(false)
+const lessonPrepIsOpen = computed(() => lessonPrepOpen.value)
+
+function toggleLessonPrep() {
+  const next = !lessonPrepOpen.value
+  lessonPrepOpen.value = next
+  if (next && !isLessonPrepRoute.value) {
+    router.push({ path: '/lesson-prep', query: { tab: activeLessonPrepTab.value } })
+  }
+}
+
+function goToLessonPrepTab(id) {
+  lessonPrepOpen.value = true
+  router.push({ path: '/lesson-prep', query: { ...route.query, tab: id } })
+}
+
+watch(
+  () => route.path,
+  (p) => {
+    if (!p.startsWith('/lesson-prep')) lessonPrepOpen.value = false
+  }
+)
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  if (sidebarCollapsed.value) lessonPrepOpen.value = false
+}
+
 function handleAvatarClick() {
+  lessonPrepOpen.value = false
   if (userStore.isLoggedIn) {
     router.push('/personal-center')
   } else {
@@ -34,17 +79,107 @@ function handleAvatarClick() {
 <template>
   <div class="layout">
     <!-- 一级侧边栏 -->
-    <aside class="primary">
+    <aside class="primary" :class="{ collapsed: sidebarCollapsed }">
       <div class="primary-top" @click="router.push('/')" role="button" tabindex="0">
         <div class="brand-icon" aria-hidden="true">📖</div>
-        <div class="brand-text">
+        <div v-if="!sidebarCollapsed" class="brand-text">
           <div class="brand-name">EduPrep</div>
         </div>
       </div>
 
       <nav class="primary-nav">
+        <!-- 备课中心：折叠列表 -->
+        <div class="nav-group" :class="{ active: isLessonPrepRoute }">
+          <button type="button" class="primary-item has-children" :class="{ active: isLessonPrepRoute }" @click="toggleLessonPrep">
+            <span class="pi-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8M12 17v4"/>
+                <path d="M14 8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="currentColor" fill-opacity="0.25"/>
+              </svg>
+            </span>
+            <span class="pi-label">备课中心</span>
+            <span v-if="!sidebarCollapsed" class="pi-chevron" aria-hidden="true" :class="{ open: lessonPrepIsOpen }">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </span>
+          </button>
+
+          <div v-show="lessonPrepIsOpen && !sidebarCollapsed" class="sub-list">
+            <button
+              v-for="t in lessonPrepTabs"
+              :key="t.id"
+              type="button"
+              class="sub-item"
+              :class="{ active: isLessonPrepRoute && activeLessonPrepTab === t.id }"
+              @click="goToLessonPrepTab(t.id)"
+            >
+              <span class="sub-icon" aria-hidden="true">
+                <!-- PPT与教案：显示器+文档 -->
+                <svg
+                  v-if="t.icon === 'ppt'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 17v4" />
+                  <path d="M14 8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="currentColor" fill-opacity="0.18" />
+                </svg>
+                <!-- 动画与游戏制作：手柄 -->
+                <svg
+                  v-else-if="t.icon === 'animation'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M6 12h4M8 10v4M15 13h.01M18 11h.01M17 15h.01M20 10h.01" />
+                  <path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8z" />
+                </svg>
+                <!-- 知识图谱构建：节点连线 -->
+                <svg
+                  v-else-if="t.icon === 'knowledge'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="3" y="3" width="6" height="6" rx="1" />
+                  <rect x="15" y="3" width="6" height="6" rx="1" />
+                  <rect x="9" y="15" width="6" height="6" rx="1" />
+                  <path d="M9 18H6a3 3 0 0 1 0-6h0M15 18h3a3 3 0 0 0 0-6h0M9 15V9a3 3 0 0 1 6 0v6" />
+                </svg>
+                <!-- 数据分析：柱状图 -->
+                <svg
+                  v-else
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 3v18h18" />
+                  <path d="M7 16v-5M11 16v-8M15 16v-11M19 16v-3" />
+                </svg>
+              </span>
+              <span class="sub-label">{{ t.label }}</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 其它一级入口 -->
         <button
-          v-for="item in primaryItems"
+          v-for="item in primaryItems.filter(i => i.id !== 'lesson-prep')"
           :key="item.id"
           type="button"
           class="primary-item"
@@ -52,18 +187,12 @@ function handleAvatarClick() {
           @click="goToPrimary(item.path)"
         >
           <span class="pi-icon" aria-hidden="true">
-            <!-- 备课中心：显示器+文档（沿用之前 LessonPrep 风格） -->
-            <svg v-if="item.icon === 'lesson'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2"/>
-              <path d="M8 21h8M12 17v4"/>
-              <path d="M14 8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="currentColor" fill-opacity="0.25"/>
-            </svg>
             <!-- 课件管理：文件夹 -->
-            <svg v-else-if="item.icon === 'folder'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <svg v-if="item.icon === 'folder'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/>
               <path d="M3 10h18"/>
             </svg>
-            <!-- 知识库：节点连线（沿用之前风格） -->
+            <!-- 知识库：节点连线 -->
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <rect x="3" y="3" width="6" height="6" rx="1"/>
               <rect x="15" y="3" width="6" height="6" rx="1"/>
@@ -87,7 +216,35 @@ function handleAvatarClick() {
 
       <div class="primary-bottom">
         <div class="bottom-row">
-          <div class="sidebar-theme-toggle">
+          <button type="button" class="collapse-btn" @click="toggleSidebar" :title="sidebarCollapsed ? '展开导航栏' : '收起导航栏'">
+            <!-- 展开状态：向左收起箭头 -->
+            <svg
+              v-if="!sidebarCollapsed"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M14 6L8 12l6 6" />
+            </svg>
+            <!-- 收起状态：向右展开箭头 -->
+            <svg
+              v-else
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M10 6l6 6-6 6" />
+            </svg>
+          </button>
+          <div v-if="!sidebarCollapsed" class="sidebar-theme-toggle">
             <ThemeToggle />
           </div>
         </div>
@@ -124,13 +281,51 @@ function handleAvatarClick() {
 }
 
 .primary {
-  width: 180px;
+  width: 200px;
   background: #ffffff;
   border-right: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  transition: width 0.18s ease;
+}
+
+.primary.collapsed {
+  width: 64px;
+}
+
+.primary.collapsed .brand-text {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.primary.collapsed .primary-top {
+  justify-content: center;
+  padding: 16px 8px 10px;
+}
+
+.primary.collapsed .primary-nav {
+  padding: 10px 6px;
+}
+
+.primary.collapsed .primary-item {
+  justify-content: center;
+  gap: 0;
+  padding: 10px 8px;
+}
+
+.primary.collapsed .pi-label {
+  display: none;
+}
+
+.primary.collapsed .pi-icon {
+  width: 22px;
+}
+
+.primary.collapsed .primary-item.has-children {
+  padding-right: 8px;
 }
 
 .primary-top {
@@ -213,6 +408,83 @@ function handleAvatarClick() {
   height: 20px;
 }
 
+.primary-item.has-children {
+  padding-right: 6px;
+}
+
+.pi-chevron {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  opacity: 0.75;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.pi-chevron svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pi-chevron.open {
+  transform: rotate(180deg);
+  opacity: 0.95;
+}
+
+.sub-list {
+  padding: 4px 6px 6px 34px; /* 左侧缩进：对齐图标后 */
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sub-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  color: #64748b;
+  font-size: 16px;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.sub-item:hover {
+  background: transparent;
+  color: #334155;
+}
+
+.sub-item.active {
+  background: transparent;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.sub-icon {
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+
+.sub-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sub-label {
+  white-space: nowrap;
+}
+
 .primary-bottom {
   margin-top: auto;
   padding: 10px 8px 12px;
@@ -224,6 +496,33 @@ function handleAvatarClick() {
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+.collapse-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin-right: 13px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  border-radius: 10px;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.collapse-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.collapse-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .sidebar-theme-toggle {
