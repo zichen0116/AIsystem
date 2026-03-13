@@ -25,6 +25,7 @@ function goToPrimary(path) {
 
 const lessonPrepTabs = [
   { id: 'ppt', label: 'PPT生成', icon: 'ppt' },
+  { id: 'lesson-plan', label: '教案生成', icon: 'lesson-plan' },
   { id: 'animation', label: '动游制作', icon: 'animation' },
   { id: 'knowledge', label: '知识图谱', icon: 'knowledge' },
   { id: 'data', label: '数据分析', icon: 'data' }
@@ -129,6 +130,20 @@ function handleAvatarClick() {
                   <rect x="2" y="3" width="20" height="14" rx="2" />
                   <path d="M8 21h8M12 17v4" />
                   <path d="M14 8h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" fill="currentColor" fill-opacity="0.18" />
+                </svg>
+                <!-- 教案生成：文档+笔 -->
+                <svg
+                  v-else-if="t.icon === 'lesson-plan'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M8 13h8M8 17h5" />
                 </svg>
                 <!-- 动画与游戏制作：手柄 -->
                 <svg
