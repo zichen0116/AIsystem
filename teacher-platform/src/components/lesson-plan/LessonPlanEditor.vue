@@ -26,26 +26,20 @@
 
     <!-- Tiptap editor (hidden during streaming) -->
     <div class="editor-container" v-show="!isStreaming && editorReady">
-      <!-- FloatingMenu: appears on empty lines -->
-      <floating-menu :editor="editor" :tippy-options="{ duration: 100 }" v-if="editor">
-        <div class="floating-menu">
-          <button @click="editor.chain().focus().toggleHeading({ level: 2 }).run()">H2</button>
-          <button @click="editor.chain().focus().toggleHeading({ level: 3 }).run()">H3</button>
-          <button @click="editor.chain().focus().toggleBulletList().run()">列表</button>
-          <button @click="editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()">表格</button>
-          <button @click="editor.chain().focus().toggleTaskList().run()">清单</button>
-        </div>
-      </floating-menu>
-
-      <!-- BubbleMenu: appears on text selection -->
-      <bubble-menu :editor="editor" :tippy-options="{ duration: 100 }" v-if="editor">
-        <div class="bubble-menu">
-          <button @click="editor.chain().focus().toggleBold().run()" :class="{ active: editor.isActive('bold') }">B</button>
-          <button @click="editor.chain().focus().toggleItalic().run()" :class="{ active: editor.isActive('italic') }">I</button>
-          <button @click="editor.chain().focus().toggleUnderline().run()" :class="{ active: editor.isActive('underline') }">U</button>
-          <button @click="editor.chain().focus().toggleHighlight().run()" :class="{ active: editor.isActive('highlight') }">高亮</button>
-        </div>
-      </bubble-menu>
+      <!-- Format toolbar -->
+      <div class="format-toolbar" v-if="editor && hasContent">
+        <button class="fmt-btn" @click="editor.chain().focus().toggleHeading({ level: 2 }).run()" :class="{ active: editor.isActive('heading', { level: 2 }) }">H2</button>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleHeading({ level: 3 }).run()" :class="{ active: editor.isActive('heading', { level: 3 }) }">H3</button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleBold().run()" :class="{ active: editor.isActive('bold') }">B</button>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleItalic().run()" :class="{ active: editor.isActive('italic') }">I</button>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleUnderline().run()" :class="{ active: editor.isActive('underline') }">U</button>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleHighlight().run()" :class="{ active: editor.isActive('highlight') }">高亮</button>
+        <span class="fmt-sep"></span>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleBulletList().run()">列表</button>
+        <button class="fmt-btn" @click="editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()">表格</button>
+        <button class="fmt-btn" @click="editor.chain().focus().toggleTaskList().run()">清单</button>
+      </div>
 
       <editor-content :editor="editor" class="tiptap-content" />
     </div>
@@ -60,13 +54,13 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, onDeactivated, shallowRef } from 'vue'
-import { EditorContent, FloatingMenu, BubbleMenu, Editor } from '@tiptap/vue-3'
+import { EditorContent, Editor } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
-import Table from '@tiptap/extension-table'
-import TableRow from '@tiptap/extension-table-row'
-import TableCell from '@tiptap/extension-table-cell'
-import TableHeader from '@tiptap/extension-table-header'
+import { Table } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table-row'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import Highlight from '@tiptap/extension-highlight'
@@ -176,7 +170,7 @@ function downloadMd() {
 
 async function downloadDocx() {
   showDownloadMenu.value = false
-  const { resolveApiUrl, getToken } = await import('@/api/http.js')
+  const { resolveApiUrl, getToken } = await import('../../api/http.js')
   const mkdown = editor.value?.storage.markdown.getMarkdown() || ''
   const res = await fetch(resolveApiUrl('/api/v1/lesson-plan/export/docx'), {
     method: 'POST',
@@ -245,13 +239,11 @@ defineExpose({ getMarkdown, loadContent, scrollToPos })
 .tiptap-content :deep(.ProseMirror ul[data-type="taskList"] li) { display: flex; align-items: flex-start; gap: 8px; }
 .tiptap-content :deep(.ProseMirror p.is-editor-empty:first-child::before) { content: attr(data-placeholder); color: #94a3b8; pointer-events: none; float: left; height: 0; }
 
-.floating-menu { display: flex; gap: 4px; padding: 4px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-.floating-menu button { padding: 4px 10px; border: none; background: none; font-size: 0.8rem; color: #64748b; cursor: pointer; border-radius: 4px; }
-.floating-menu button:hover { background: #f1f5f9; color: #2563eb; }
-
-.bubble-menu { display: flex; gap: 2px; padding: 4px; background: #1e293b; border-radius: 8px; }
-.bubble-menu button { padding: 4px 8px; border: none; background: none; color: #e2e8f0; cursor: pointer; font-size: 0.8rem; border-radius: 4px; font-weight: 600; }
-.bubble-menu button:hover, .bubble-menu button.active { background: #475569; color: #fff; }
+.format-toolbar { display: flex; gap: 4px; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; flex-wrap: wrap; align-items: center; }
+.fmt-btn { padding: 4px 10px; border: none; background: none; font-size: 0.8rem; color: #64748b; cursor: pointer; border-radius: 4px; }
+.fmt-btn:hover { background: #e2e8f0; color: #2563eb; }
+.fmt-btn.active { background: #dbeafe; color: #2563eb; font-weight: 600; }
+.fmt-sep { width: 1px; height: 18px; background: #e2e8f0; margin: 0 4px; }
 
 .editor-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #94a3b8; padding: 40px; }
 .empty-title { font-size: 1.1rem; font-weight: 500; color: #64748b; margin-bottom: 8px; }

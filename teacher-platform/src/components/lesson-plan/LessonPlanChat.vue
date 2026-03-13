@@ -78,8 +78,8 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { resolveApiUrl, getToken } from '@/api/http.js'
-import { useVoiceInput } from '@/composables/useVoiceInput.js'
+import { resolveApiUrl, getToken } from '../../api/http.js'
+import { useVoiceInput } from '../../composables/useVoiceInput.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },

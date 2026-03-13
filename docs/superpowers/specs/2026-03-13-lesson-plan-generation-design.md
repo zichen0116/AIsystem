@@ -6,6 +6,56 @@
 
 核心交互：左侧 1/3 AI 对话面板 + 右侧 2/3 Tiptap 富文本编辑器 + 可收起目录导航。
 
+## 数据模型
+
+所有业务数据必须持久化到 PostgreSQL，不必要不采用前端本地存储方案。
+
+### 新增模型
+
+**LessonPlan（教案表）**
+
+```python
+class LessonPlan(Base):
+    __tablename__ = "lesson_plans"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    user_id       = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id    = Column(UUID(as_uuid=True), nullable=False, unique=True, index=True)  # 关联 ChatHistory
+    title         = Column(String(255), nullable=False, default="未命名教案")
+    content       = Column(Text, nullable=False, default="")                              # Markdown 全文
+    status        = Column(String(20), nullable=False, default="draft")                   # draft / generating / completed
+    created_at    = Column(DateTime(timezone=True), default=now_utc)
+    updated_at    = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+```
+
+**LessonPlanReference（教案参考文件表）**
+
+```python
+class LessonPlanReference(Base):
+    __tablename__ = "lesson_plan_references"
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    user_id        = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    lesson_plan_id = Column(Integer, ForeignKey("lesson_plans.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename       = Column(String(255), nullable=False)
+    file_path      = Column(String(500), nullable=False)       # 磁盘存储路径
+    parsed_content = Column(Text, nullable=False, default="")  # 解析后的纯文本
+    created_at     = Column(DateTime(timezone=True), default=now_utc)
+```
+
+### 复用模型
+
+**ChatHistory（已有）** — 通过 `session_id` 关联到 `LessonPlan.session_id`，存储教案对话的完整历史（包括 AI 真实回复内容，不是固定文案）。
+
+### 数据生命周期
+
+1. 用户首次发送消息时 -> 创建 `LessonPlan` 记录（status=draft, session_id=新 UUID）
+2. 每条用户消息和 AI 回复 -> 写入 `ChatHistory`（role=user/assistant, session_id 关联）
+3. AI 生成完毕 -> 更新 `LessonPlan.content`（完整 Markdown）、`LessonPlan.status=completed`
+4. 用户手动编辑 -> 前端定时/失焦时调用 `PATCH /lesson-plan/{id}` 保存最新内容
+5. 上传参考文件 -> 文件存磁盘，解析文本存 `LessonPlanReference.parsed_content`
+6. 用户再次进入教案 tab -> 从数据库加载最近的教案和对话历史
+
 ## 技术选型
 
 - **富文本编辑器**: Tiptap（Vue 3 原生支持，稳定可靠）
@@ -13,7 +63,7 @@
   - 不选 BlockNote，原因：Vue 适配器不够成熟，竞赛项目稳定性优先
 - **Markdown 解析**: markdown-it + markdown-it-task-lists（流式渲染预览层，支持任务列表语法）
 - **Markdown 序列化**: tiptap-markdown（从 Tiptap 编辑器导出 Markdown，用于发送给 AI 和导出）
-- **DOCX 导出**: pypandoc（后端，一行转换；首次运行时通过 pypandoc.download_pandoc() 自动安装 Pandoc）
+- **DOCX 导出**: pypandoc（后端转换；应用启动时检测 Pandoc 是否可用，不可用则调用 `pypandoc.download_pandoc()` 自动安装）
 - **PDF 导出**: html2pdf.js（前端，从编辑器 DOM 直接生成）
 - **MD 导出**: 前端纯文本 Blob 下载
 
@@ -80,10 +130,10 @@ tabs: [ppt, lesson-plan, animation, knowledge, data]
 - Highlight（重点标记）
 - TextAlign
 - Underline
+- FloatingMenu（空行弹出块类型选择菜单：标题、列表、表格等 — 实现类 Notion "+" 菜单）
+- BubbleMenu（选中文字弹出格式工具栏：加粗、斜体、高亮等 — 实现类 Notion 内联格式栏）
 
-可选扩展（提升体验）：
-- FloatingMenu（空行弹出块类型选择菜单）
-- BubbleMenu（选中文字弹出格式工具栏）
+可选扩展：
 - CharacterCount（字数统计）
 
 ### 知识库选择交互
@@ -163,26 +213,29 @@ SSE 事件格式（与现有 html_chat 保持一致）：
 - 监听 Tiptap 的 `update` 事件
 - 遍历文档 JSON，提取所有 heading 节点的文本和层级
 - 渲染为目录列表，点击时 scrollIntoView 跳转
-- Intersection Observer 高亮当前视口内的标题
+- 使用 Intersection Observer 观察编辑器中的各级标题元素，动态更新 `activeHeadingIndex` 实现当前标题高亮
 - 流式生成期间 TOC 暂停更新（预览层不经过 Tiptap，无法提取标题节点），生成完毕后一次性刷新
 
 ### Tab 切换与 Tiptap 生命周期
 
 Tiptap 的 ProseMirror EditorView 在 DOM 被 keep-alive 移出时可能出现异常。处理策略：
-- `onDeactivated`: 将编辑器内容（Markdown）保存到响应式变量，销毁编辑器实例
-- `onActivated`: 用保存的 Markdown 重建编辑器实例
-- 对话历史（messages 数组）保存在响应式状态中，不受编辑器生命周期影响
+- `onDeactivated`: abort 当前 SSE 请求、销毁编辑器实例
+- `onActivated`: 从数据库重新加载教案内容和对话历史，重建编辑器实例
+- 数据安全：所有状态都在数据库中，切 tab 不会丢失任何内容
 
 ### 对话历史管理
 
-- 对话历史保存在组件状态中（messages 数组）
-- 每次发送修改请求时，带上最近 10 条对话历史（避免 token 过长）
-- 切换 tab 后对话历史通过响应式变量保留
-- 不做服务端持久化
+- 对话历史持久化到数据库，复用现有 `ChatHistory` 模型（session_id 关联到 LessonPlan）
+- 每条用户消息和 AI 真实回复内容都写入 `ChatHistory`（不是固定文案）
+- AI 回复内容：流式生成时累积完整回复文本，生成完毕后写入数据库
+- 前端加载时通过 `GET /lesson-plan/{id}/history` 从数据库读取历史消息
+- 每次发送修改请求时，带上最近 10 条对话历史（从数据库读取，避免 token 过长）
+- 切换 tab 后前端组件状态可丢失，因为数据在数据库中持久化，重新进入时重新加载
 
 ### 错误处理与取消
 
-- **取消请求**: 使用 AbortController（与现有 LessonPrepAnimation 一致），用户发送新请求或切换 tab 时 abort 当前 SSE 连接
+- **取消请求**: 使用 AbortController（与现有 LessonPrepAnimation 一致），在 `onDeactivated`（keep-alive 切 tab）和 `onBeforeUnmount`（组件销毁）时 abort 当前 SSE 连接
+- **SSE 错误检查**: 前端在读取 SSE 流前必须先检查 `res.ok`，非 200 响应直接抛错；SSE 事件中的 error 字段必须正确冒泡到调用方
 - **生成失败**: 若 SSE 中途断开或报错，恢复编辑器到生成前的状态（保存在临时变量中），预览层移除，显示错误提示
 - **并发冲突**: 生成/修改进行中时，禁用发送按钮，防止重复请求
 
@@ -229,7 +282,7 @@ AI 生成的教案以 Markdown 输出，包含以下模块：
 
 ## 后端 API 设计
 
-所有教案相关端点均需 JWT 认证（使用 CurrentUser 依赖注入，与 chat.py 保持一致）。
+所有教案相关端点均需 JWT 认证（使用 CurrentUser 依赖注入，与 chat.py 保持一致），无一例外。
 
 ### 1. 教案生成（初次，LangGraph 检索 + 流式生成）
 
@@ -241,7 +294,7 @@ Request Body:
   "query": "帮我生成一份高一数学函数与方程的教案",
   "library_ids": ["lib_1", "lib_2"],
   "file_ids": ["file_1"],
-  "session_id": "xxx"
+  "session_id": "xxx"         // 可选，不传则自动创建
 }
 
 Response: SSE stream
@@ -251,11 +304,15 @@ data: {"content": "## 课程导入\n"}
 data: [DONE]
 ```
 
-流程（两阶段）：
-1. **检索阶段**（不流式）: 调用 LangGraph 工作流中的 tools 能力 -- 检索知识库（library_ids）、解析上传文件（file_ids）、可选搜索网络 -- 收集参考资料上下文
-2. **生成阶段**（流式）: 将检索到的上下文 + 教案模板 + 用户 query 拼接为 prompt，直接调用 LLM 的 astream() 方法，逐 token 流式返回 Markdown
+后端流程：
+1. 创建 `LessonPlan` 记录（status=generating）
+2. 将用户消息写入 `ChatHistory`
+3. **检索阶段**（不流式）: 通过 library_ids 调用 RAG 检索知识库、通过 file_ids 从 `LessonPlanReference.parsed_content` 读取文件文本、可选搜索网络
+4. **生成阶段**（流式）: 拼接 prompt + 上下文 -> LLM astream() -> 逐 token SSE 返回
+5. 生成完毕后将完整 Markdown 写入 `LessonPlan.content`（status=completed）
+6. 将 AI 完整回复写入 `ChatHistory`
 
-注意：不使用 LangGraph 的 graph.astream()（它只流式返回节点完成事件，不返回 token），而是将 LangGraph 拆分为"检索"和"生成"两个独立步骤。
+注意：AI 的 system prompt 应包含指令——若用户描述的教学需求信息不足（如缺少年级、学科、课题等），AI 应主动提问澄清而非直接生成，以对齐赛题"主动澄清需求并总结确认"的评分要求。
 
 ### 2. 教案修改（迭代，轻量直连 LLM）
 
@@ -264,34 +321,76 @@ POST /api/v1/lesson-plan/modify (SSE streaming, 需认证)
 
 Request Body:
 {
+  "lesson_plan_id": 1,
   "instruction": "把教学目标改成三维目标的形式",
   "current_content": "当前编辑器的完整markdown",
-  "history": [...最近10条对话],
   "file_ids": ["file_1"],
-  "library_ids": ["lib_1"],
-  "session_id": "xxx"
+  "library_ids": ["lib_1"]
 }
 
 Response: SSE stream（同上格式，返回修改后的完整markdown）
 ```
 
-流程：通过 file_ids 捞已解析文本 + 通过 library_ids 做轻量向量检索（用 instruction 作为 query）-> 拼接 system prompt + 参考资料 + 当前教案 + 修改指令 -> LLM astream() 流式返回。
+后端流程：
+1. 将用户修改指令写入 `ChatHistory`
+2. 从数据库读取最近 10 条对话历史
+3. 通过 file_ids 从 `LessonPlanReference.parsed_content` 读取参考文本
+4. 通过 library_ids 做轻量向量检索
+5. 拼接 prompt -> LLM astream() 流式返回
+6. 生成完毕后更新 `LessonPlan.content`
+7. 将 AI 完整回复写入 `ChatHistory`
 
-### 3. 文件上传
-
-```
-POST /api/v1/lesson-plan/upload
-
-Request: FormData (file)
-Response: {"file_id": "xxx", "filename": "参考教案.pdf"}
-```
-
-复用现有文件解析管线（parsers factory），提取文本内容存储供生成时引用。
-
-### 4. 导出下载（仅 DOCX 需要后端）
+### 3. 文件上传（持久化到数据库 + 磁盘）
 
 ```
-POST /api/v1/lesson-plan/export/docx
+POST /api/v1/lesson-plan/upload (需认证)
+
+Request: FormData (file, lesson_plan_id)
+Response: {"file_id": 1, "filename": "参考教案.pdf"}
+```
+
+后端流程：
+1. 将文件保存到磁盘（`uploads/lesson_plan/` 目录）
+2. 调用现有 parsers factory 解析文件，提取纯文本
+3. 创建 `LessonPlanReference` 记录：file_path, parsed_content, user_id, lesson_plan_id
+4. 返回 file_id（数据库自增 ID）
+
+支持格式对齐后端解析器能力：PDF, DOCX, PNG, JPG（不含 PPTX — 解析器不支持，避免降级为二进制转文本）。
+
+### 4. 教案内容保存
+
+```
+PATCH /api/v1/lesson-plan/{id} (需认证)
+
+Request Body:
+{
+  "content": "更新后的完整markdown",
+  "title": "函数与方程教案"       // 可选
+}
+
+Response: {"id": 1, "updated_at": "..."}
+```
+
+用于用户手动编辑后保存。前端在编辑器失焦或定时（如 30 秒）时自动调用。
+
+### 5. 加载教案和历史
+
+```
+GET /api/v1/lesson-plan/latest (需认证)
+
+Response: {
+  "lesson_plan": {"id": 1, "session_id": "...", "title": "...", "content": "...", "status": "..."},
+  "messages": [{"role": "user", "content": "..."}, ...],
+  "files": [{"id": 1, "filename": "参考教案.pdf"}, ...]
+}
+```
+
+用户进入教案 tab 时调用，加载最近一份教案及其关联的对话历史和参考文件。
+
+### 6. 导出下载（仅 DOCX 需要后端，需认证）
+
+```
+POST /api/v1/lesson-plan/export/docx (需认证)
 
 Request Body:
 {
@@ -302,13 +401,27 @@ Request Body:
 Response: 文件流 (application/vnd.openxmlformats-officedocument.wordprocessingml.document)
 ```
 
-后端使用 pypandoc.convert_text() 一行转换（首次调用时自动下载 Pandoc）。
+后端使用 pypandoc.convert_text() 转换。启动时自动检测 Pandoc 是否安装，未安装则调用 `pypandoc.download_pandoc()` 自动下载。
 
 MD 和 PDF 在前端处理：
 - MD: 通过 tiptap-markdown 获取 Markdown，Blob 下载
 - PDF: html2pdf.js 从编辑器 DOM 生成
 
 ## 数据流
+
+### 流程零：进入教案 Tab
+
+```
+前端: GET /lesson-plan/latest
+  |
+  v
+后端: 查询用户最近一份 LessonPlan + 关联 ChatHistory + LessonPlanReference
+  |
+  v
+前端:
+  有教案 -> 加载到编辑器 + 恢复对话历史 + 恢复文件标签
+  无教案 -> 显示引导界面
+```
 
 ### 流程一：初次生成教案
 
@@ -319,19 +432,16 @@ MD 和 PDF 在前端处理：
 POST /lesson-plan/generate (SSE)
   |
   v
-后端（两阶段）:
-  阶段1 - 检索（不流式）:
-    调用 RAG 检索知识库(library_ids)
-    解析上传文件(file_ids) 提取文本
-    可选: 搜索网络补充资料
-    收集所有参考上下文
-  阶段2 - 生成（流式）:
-    拼接: system prompt + 教案模板 + 参考上下文 + 用户 query
-    LLM astream() -> 逐 token 返回 SSE
+后端:
+  1. 创建 LessonPlan (status=generating)
+  2. 写入 ChatHistory (role=user)
+  3. 检索阶段: RAG + 读取 LessonPlanReference.parsed_content
+  4. 生成阶段: LLM astream() -> 逐 token 返回 SSE
+  5. 完毕: 更新 LessonPlan.content, 写入 ChatHistory (role=assistant)
   |
   v
 前端:
-  1. 左侧对话区显示 AI 气泡 "正在生成教案..."
+  1. 左侧对话区显示用户消息 + AI 流式回复气泡
   2. 右侧切换到预览层，流式渲染 Markdown
   3. 收到 [DONE] -> tiptap-markdown setContent -> 恢复可编辑
   4. TOC 从编辑器标题节点生成
@@ -347,14 +457,18 @@ POST /lesson-plan/generate (SSE)
   |
   v
 POST /lesson-plan/modify (SSE)
-  body: { instruction, current_content, history, file_ids?, library_ids? }
   |
   v
-后端: 拼接 prompt + 参考资料 + 当前教案 + 指令 -> 直连 LLM -> 流式返回
+后端:
+  1. 写入 ChatHistory (role=user)
+  2. 从 DB 读取最近 10 条对话历史
+  3. 检索参考资料 (file_ids + library_ids)
+  4. LLM astream() -> 流式返回
+  5. 完毕: 更新 LessonPlan.content, 写入 ChatHistory (role=assistant)
   |
   v
 前端:
-  1. 左侧 AI 气泡流式显示回复
+  1. 左侧 AI 气泡流式显示真实回复内容
   2. 右侧预览层覆盖，流式渲染新内容
   3. 收到 [DONE] -> setContent 替换 -> 恢复可编辑
 ```
@@ -363,8 +477,8 @@ POST /lesson-plan/modify (SSE)
 
 ```
 用户直接在 Tiptap 编辑器中修改
-  -> 编辑器 update 事件 -> 更新内部 markdown 状态 + 更新 TOC
-  -> 无需调后端
+  -> 编辑器 update 事件 -> 更新 TOC
+  -> 失焦或定时 30s -> PATCH /lesson-plan/{id} 保存到数据库
 ```
 
 ### 流程四：导出下载
@@ -379,7 +493,8 @@ POST /lesson-plan/modify (SSE)
 ## AI 生成策略（混合方案）
 
 - **初次生成**: 两阶段流程 -- 先调用 RAG/工具检索知识库和解析文件（展示智能体能力，评分要点），再将检索上下文喂给 LLM 流式生成教案 Markdown。不使用完整 LangGraph graph.astream()（它只能流式返回节点事件，无法流式返回 token）。
-- **迭代修改**: 走轻量流式端点，把编辑器当前内容 + 用户修改指令 + 对话历史 + 可选的参考资料发给 LLM，直接流式返回。保证修改响应速度。
+- **迭代修改**: 走轻量流式端点，从数据库读取对话历史和参考资料，直接流式返回。保证修改响应速度。
+- **主动澄清**: system prompt 中加入指令——若用户输入的教学需求信息不足（缺少年级、学科、课题、教学目标等关键信息），AI 应先提出澄清问题，而非直接生成不完整的教案。这对齐赛题"通过多轮对话理解教学意图"和"主动澄清需求"的评分要求。前端不需要特殊处理，AI 的澄清回复和正常回复走同一条对话通道。
 
 ## 前置修复
 
@@ -394,4 +509,5 @@ POST /lesson-plan/modify (SSE)
 - `html2pdf.js`（前端 PDF 导出）
 
 ### 后端 (backend/)
-- `pypandoc`（Markdown -> DOCX 转换，首次运行自动下载 Pandoc）
+- `pypandoc`（Markdown -> DOCX 转换，启动时自动下载 Pandoc）
+- 新增数据库迁移：`lesson_plans` 表、`lesson_plan_references` 表

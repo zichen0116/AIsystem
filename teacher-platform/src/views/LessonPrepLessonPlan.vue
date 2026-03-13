@@ -30,10 +30,10 @@
 
 <script setup>
 import { ref, computed, onMounted, onActivated, onDeactivated, onBeforeUnmount } from 'vue'
-import { resolveApiUrl, getToken } from '@/api/http.js'
-import LessonPlanChat from '@/components/lesson-plan/LessonPlanChat.vue'
-import LessonPlanEditor from '@/components/lesson-plan/LessonPlanEditor.vue'
-import LessonPlanTOC from '@/components/lesson-plan/LessonPlanTOC.vue'
+import { resolveApiUrl, getToken } from '../api/http.js'
+import LessonPlanChat from '../components/lesson-plan/LessonPlanChat.vue'
+import LessonPlanEditor from '../components/lesson-plan/LessonPlanEditor.vue'
+import LessonPlanTOC from '../components/lesson-plan/LessonPlanTOC.vue'
 
 const editorRef = ref(null)
 const chatRef = ref(null)
