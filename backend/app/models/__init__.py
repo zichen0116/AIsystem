@@ -7,6 +7,8 @@ from app.models.chat_history import ChatHistory
 from app.models.knowledge_library import KnowledgeLibrary
 from app.models.knowledge_asset import KnowledgeAsset
 from app.models.token_blacklist import TokenBlacklist
+from app.models.lesson_plan import LessonPlan
+from app.models.lesson_plan_reference import LessonPlanReference
 from app.models.enums import (
     CoursewareType,
     CoursewareStatus,
@@ -22,6 +24,8 @@ __all__ = [
     "KnowledgeLibrary",
     "KnowledgeAsset",
     "TokenBlacklist",
+    "LessonPlan",
+    "LessonPlanReference",
     "CoursewareType",
     "CoursewareStatus",
     "ChatRole",
