@@ -476,25 +476,25 @@ def should_continue(state: AgentState) -> Literal["tools", "grade"]:
     return "grade"
 
 
-def should_retry(state: AgentState) -> Literal["agent", "end"]:
+def should_retry(state: AgentState) -> Literal["agent", "outline_approval"]:
     """
     判断是否需要重试
 
     Returns:
         "agent": 重新执行 agent
-        "end": 结束流程
+        "outline_approval": 进入大纲确认环节
     """
     retry_count = state.get("retry_count", 0)
     max_retries = 3
 
     if retry_count >= max_retries:
-        return "end"
+        return "outline_approval"
 
     # 如果 generation 为空，说明需要重新生成
     if not state.get("generation"):
         return "agent"
 
-    return "end"
+    return "outline_approval"
 
 
 # ==================== Human-in-the-loop 节点 ====================
