@@ -11,8 +11,9 @@
 - **富文本编辑器**: Tiptap（Vue 3 原生支持，稳定可靠）
   - 通过 FloatingMenu / BubbleMenu / Placeholder 等扩展实现类 Notion 块级体验
   - 不选 BlockNote，原因：Vue 适配器不够成熟，竞赛项目稳定性优先
-- **Markdown 解析**: markdown-it（流式渲染预览层）
-- **DOCX 导出**: pypandoc（后端，一行转换）
+- **Markdown 解析**: markdown-it + markdown-it-task-lists（流式渲染预览层，支持任务列表语法）
+- **Markdown 序列化**: tiptap-markdown（从 Tiptap 编辑器导出 Markdown，用于发送给 AI 和导出）
+- **DOCX 导出**: pypandoc（后端，一行转换；首次运行时通过 pypandoc.download_pandoc() 自动安装 Pandoc）
 - **PDF 导出**: html2pdf.js（前端，从编辑器 DOM 直接生成）
 - **MD 导出**: 前端纯文本 Blob 下载
 
@@ -134,18 +135,28 @@ tabs: [ppt, lesson-plan, animation, knowledge, data]
 
 ### 流式渲染策略
 
+SSE 事件格式（与现有 html_chat 保持一致）：
+- token 事件: `data: {"content": "..."}`
+- 完成事件: `data: [DONE]`
+
 生成中（SSE 流式接收）：
 1. `editor.setEditable(false)` 锁定编辑器
-2. 编辑器上方覆盖 Markdown 预览层（v-html 渲染，markdown-it 解析）
+2. 编辑器上方覆盖 Markdown 预览层（v-html 渲染，markdown-it + markdown-it-task-lists 解析）
 3. SSE chunk 累积到 markdown buffer，实时渲染到预览层
 
-生成完毕（type: "done"）：
-1. 拿完整 Markdown，markdown-it 转 HTML
-2. `editor.commands.setContent(html)` 写入 Tiptap
-3. 移除预览层
-4. `editor.setEditable(true)` 恢复可编辑
+生成完毕（收到 `[DONE]`）：
+1. 拿完整 Markdown，用 tiptap-markdown 的 setContent 写入 Tiptap（tiptap-markdown 扩展直接支持 Markdown 输入，无需手动转 HTML）
+2. 移除预览层
+3. `editor.setEditable(true)` 恢复可编辑
 
 修改时的更新策略：AI 返回修改后的完整 Markdown，前端整体 setContent 替换。教案文档体量不大（几千字），整体替换性能无问题。
+
+### Tiptap 内容序列化（编辑器 -> Markdown）
+
+使用 `tiptap-markdown` 扩展，双向支持：
+- **写入**: `editor.commands.setContent(markdown)` 直接接受 Markdown
+- **读取**: `editor.storage.markdown.getMarkdown()` 导出 Markdown
+- 用于：发送修改请求时获取 current_content、MD 导出、DOCX 导出
 
 ### TOC 目录生成
 
@@ -153,13 +164,27 @@ tabs: [ppt, lesson-plan, animation, knowledge, data]
 - 遍历文档 JSON，提取所有 heading 节点的文本和层级
 - 渲染为目录列表，点击时 scrollIntoView 跳转
 - Intersection Observer 高亮当前视口内的标题
+- 流式生成期间 TOC 暂停更新（预览层不经过 Tiptap，无法提取标题节点），生成完毕后一次性刷新
+
+### Tab 切换与 Tiptap 生命周期
+
+Tiptap 的 ProseMirror EditorView 在 DOM 被 keep-alive 移出时可能出现异常。处理策略：
+- `onDeactivated`: 将编辑器内容（Markdown）保存到响应式变量，销毁编辑器实例
+- `onActivated`: 用保存的 Markdown 重建编辑器实例
+- 对话历史（messages 数组）保存在响应式状态中，不受编辑器生命周期影响
 
 ### 对话历史管理
 
 - 对话历史保存在组件状态中（messages 数组）
 - 每次发送修改请求时，带上最近 10 条对话历史（避免 token 过长）
-- 切换 tab 后通过 `<keep-alive>` 保留状态
+- 切换 tab 后对话历史通过响应式变量保留
 - 不做服务端持久化
+
+### 错误处理与取消
+
+- **取消请求**: 使用 AbortController（与现有 LessonPrepAnimation 一致），用户发送新请求或切换 tab 时 abort 当前 SSE 连接
+- **生成失败**: 若 SSE 中途断开或报错，恢复编辑器到生成前的状态（保存在临时变量中），预览层移除，显示错误提示
+- **并发冲突**: 生成/修改进行中时，禁用发送按钮，防止重复请求
 
 ## 教案内容结构
 
@@ -204,10 +229,12 @@ AI 生成的教案以 Markdown 输出，包含以下模块：
 
 ## 后端 API 设计
 
-### 1. 教案生成（初次，走 LangGraph）
+所有教案相关端点均需 JWT 认证（使用 CurrentUser 依赖注入，与 chat.py 保持一致）。
+
+### 1. 教案生成（初次，LangGraph 检索 + 流式生成）
 
 ```
-POST /api/v1/lesson-plan/generate (SSE streaming)
+POST /api/v1/lesson-plan/generate (SSE streaming, 需认证)
 
 Request Body:
 {
@@ -218,18 +245,22 @@ Request Body:
 }
 
 Response: SSE stream
-data: {"type": "token", "content": "# 函数与方程 -- 教案\n\n"}
-data: {"type": "token", "content": "## 课程导入\n"}
+data: {"content": "# 函数与方程 -- 教案\n\n"}
+data: {"content": "## 课程导入\n"}
 ...
-data: {"type": "done", "content": "完整markdown"}
+data: [DONE]
 ```
 
-流程：接收请求 -> 调用 LangGraph 工作流（agent 可检索知识库 + 解析上传文件 + 搜索网络）-> 流式返回 Markdown。
+流程（两阶段）：
+1. **检索阶段**（不流式）: 调用 LangGraph 工作流中的 tools 能力 -- 检索知识库（library_ids）、解析上传文件（file_ids）、可选搜索网络 -- 收集参考资料上下文
+2. **生成阶段**（流式）: 将检索到的上下文 + 教案模板 + 用户 query 拼接为 prompt，直接调用 LLM 的 astream() 方法，逐 token 流式返回 Markdown
+
+注意：不使用 LangGraph 的 graph.astream()（它只流式返回节点完成事件，不返回 token），而是将 LangGraph 拆分为"检索"和"生成"两个独立步骤。
 
 ### 2. 教案修改（迭代，轻量直连 LLM）
 
 ```
-POST /api/v1/lesson-plan/modify (SSE streaming)
+POST /api/v1/lesson-plan/modify (SSE streaming, 需认证)
 
 Request Body:
 {
@@ -244,7 +275,7 @@ Request Body:
 Response: SSE stream（同上格式，返回修改后的完整markdown）
 ```
 
-流程：通过 file_ids 捞已解析文本 + 通过 library_ids 做轻量向量检索（用 instruction 作为 query）-> 拼接 system prompt + 参考资料 + 当前教案 + 修改指令 -> 直连 LLM -> 流式返回。
+流程：通过 file_ids 捞已解析文本 + 通过 library_ids 做轻量向量检索（用 instruction 作为 query）-> 拼接 system prompt + 参考资料 + 当前教案 + 修改指令 -> LLM astream() 流式返回。
 
 ### 3. 文件上传
 
@@ -271,10 +302,10 @@ Request Body:
 Response: 文件流 (application/vnd.openxmlformats-officedocument.wordprocessingml.document)
 ```
 
-后端使用 pypandoc.convert_text() 一行转换。
+后端使用 pypandoc.convert_text() 一行转换（首次调用时自动下载 Pandoc）。
 
 MD 和 PDF 在前端处理：
-- MD: 纯文本 Blob 下载
+- MD: 通过 tiptap-markdown 获取 Markdown，Blob 下载
 - PDF: html2pdf.js 从编辑器 DOM 生成
 
 ## 数据流
@@ -288,17 +319,21 @@ MD 和 PDF 在前端处理：
 POST /lesson-plan/generate (SSE)
   |
   v
-后端: LangGraph 工作流
-  agent -> 检索知识库 / 解析文件 / 搜索网络
-       -> grader 质量评估
-       -> 生成完整教案 Markdown
-       -> 流式返回 SSE tokens
+后端（两阶段）:
+  阶段1 - 检索（不流式）:
+    调用 RAG 检索知识库(library_ids)
+    解析上传文件(file_ids) 提取文本
+    可选: 搜索网络补充资料
+    收集所有参考上下文
+  阶段2 - 生成（流式）:
+    拼接: system prompt + 教案模板 + 参考上下文 + 用户 query
+    LLM astream() -> 逐 token 返回 SSE
   |
   v
 前端:
   1. 左侧对话区显示 AI 气泡 "正在生成教案..."
   2. 右侧切换到预览层，流式渲染 Markdown
-  3. SSE done -> setContent 到 Tiptap -> 恢复可编辑
+  3. 收到 [DONE] -> tiptap-markdown setContent -> 恢复可编辑
   4. TOC 从编辑器标题节点生成
 ```
 
@@ -321,7 +356,7 @@ POST /lesson-plan/modify (SSE)
 前端:
   1. 左侧 AI 气泡流式显示回复
   2. 右侧预览层覆盖，流式渲染新内容
-  3. SSE done -> setContent 替换 -> 恢复可编辑
+  3. 收到 [DONE] -> setContent 替换 -> 恢复可编辑
 ```
 
 ### 流程三：用户手动编辑
@@ -343,16 +378,20 @@ POST /lesson-plan/modify (SSE)
 
 ## AI 生成策略（混合方案）
 
-- **初次生成**: 走 LangGraph 工作流，AI 可调用 RAG 检索知识库、解析上传文件、搜索网络，展示完整的智能体能力（评分要点）
+- **初次生成**: 两阶段流程 -- 先调用 RAG/工具检索知识库和解析文件（展示智能体能力，评分要点），再将检索上下文喂给 LLM 流式生成教案 Markdown。不使用完整 LangGraph graph.astream()（它只能流式返回节点事件，无法流式返回 token）。
 - **迭代修改**: 走轻量流式端点，把编辑器当前内容 + 用户修改指令 + 对话历史 + 可选的参考资料发给 LLM，直接流式返回。保证修改响应速度。
+
+## 前置修复
+
+现有 LangGraph 工作流中 `should_retry` 函数（nodes.py）返回 `"end"` 但 workflow 的条件边映射只有 `{"agent", "outline_approval"}`，会导致运行时错误。此 bug 需在实现本功能前修复。
 
 ## 依赖新增
 
 ### 前端 (teacher-platform/)
-- `@tiptap/vue-3` + `@tiptap/starter-kit` + 各扩展包
-- `markdown-it`（流式 Markdown 渲染）
+- `@tiptap/vue-3` + `@tiptap/starter-kit` + 各扩展包（Table, TaskList, Highlight, TextAlign, Underline, Placeholder, FloatingMenu, BubbleMenu, CharacterCount）
+- `tiptap-markdown`（Tiptap <-> Markdown 双向转换）
+- `markdown-it` + `markdown-it-task-lists`（流式预览层 Markdown 渲染）
 - `html2pdf.js`（前端 PDF 导出）
 
 ### 后端 (backend/)
-- `pypandoc`（Markdown -> DOCX 转换）
-- Pandoc 系统级安装
+- `pypandoc`（Markdown -> DOCX 转换，首次运行自动下载 Pandoc）
