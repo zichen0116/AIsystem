@@ -511,7 +511,7 @@ function on2FACodeKeydown(index, e) {
 
 .personal-layout {
   flex: 1;
-  padding: 24px;
+  padding: 28px;
 }
 
 .main-layout {
@@ -616,7 +616,7 @@ function on2FACodeKeydown(index, e) {
   padding: 12px 14px;
   border: none;
   background: transparent;
-  font-size: 14px;
+  font-size: 15px;
   color: #475569;
   cursor: pointer;
   border-radius: 8px;
@@ -654,7 +654,7 @@ function on2FACodeKeydown(index, e) {
 }
 
 .strength-title {
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
   color: #1e293b;
   margin-bottom: 10px;
@@ -675,7 +675,7 @@ function on2FACodeKeydown(index, e) {
 }
 
 .strength-text {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   color: #64748b;
 }
 
@@ -687,7 +687,7 @@ function on2FACodeKeydown(index, e) {
 }
 
 .filters-title {
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
   color: #1e293b;
   margin-bottom: 12px;
@@ -699,7 +699,7 @@ function on2FACodeKeydown(index, e) {
   padding: 8px 12px;
   border: none;
   background: transparent;
-  font-size: 13px;
+  font-size: 14px;
   color: #64748b;
   cursor: pointer;
   border-radius: 6px;
@@ -720,7 +720,7 @@ function on2FACodeKeydown(index, e) {
 
 .content-panel {
   background: #fff;
-  padding: 32px;
+  padding: 36px;
 }
 
 .panel-header {
@@ -728,14 +728,14 @@ function on2FACodeKeydown(index, e) {
 }
 
 .panel-title {
-  font-size: 1.5rem;
+  font-size: 1.65rem;
   font-weight: 700;
   color: #1e293b;
   margin: 0 0 6px;
 }
 
 .panel-subtitle {
-  font-size: 0.9rem;
+  font-size: 1rem;
   color: #64748b;
   margin: 0;
 }
@@ -766,14 +766,14 @@ function on2FACodeKeydown(index, e) {
 }
 
 .profile-name {
-  font-size: 1.5rem;
+  font-size: 1.65rem;
   font-weight: 700;
   color: #1e293b;
   margin: 0 0 4px;
 }
 
 .profile-title {
-  font-size: 0.9rem;
+  font-size: 1rem;
   color: #64748b;
   margin: 0;
 }
@@ -826,7 +826,7 @@ function on2FACodeKeydown(index, e) {
 }
 
 .form-group label {
-  font-size: 0.875rem;
+  font-size: 0.95rem;
   font-weight: 500;
   color: #374151;
 }
@@ -837,7 +837,7 @@ function on2FACodeKeydown(index, e) {
   padding: 10px 14px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .form-group input.readonly {
@@ -862,7 +862,7 @@ function on2FACodeKeydown(index, e) {
   background: #fff;
   color: #475569;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
   cursor: pointer;
 }
 
@@ -872,7 +872,7 @@ function on2FACodeKeydown(index, e) {
   border: none;
   color: #fff;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
   cursor: pointer;
 }
 
@@ -918,20 +918,20 @@ function on2FACodeKeydown(index, e) {
 }
 
 .block-content h4 {
-  font-size: 1rem;
+  font-size: 1.1rem;
   font-weight: 600;
   color: #1e293b;
   margin: 0 0 6px;
 }
 
 .block-content p {
-  font-size: 0.9rem;
+  font-size: 1rem;
   color: #64748b;
   margin: 0 0 12px;
 }
 
 .disabled-tag {
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   font-weight: 400;
   color: #94a3b8;
 }
@@ -996,7 +996,7 @@ function on2FACodeKeydown(index, e) {
 .history-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
 }
 
 .history-table th,
@@ -1061,7 +1061,7 @@ function on2FACodeKeydown(index, e) {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 20px;
-  margin-bottom: 24px;
+  margin-bottom: 40px;
 }
 
 .favorites-grid.list {

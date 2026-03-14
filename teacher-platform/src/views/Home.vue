@@ -189,19 +189,21 @@ const stats = [
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 42px 48px 41px;
+  padding: 45px 4vw 41px;
   max-width: 1200px;
   margin: 0 auto;
   gap: 48px;
+  flex-wrap: wrap;
 }
 
 .hero-left {
   flex: 1;
-  max-width: 520px;
+  min-width: 260px;
+  max-width: 560px;
 }
 
 .hero-title {
-  font-size: 3.65rem;
+  font-size: 3.9rem;
   font-weight: 800;
   color: #1e293b;
   line-height: 1.4;
@@ -218,7 +220,7 @@ const stats = [
 }
 
 .hero-desc {
-  font-size: 1.20rem;
+  font-size: 1.28rem;
   color: #64748b;
   line-height: 1.6;
   margin-bottom: 20px;
@@ -234,9 +236,9 @@ const stats = [
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 24px;
+  padding: 12px 30px;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 1.15rem;
   color: #2563eb;
   background: #fff;
   border: 1px solid #93c5fd;
@@ -285,7 +287,7 @@ const stats = [
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 1rem;
+  font-size: 1.08rem;
   color: #374151;
 }
 
@@ -308,8 +310,8 @@ const stats = [
 
 .hero-visual {
   position: relative;
-  width: 450px;
-  height: 450px;
+  width: min(480px, 42vw);
+  aspect-ratio: 1 / 1;
 }
 
 /* Features */
@@ -457,10 +459,11 @@ const stats = [
   .hero-section {
     flex-direction: column;
     text-align: center;
+    padding: 40px 20px 32px;
   }
 
   .hero-left {
-    max-width: none;
+    max-width: 640px;
   }
 
   .hero-btns {
@@ -472,8 +475,8 @@ const stats = [
   }
 
   .hero-visual {
-    width: 380px;
-    height: 380px;
+    width: min(380px, 80vw);
+    height: auto;
   }
 
   .feature-cards {

@@ -34,6 +34,48 @@ const routes = [
     component: () => import('../views/PersonalCenter.vue'),
     meta: { requiresAuth: true, layout: 'nav' }
   },
+  {
+    path: '/question-gen',
+    name: 'QuestionGenerate',
+    component: () => import('../views/QuestionGenerate.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/resource-search',
+    name: 'ResourceSearch',
+    component: () => import('../views/ResourceSearch.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/admin',
+    name: 'AdminDashboard',
+    component: () => import('../views/admin/AdminDashboard.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/admin/profile',
+    name: 'AdminProfile',
+    component: () => import('../views/admin/AdminProfile.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/admin/users',
+    name: 'AdminUserManage',
+    component: () => import('../views/admin/AdminUserManage.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/admin/audit',
+    name: 'AdminResourceAudit',
+    component: () => import('../views/admin/AdminResourceAudit.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/admin/logs',
+    name: 'AdminSystemLogs',
+    component: () => import('../views/admin/AdminSystemLogs.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 

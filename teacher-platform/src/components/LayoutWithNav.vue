@@ -15,8 +15,34 @@ const userStore = useUserStore()
 const primaryItems = [
   { id: 'lesson-prep', path: '/lesson-prep', label: '备课中心', icon: 'lesson' },
   { id: 'courseware', path: '/courseware', label: '课件管理', icon: 'folder' },
-  { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' }
+  { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
+  { id: 'question', path: '/question-gen', label: '试题生成', icon: 'exam' },
+  { id: 'resource', path: '/resource-search', label: '资源搜索', icon: 'search' }
 ]
+
+const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+
+const otherPrimaryItems = computed(() => {
+  if (isAdmin.value) {
+    return [
+      { id: 'admin-data', path: '/admin', label: '数据中台', icon: 'dashboard' },
+      { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
+      { id: 'personal-center', path: '/admin/profile', label: '个人中心', icon: 'user' }
+    ]
+  }
+  return primaryItems.filter(i => i.id !== 'lesson-prep')
+})
+
+function isPrimaryActive(item) {
+  if (item.id === 'admin-data') {
+    // 仅在数据中台首页高亮，不在个人中心路由高亮
+    return route.path === '/admin'
+  }
+  if (item.id === 'personal-center' && isAdmin.value) {
+    return route.path.startsWith('/admin/profile')
+  }
+  return route.path.startsWith(item.path)
+}
 
 function goToPrimary(path) {
   if (!path.startsWith('/lesson-prep')) lessonPrepOpen.value = false
@@ -28,6 +54,7 @@ const lessonPrepTabs = [
   { id: 'lesson-plan', label: '教案生成', icon: 'lesson-plan' },
   { id: 'animation', label: '动游制作', icon: 'animation' },
   { id: 'knowledge', label: '知识图谱', icon: 'knowledge' },
+  { id: 'mindmap', label: '思维导图', icon: 'mindmap' },
   { id: 'data', label: '数据分析', icon: 'data' }
 ]
 
@@ -70,7 +97,11 @@ function toggleSidebar() {
 function handleAvatarClick() {
   lessonPrepOpen.value = false
   if (userStore.isLoggedIn) {
-    router.push('/personal-center')
+    if (isAdmin.value) {
+      router.push('/admin/profile')
+    } else {
+      router.push('/personal-center')
+    }
   } else {
     router.push('/login')
   }
@@ -89,8 +120,8 @@ function handleAvatarClick() {
       </div>
 
       <nav class="primary-nav">
-        <!-- 备课中心：折叠列表 -->
-        <div class="nav-group" :class="{ active: isLessonPrepRoute }">
+        <!-- 备课中心：折叠列表（教师端可见） -->
+        <div v-if="!isAdmin" class="nav-group" :class="{ active: isLessonPrepRoute }">
           <button type="button" class="primary-item has-children" :class="{ active: isLessonPrepRoute }" @click="toggleLessonPrep">
             <span class="pi-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -173,6 +204,23 @@ function handleAvatarClick() {
                   <rect x="9" y="15" width="6" height="6" rx="1" />
                   <path d="M9 18H6a3 3 0 0 1 0-6h0M15 18h3a3 3 0 0 0 0-6h0M9 15V9a3 3 0 0 1 6 0v6" />
                 </svg>
+                <!-- 思维导图：中心节点辐射 -->
+                <svg
+                  v-else-if="t.icon === 'mindmap'"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <circle cx="5" cy="7" r="2" />
+                  <circle cx="19" cy="7" r="2" />
+                  <circle cx="6" cy="18" r="2" />
+                  <circle cx="18" cy="18" r="2" />
+                  <path d="M10.5 10.5 6.5 8.5M13.5 10.5l4-2M11 14l-3.5 3M13 14l3.5 3" />
+                </svg>
                 <!-- 数据分析：柱状图 -->
                 <svg
                   v-else
@@ -194,31 +242,104 @@ function handleAvatarClick() {
 
         <!-- 其它一级入口 -->
         <button
-          v-for="item in primaryItems.filter(i => i.id !== 'lesson-prep')"
+          v-for="item in otherPrimaryItems"
           :key="item.id"
           type="button"
           class="primary-item"
-          :class="{ active: route.path.startsWith(item.path) }"
-          @click="goToPrimary(item.path)"
+          :class="{ active: isPrimaryActive(item) }"
+          @click="item.id === 'personal-center' ? handleAvatarClick() : goToPrimary(item.path)"
         >
           <span class="pi-icon" aria-hidden="true">
-            <!-- 课件管理：文件夹 -->
-            <svg v-if="item.icon === 'folder'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z"/>
-              <path d="M3 10h18"/>
+            <!-- 课件管理 / 数据中台：文件夹 / 柱状图 -->
+            <svg
+              v-if="item.icon === 'folder'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6z" />
+              <path d="M3 10h18" />
+            </svg>
+            <svg
+              v-else-if="item.icon === 'dashboard'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 3v18h18" />
+              <path d="M7 16v-5M11 16v-8M15 16v-11M19 16v-3" />
             </svg>
             <!-- 知识库：节点连线 -->
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="6" height="6" rx="1"/>
-              <rect x="15" y="3" width="6" height="6" rx="1"/>
-              <rect x="9" y="15" width="6" height="6" rx="1"/>
-              <path d="M9 18H6a3 3 0 0 1 0-6h0M15 18h3a3 3 0 0 0 0-6h0M9 15V9a3 3 0 0 1 6 0v6"/>
+            <svg
+              v-else-if="item.icon === 'graph'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="6" height="6" rx="1" />
+              <rect x="15" y="3" width="6" height="6" rx="1" />
+              <rect x="9" y="15" width="6" height="6" rx="1" />
+              <path d="M9 18H6a3 3 0 0 1 0-6h0M15 18h3a3 3 0 0 0 0-6h0M9 15V9a3 3 0 0 1 6 0v6" />
+            </svg>
+            <!-- 试题生成：文档+勾选 -->
+            <svg
+              v-else-if="item.icon === 'exam'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="4" y="3" width="16" height="18" rx="2" />
+              <path d="M8 8h8M8 12h5" />
+              <path d="m9 16 2 2 4-4" />
+            </svg>
+            <!-- 资源搜索：放大镜 / 个人中心：头像 -->
+            <svg
+              v-else-if="item.icon === 'search'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="11" cy="11" r="5" />
+              <path d="M16 16l4 4" />
+            </svg>
+            <svg
+              v-else-if="item.icon === 'user'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
             </svg>
           </span>
           <span class="pi-label">{{ item.label }}</span>
         </button>
 
-        <button type="button" class="primary-item" :class="{ active: route.path.startsWith('/personal-center') }" @click="handleAvatarClick">
+        <button
+          v-if="!isAdmin"
+          type="button"
+          class="primary-item"
+          :class="{ active: route.path.startsWith('/personal-center') }"
+          @click="handleAvatarClick"
+        >
           <span class="pi-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>

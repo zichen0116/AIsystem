@@ -84,7 +84,7 @@ watch(
       </div>
     </div>
     <div class="ppt-tabs">
-      <button class="ppt-tab" :class="{ active: pptStyleTab === 'style' }" @click="pptStyleTab = 'style'">选择风格</button>
+
       <button class="ppt-tab" :class="{ active: pptStyleTab === 'template' }" @click="pptStyleTab = 'template'">选择模版</button>
     </div>
     <div class="ppt-style-grid">

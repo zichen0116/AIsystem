@@ -5,6 +5,7 @@ import LessonPrepPpt from './LessonPrepPpt.vue'
 import LessonPrepLessonPlan from './LessonPrepLessonPlan.vue'
 import LessonPrepAnimation from './LessonPrepAnimation.vue'
 import LessonPrepKnowledge from './LessonPrepKnowledge.vue'
+import LessonPrepMindmap from './LessonPrepMindmap.vue'
 import LessonPrepData from './LessonPrepData.vue'
 
 const route = useRoute()
@@ -15,6 +16,7 @@ const resetKeys = ref({
   'lesson-plan': 0,
   animation: 0,
   knowledge: 0,
+  mindmap: 0,
   data: 0
 })
 
@@ -23,6 +25,7 @@ const tabs = [
   { id: 'lesson-plan', label: '教案生成' },
   { id: 'animation', label: '动游制作' },
   { id: 'knowledge', label: '知识图谱' },
+  { id: 'mindmap', label: '思维导图' },
   { id: 'data', label: '数据分析' }
 ]
 
@@ -39,6 +42,7 @@ const currentComponent = computed(() => {
     'lesson-plan': LessonPrepLessonPlan,
     animation: LessonPrepAnimation,
     knowledge: LessonPrepKnowledge,
+    mindmap: LessonPrepMindmap,
     data: LessonPrepData
   }
   return map[activeTab.value]

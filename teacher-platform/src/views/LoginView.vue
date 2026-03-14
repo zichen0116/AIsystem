@@ -14,28 +14,35 @@ const form = ref({
   phone: '',
   password: '',
   confirmPassword: '',
-  code: ''
+  code: '',
+  role: 'teacher'
 })
 
 function setMode(nextIsLogin) {
   if (isLogin.value === nextIsLogin) return
   isLogin.value = nextIsLogin
-  form.value = { phone: '', password: '', confirmPassword: '', code: '' }
+  form.value = { phone: '', password: '', confirmPassword: '', code: '', role: 'teacher' }
 }
 
 function switchMode() {
   isLogin.value = !isLogin.value
-  form.value = { phone: '', password: '', confirmPassword: '', code: '' }
+  form.value = { phone: '', password: '', confirmPassword: '', code: '', role: 'teacher' }
 }
 
 function handleSubmit() {
   if (isLogin.value) {
-    userStore.login({ name: form.value.phone, phone: form.value.phone })
+    userStore.login({ name: form.value.phone, phone: form.value.phone, role: form.value.role })
   } else {
-    userStore.login({ name: form.value.phone, phone: form.value.phone })
+    userStore.login({ name: form.value.phone, phone: form.value.phone, role: form.value.role })
   }
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-  router.replace(redirect || '/lesson-prep')
+  if (redirect) {
+    router.replace(redirect)
+  } else if (form.value.role === 'admin') {
+    router.replace('/admin')
+  } else {
+    router.replace('/lesson-prep')
+  }
 }
 
 function goHome() {
@@ -76,6 +83,15 @@ function goHome() {
           </label>
 
           <label class="field">
+            <span class="label">role</span>
+            <select v-model="form.role" class="input select">
+              <option value="teacher">教师</option>
+              <option value="admin">管理员</option>
+            </select>
+          </label>
+
+
+          <label class="field">
             <span class="label">Password</span>
             <input v-model="form.password" type="password" placeholder="密码" class="input" required />
           </label>
@@ -110,13 +126,14 @@ function goHome() {
   justify-content: center;
   background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 60%, #ffffff 100%);
   padding: 24px;
+  overflow-y: auto;
 }
 
 .auth-card {
   display: flex;
-  width: 1150px;
+  width: min(1150px, 100%);
   max-width: 100%;
-  height: 665px;
+  min-height: 665px;
   background: #fff;
   border-radius: 18px;
   overflow: hidden;
@@ -125,7 +142,7 @@ function goHome() {
 }
 
 .auth-left {
-  flex: 1.1;
+  flex: 1 1 0;
   background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 45%, #dbeafe 100%);
   position: relative;
 }
@@ -231,12 +248,12 @@ function goHome() {
 
 
 .auth-right {
-  flex: 0.9;
-  padding: 64px 72px;
+  flex: 1 1 0;
+  padding: 40px 64px 40px;
 }
 
 .welcome-title {
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   font-size: 30px;
   font-weight: 700;
   color: #334155;
@@ -245,7 +262,7 @@ function goHome() {
 .mode-tabs {
   display: flex;
   gap: 18px;
-  margin-bottom: 30px;
+  margin-bottom: 22px;
 }
 
 .tab {
@@ -282,13 +299,17 @@ function goHome() {
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .field {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.select {
+  padding-right: 32px;
 }
 
 .label {
@@ -365,7 +386,7 @@ function goHome() {
   }
 
   .auth-right {
-    padding: 28px 22px 30px;
+    padding: 28px 22px 26px;
   }
 
   .illus-hero { height: 260px; }
