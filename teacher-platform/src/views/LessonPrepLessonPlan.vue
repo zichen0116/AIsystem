@@ -11,6 +11,7 @@
         :messages="messages"
         :is-sending="isSending"
         :has-content="hasEditorContent"
+        :lesson-plan-id="lessonPlanId"
         @send="handleGenerate"
         @send-modify="handleModify"
       />

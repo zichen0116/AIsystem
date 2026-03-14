@@ -85,6 +85,7 @@ const props = defineProps({
   messages: { type: Array, default: () => [] },
   isSending: { type: Boolean, default: false },
   hasContent: { type: Boolean, default: false },
+  lessonPlanId: { type: Number, default: null },
 })
 
 const emit = defineEmits(['send', 'send-modify'])
@@ -150,6 +151,7 @@ async function handleFileUpload(e) {
   if (!file) return
   const formData = new FormData()
   formData.append('file', file)
+  if (props.lessonPlanId) formData.append('lesson_plan_id', props.lessonPlanId)
   try {
     const res = await fetch(resolveApiUrl('/api/v1/lesson-plan/upload'), {
       method: 'POST',
