@@ -1,309 +1,412 @@
 <script setup>
-import { ref, watch } from 'vue'
-import LottiePlayer from '../components/LottiePlayer.vue'
-import linkFileImg from '../assets/链接文件.png'
-import voiceImg from '../assets/语音.png'
-import aiAnimationFlow from '../assets/ai animation Flow 1.json'
-import { useVoiceInput } from '../composables/useVoiceInput'
+import { ref } from 'vue'
 
-const activeTab = ref('knowledge')
-const promptText = ref('')
-const { isRecording, isSupported, toggleRecording } = useVoiceInput(promptText)
-
-const tabs = [
-  { id: 'knowledge', name: '知识图谱' },
-  { id: 'flowchart', name: '思维导图' }
-]
-
-const props = defineProps({
-  resetKey: {
-    type: Number,
-    default: 0
+const inputText = ref('')
+const messages = ref([
+  {
+    id: 1,
+    role: 'user',
+    text: '帮我根据“量子力学”生成一张适合高中课堂讲解的知识图谱。'
+  },
+  {
+    id: 2,
+    role: 'assistant',
+    text:
+      '好的，我会围绕核心概念、先修知识和典型应用三个维度，生成层级清晰的知识节点，并在右侧画布中展示。'
   }
-})
+])
 
-function resetState() {
-  activeTab.value = 'knowledge'
-  promptText.value = ''
+function sendMessage() {
+  const v = inputText.value.trim()
+  if (!v) return
+  messages.value.push({
+    id: Date.now(),
+    role: 'user',
+    text: v
+  })
+  inputText.value = ''
 }
-
-watch(
-  () => props.resetKey,
-  () => {
-    resetState()
-  }
-)
 </script>
 
 <template>
-  <div class="content-panel knowledge-panel">
-    <div class="knowledge-header">
-      <div class="knowledge-lottie">
-        <LottiePlayer :animation-data="aiAnimationFlow" />
-      </div>
-      <p class="knowledge-subtitle">借助 AI 驱动的知识图谱生成器，只需简单几步即可在短时间内创建和部署您的知识图谱、思维导图。</p>
-    </div>
-    <div class="knowledge-tabs-wrap">
-    <div class="knowledge-tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        class="knowledge-tab"
-        :class="{ active: activeTab === tab.id }"
-        @click="activeTab = tab.id"
-      >
-        {{ tab.name }}
-      </button>
-    </div>
-    </div>
-    <div class="knowledge-input-wrap">
-      <div class="knowledge-input-box">
-        <textarea
-          v-model="promptText"
-          class="knowledge-textarea"
-          placeholder="请描述您想创建的内容..."
-          rows="5"
-        ></textarea>
-        <div class="knowledge-input-footer">
-          <div class="knowledge-footer-left">
-            <button class="upload-btn" title="上传文件">
-              <img :src="linkFileImg" class="upload-icon" alt="" />
-            </button>
-            <button v-if="isSupported" class="voice-btn" :class="{ recording: isRecording }" title="语音输入" @click="toggleRecording">
-              <img :src="voiceImg" class="voice-icon-img" alt="语音" />
-            </button>
+  <div class="knowledge-page">
+    <div class="knowledge-layout">
+      <!-- 左侧聊天栏 -->
+      <aside class="panel-left">
+
+        <section class="chat-panel">
+          <div class="chat-messages">
+            <div
+              v-for="msg in messages"
+              :key="msg.id"
+              class="chat-row"
+              :class="msg.role === 'user' ? 'from-user' : 'from-assistant'"
+            >
+              <div class="avatar" aria-hidden="true">
+                <span v-if="msg.role === 'user'">👩‍🏫</span>
+                <span v-else>🤖</span>
+              </div>
+              <div class="bubble">
+                <p class="bubble-text">
+                  {{ msg.text }}
+                </p>
+              </div>
+            </div>
           </div>
-          <button class="generate-btn">
-            <span class="generate-icon">✨</span>
-            <span>AI生成</span>
-          </button>
+
+          <form class="chat-composer" @submit.prevent="sendMessage">
+            <textarea
+              v-model="inputText"
+              class="composer-input"
+              rows="3"
+              placeholder="输入你想生成的知识图谱主题，如：量子力学在高中物理中的知识结构…"
+            />
+            <button type="submit" class="composer-btn">生成知识图谱</button>
+          </form>
+        </section>
+      </aside>
+
+      <!-- 右侧知识图谱画布 -->
+      <section class="panel-right">
+
+        <div class="canvas">
+          <!-- 中心节点 -->
+          <div class="node node-main">
+            <span class="node-label">量子力学</span>
+          </div>
+
+          <!-- 子节点 -->
+          <div class="node node-a">
+            <span class="node-label">波粒二象性</span>
+          </div>
+          <div class="node node-b">
+            <span class="node-label">薛定谔方程</span>
+          </div>
+          <div class="node node-c">
+            <span class="node-label">量子纠缠</span>
+          </div>
+          <div class="node node-d">
+            <span class="node-label muted">经典物理</span>
+          </div>
+
+          <!-- 连线（简化为背景线段） -->
+          <svg class="canvas-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <line x1="30" y1="50" x2="55" y2="35" />
+            <line x1="30" y1="50" x2="70" y2="50" />
+            <line x1="30" y1="50" x2="48" y2="70" />
+            <line x1="30" y1="50" x2="18" y2="70" />
+          </svg>
         </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.content-panel {
+.knowledge-page {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  background: transparent;
-  margin: 0;
-  overflow: hidden;
-}
-
-.knowledge-panel {
-  padding: 72px 40px 24px;
-  background: transparent;
-}
-
-.knowledge-header {
-  text-align: center;
-  margin-bottom: 48px;
-}
-
-.knowledge-lottie {
-  width: 190px;
-  height: 190px;
-  margin: 0 auto 24px;
-}
-
-.knowledge-lottie :deep(.lottie-container) {
   min-height: 0;
-  width: 190px;
-  height: 190px;
-}
-
-.knowledge-title {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #1e293b;
-  margin: 0 0 12px;
-  line-height: 1.3;
-}
-
-.knowledge-subtitle {
-  font-size: 1.05rem;
-  color: #4b5563;
-  line-height: 1.6;
-  margin: 0;
-  max-width: 560px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.knowledge-tabs-wrap {
+  padding: 24px 32px 28px;
+  background: #f5f7fb;
   display: flex;
-  justify-content: center;
-  margin-bottom: 40px;
 }
 
-.knowledge-tabs {
-  display: inline-flex;
-  padding: 3px;
-  gap: 0;
-  background: #e8f1ff;
-  border-radius: 999px;
-}
-
-.knowledge-tab {
-  display: inline-flex;
-  align-items: center;
-  padding: 9px 24px;
-  border: none;
-  background: transparent;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #64748b;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-  border-radius: 999px;
-}
-
-.knowledge-tab:hover {
-  color: #2563eb;
-}
-
-.knowledge-tab.active {
-  background: #ffffff;
-  color: #2563eb;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
-}
-
-.knowledge-input-wrap {
-  width: 75%;
+.knowledge-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 24px;
+  width: 100%;
+  max-width: 1200px;
   margin: 0 auto;
 }
 
-.knowledge-input-box {
-  border: 1px solid #cbd5e1;
-  border-radius: 14px;
-  background: #fdfefe;
-  overflow: hidden;
+.panel-left {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 20px 18px 18px;
+  border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
-  height: 180px;
+  gap: 14px;
 }
 
-.knowledge-input-box:focus-within {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+.panel-header {
+  margin-bottom: 4px;
 }
 
-.knowledge-textarea {
-  flex: 1;
-  padding: 20px 20px 12px;
-  border: none;
-  outline: none;
-  font-size: 16px;
-  line-height: 1.6;
-  resize: none;
-  font-family: inherit;
-}
-
-.knowledge-textarea::placeholder {
-  color: #94a3b8;
-}
-
-.knowledge-input-footer {
+.pill-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px 16px;
-}
-
-.knowledge-footer-left {
-  display: flex;
-  align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
 }
 
-.upload-btn {
-  padding: 6px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  display: flex;
+.pill {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
-.upload-btn:hover {
-  opacity: 0.8;
+.pill-blue {
+  background: #e0edff;
+  color: #2563eb;
 }
 
-.voice-btn {
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: transparent;
-  border-radius: 50%;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
+.pill-gray {
+  background: #e5e7eb;
+  color: #4b5563;
 }
 
-.voice-btn:hover {
-  background: #f1f5f9;
+.topic-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
 }
 
-.voice-btn.recording {
-  background: #fecaca;
-  animation: voice-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes voice-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.voice-icon-img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-}
-
-.upload-icon {
-  width: 20px;
-  height: 20px;
-  opacity: 0.7;
-}
-
-.auto-btn {
-  font-size: 14px;
-  color: #94a3b8;
-  cursor: pointer;
-}
-
-.auto-btn:hover {
+.topic-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
   color: #64748b;
 }
 
-.generate-btn {
+.chat-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 8px 6px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  overflow-y: auto;
+}
+
+.chat-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.chat-row.from-user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e5edff;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  border: none;
-  background: #e2e8f0;
-  color: #475569;
-  font-size: 14px;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.chat-row.from-user .avatar {
+  background: #dbeafe;
+}
+
+.bubble {
+  max-width: 210px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chat-row.from-user .bubble {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.chat-row.from-assistant .bubble {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+}
+
+.bubble-text {
+  margin: 0;
+}
+
+.chat-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.hint-title {
   font-weight: 500;
-  border-radius: 10px;
+}
+
+.hint-pill {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4b5563;
+}
+
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-input {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  font-size: 13px;
+  resize: vertical;
+  min-height: 70px;
+  outline: none;
+}
+
+.composer-btn {
+  align-self: flex-end;
+  border: none;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
   cursor: pointer;
-  transition: background 0.2s;
 }
 
-.generate-btn:hover {
-  background: #cbd5e1;
-  color: #1e293b;
+.panel-right {
+  background: #ffffff;
+  border-radius: 18px;
+  border: 1px solid #e2e8f0;
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
-.generate-icon {
-  font-size: 1rem;
-  color: #a3e635;
+.breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+  margin-bottom: 8px;
+}
+
+.crumb.current {
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 340px;
+  background: radial-gradient(circle at top, #f4f7ff 0, #ffffff 55%);
+  border-radius: 14px;
+  overflow: hidden;
+  padding: 24px 24px 18px;
+}
+
+.canvas-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  stroke: #e0e7ff;
+  stroke-width: 0.6;
+  fill: none;
+  pointer-events: none;
+}
+
+.node {
+  position: absolute;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  border: 1px solid #e5e7f5;
+}
+
+.node-label {
+  font-size: 13px;
+  color: #111827;
+}
+
+.node-main {
+  left: 32%;
+  top: 44%;
+  padding: 10px 22px;
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
+  border: none;
+}
+
+.node-main .node-label {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.node-a {
+  left: 52%;
+  top: 30%;
+}
+
+.node-b {
+  left: 75%;
+  top: 45%;
+}
+
+.node-c {
+  left: 45%;
+  top: 70%;
+}
+
+.node-d {
+  left: 20%;
+  top: 70%;
+}
+
+.node-label.muted {
+  color: #cbd5e1;
+}
+
+@media (max-width: 960px) {
+  .knowledge-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .panel-right {
+    min-height: 320px;
+  }
+}
+
+@media (max-width: 720px) {
+  .knowledge-page {
+    padding: 18px 16px 22px;
+  }
+
+  .panel-left {
+    padding: 16px 14px 14px;
+  }
+
+  .canvas {
+    padding: 20px 16px 16px;
+  }
 }
 </style>
+

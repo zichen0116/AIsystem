@@ -1,8 +1,11 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
+const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
 
 const systemSearch = ref('')
 const personalSearch = ref('')
@@ -235,10 +238,17 @@ function openDetail(target, item) {
           <div class="column-header">
             <h3 class="column-title">
               <span class="column-title-icon kb-icon-outline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
-              个人知识库
+              {{ isAdmin ? '用户知识库' : '个人知识库' }}
             </h3>
             <span class="item-count">{{ filteredPersonalList.length }} 项</span>
-            <button type="button" class="add-kb-btn" @click="openAddModal('personal')">添加知识库</button>
+            <button
+              v-if="!isAdmin"
+              type="button"
+              class="add-kb-btn"
+              @click="openAddModal('personal')"
+            >
+              添加知识库
+            </button>
           </div>
           <div class="search-bar">
             <span class="search-icon kb-icon-outline"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></span>
