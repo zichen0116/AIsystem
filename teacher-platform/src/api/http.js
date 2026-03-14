@@ -7,7 +7,7 @@ export function resolveApiUrl(path) {
   return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
 }
 
-function getToken() {
+export function getToken() {
   return localStorage.getItem('access_token') || ''
 }
 

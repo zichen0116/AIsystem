@@ -10,7 +10,8 @@
       "Bash(head:*)",
       "Bash(cd \"D:\\\\Develop\\\\Project\\\\AIsystem\" && git branch --set-upstream-to=origin/feature/knowledge-library feature/knowledge-library && git push 2>&1)",
       "Bash(cd:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(wc -l /d/Develop/Project/AIsystem/teacher-platform/src/views/*.vue | sort -rn | head -20)"
     ]
   }
 }
