@@ -121,7 +121,10 @@ function getMarkdown() {
 
 function loadContent(markdown) {
   if (!editor.value) createEditor(markdown)
-  else editor.value.commands.setContent(markdown)
+  else {
+    const html = md.render(markdown)
+    editor.value.commands.setContent(html)
+  }
   nextTick(extractHeadings)
 }
 
@@ -134,7 +137,14 @@ watch(() => props.isStreaming, (streaming, wasStreaming) => {
 
 function copyAll() {
   const text = getMarkdown()
-  navigator.clipboard.writeText(text)
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  })
 }
 
 async function downloadWord() {

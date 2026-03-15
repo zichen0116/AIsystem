@@ -88,11 +88,10 @@ watch(() => props.resetKey, () => startNewConversation())
 function enterWriterMode() {
   mode.value = 'writer'
   sidebarCollapsed.value = true
+  // Clear streamingText so document content doesn't appear in chat
+  streamingText.value = ''
   nextTick(() => {
-    if (currentMarkdown.value) {
-      writerRef.value?.createEditor('')
-      writerRef.value?.loadContent(currentMarkdown.value)
-    }
+    writerRef.value?.createEditor(currentMarkdown.value || '')
   })
 }
 
@@ -146,7 +145,10 @@ async function streamSSE(url, body, onMeta, onContent, onDone, onError) {
             onMeta(data.meta)
           } else if (data.content) {
             streamingMarkdown.value += data.content
-            streamingText.value += data.content
+            // Only accumulate streamingText for chat if in dialog mode
+            if (mode.value === 'dialog') {
+              streamingText.value += data.content
+            }
             // Heuristic: if first content starts with #, it's a document
             if (!contentStarted) {
               contentStarted = true

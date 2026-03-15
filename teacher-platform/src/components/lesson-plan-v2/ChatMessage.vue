@@ -30,7 +30,15 @@ const renderedContent = computed(() => {
 })
 
 function copyContent() {
-  navigator.clipboard.writeText(props.msg.content)
+  navigator.clipboard.writeText(props.msg.content).catch(() => {
+    // Fallback for non-HTTPS contexts
+    const ta = document.createElement('textarea')
+    ta.value = props.msg.content
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  })
 }
 </script>
 

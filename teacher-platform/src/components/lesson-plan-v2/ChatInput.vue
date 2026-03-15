@@ -63,7 +63,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { resolveApiUrl, getToken } from '../../api/http.js'
 import { useVoiceInput } from '../../composables/useVoiceInput.js'
 
@@ -162,7 +162,21 @@ function restoreFiles(files) {
 
 defineExpose({ restoreFiles })
 
-onMounted(fetchLibraries)
+// Click-outside handler for knowledge base picker
+function handleClickOutside(e) {
+  if (showLibPicker.value && !e.target.closest('.lib-picker') && !e.target.closest('.action-btn')) {
+    showLibPicker.value = false
+  }
+}
+
+onMounted(() => {
+  fetchLibraries()
+  document.addEventListener('click', handleClickOutside)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
 </script>
 
 <style scoped>

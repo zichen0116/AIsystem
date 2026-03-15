@@ -1,5 +1,10 @@
 <template>
-  <div v-if="visible" class="floating-toolbar" :style="toolbarStyle">
+  <div
+    v-if="visible"
+    class="floating-toolbar"
+    :style="toolbarStyle"
+    @mousedown.prevent
+  >
     <button @click="editor.chain().focus().toggleBold().run()" :class="{ active: editor.isActive('bold') }">
       <strong>B</strong>
     </button>
@@ -31,7 +36,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   editor: { type: Object, default: null },
@@ -40,6 +45,7 @@ const props = defineProps({
 const visible = ref(false)
 const toolbarTop = ref(0)
 const toolbarLeft = ref(0)
+let blurTimer = null
 
 const toolbarStyle = computed(() => ({
   top: `${toolbarTop.value}px`,
@@ -59,20 +65,41 @@ function updateToolbar() {
   const editorRect = view.dom.closest('.editor-canvas')?.getBoundingClientRect()
   if (!editorRect) return
 
+  // Center toolbar above selection
+  const toolbarWidth = 280
   toolbarTop.value = start.top - editorRect.top - 44
-  toolbarLeft.value = (start.left + end.left) / 2 - editorRect.left - 120
+  toolbarLeft.value = (start.left + end.left) / 2 - editorRect.left - toolbarWidth / 2
 }
 
-watch(() => props.editor, (editor) => {
+function handleBlur() {
+  // Delay blur to allow toolbar button clicks to re-focus
+  clearTimeout(blurTimer)
+  blurTimer = setTimeout(() => { visible.value = false }, 200)
+}
+
+function handleFocus() {
+  clearTimeout(blurTimer)
+}
+
+watch(() => props.editor, (editor, oldEditor) => {
+  if (oldEditor) {
+    oldEditor.off('selectionUpdate', updateToolbar)
+    oldEditor.off('blur', handleBlur)
+    oldEditor.off('focus', handleFocus)
+  }
   if (editor) {
     editor.on('selectionUpdate', updateToolbar)
-    editor.on('blur', () => { visible.value = false })
+    editor.on('blur', handleBlur)
+    editor.on('focus', handleFocus)
   }
 }, { immediate: true })
 
 onBeforeUnmount(() => {
+  clearTimeout(blurTimer)
   if (props.editor) {
     props.editor.off('selectionUpdate', updateToolbar)
+    props.editor.off('blur', handleBlur)
+    props.editor.off('focus', handleFocus)
   }
 })
 </script>
