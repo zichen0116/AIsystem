@@ -525,5 +525,28 @@
   font-weight: 600;
   color: #0f172a;
 }
+
+@media (max-width: 1100px) {
+  .admin-page { padding: 20px 20px 24px; }
+  .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .tabs-row { flex-wrap: wrap; gap: 6px; }
+  .bottom-stats { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .admin-page { padding: 16px 12px 20px; }
+  .page-title { font-size: 20px; }
+  .header-actions { flex-wrap: wrap; }
+  .table-card { padding: 12px; overflow-x: auto; }
+  .data-table { min-width: 620px; font-size: 13px; }
+  .table-toolbar { flex-direction: column; align-items: stretch; }
+  .bottom-stats { grid-template-columns: 1fr; }
+  .table-footer { flex-direction: column; gap: 8px; align-items: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .admin-page { padding: 12px 10px 16px; }
+  .page-title { font-size: 18px; }
+}
 </style>
 

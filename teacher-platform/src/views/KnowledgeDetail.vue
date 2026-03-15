@@ -283,4 +283,33 @@ function downloadDoc(doc) {
 .link-btn.danger {
   color: #ef4444;
 }
+
+@media (max-width: 960px) {
+  .kb-detail-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .kb-detail-actions { width: 100%; }
+  .search-input { flex: 1; min-width: 0; }
+  .kb-table-header,
+  .kb-table-row {
+    grid-template-columns: 40px 2fr 60px 60px 140px 80px 1fr;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 720px) {
+  .kb-detail-page { padding: 16px 12px; }
+  .kb-detail-title { font-size: 18px; }
+  .kb-detail-table { overflow-x: auto; }
+  .kb-table-header,
+  .kb-table-row {
+    grid-template-columns: 36px 1.5fr 50px 50px 120px 70px 140px;
+    min-width: 540px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .kb-detail-page { padding: 12px 10px; }
+  .kb-detail-actions { flex-direction: column; }
+  .search-input { width: 100%; }
+}
 </style>

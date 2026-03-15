@@ -68,5 +68,16 @@
   color: #6b7280;
   line-height: 1.6;
 }
+
+@media (max-width: 720px) {
+  .admin-page { padding: 20px 16px 24px; }
+  .admin-title { font-size: 22px; }
+  .admin-content { gap: 12px; }
+}
+
+@media (max-width: 480px) {
+  .admin-page { padding: 16px 12px 20px; }
+  .admin-title { font-size: 20px; }
+}
 </style>
 
