@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import LessonPrepPpt from './LessonPrepPpt.vue'
-import LessonPrepLessonPlan from './LessonPrepLessonPlan.vue'
+import LessonPlanPage from './LessonPlanPage.vue'
 import LessonPrepAnimation from './LessonPrepAnimation.vue'
 import LessonPrepKnowledge from './LessonPrepKnowledge.vue'
 import LessonPrepMindmap from './LessonPrepMindmap.vue'
@@ -39,7 +39,7 @@ const activeTab = computed(() => {
 const currentComponent = computed(() => {
   const map = {
     ppt: LessonPrepPpt,
-    'lesson-plan': LessonPrepLessonPlan,
+    'lesson-plan': LessonPlanPage,
     animation: LessonPrepAnimation,
     knowledge: LessonPrepKnowledge,
     mindmap: LessonPrepMindmap,
