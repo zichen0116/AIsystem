@@ -1263,4 +1263,14 @@ watch(
   text-align: center;
   color: #94a3b8;
 }
+
+@media (max-width: 960px) {
+  .animation-two-column { flex-direction: column; }
+  .animation-left { max-height: 50vh; height: auto; }
+  .animation-two-column.fullscreen-mode { padding: 16px; }
+}
+
+@media (max-width: 720px) {
+  .animation-two-column.fullscreen-mode { padding: 12px; }
+}
 </style>

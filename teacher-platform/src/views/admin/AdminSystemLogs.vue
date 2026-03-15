@@ -379,5 +379,25 @@
   font-size: 13px;
   color: #9ca3af;
 }
+
+@media (max-width: 1100px) {
+  .admin-page { padding: 20px 20px 24px; }
+  .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .filter-bar { flex-direction: column; align-items: stretch; gap: 10px; }
+}
+
+@media (max-width: 720px) {
+  .admin-page { padding: 16px 12px 20px; }
+  .page-title { font-size: 20px; }
+  .filter-group { flex-wrap: wrap; }
+  .table-card { padding: 12px; overflow-x: auto; }
+  .data-table { min-width: 580px; font-size: 13px; }
+  .table-footer { flex-direction: column; gap: 8px; align-items: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .admin-page { padding: 12px 10px 16px; }
+  .page-title { font-size: 18px; }
+}
 </style>
 

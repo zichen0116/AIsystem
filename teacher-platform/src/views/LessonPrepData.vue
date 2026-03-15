@@ -966,4 +966,22 @@ async function generateCharts() {
   height: 20px;
   object-fit: contain;
 }
+
+@media (max-width: 960px) {
+  .data-panel { padding: 24px 20px 16px; }
+  .data-input-area { width: 95%; }
+  .data-icon { width: 180px; height: 170px; }
+  .data-icon :deep(.lottie-container) { width: 180px; height: 170px; }
+  .data-title { font-size: 1.5rem; }
+  .data-examples { gap: 10px; margin-bottom: 24px; }
+}
+
+@media (max-width: 720px) {
+  .data-panel { padding: 16px 12px 12px; }
+  .data-input-area { width: 100%; }
+  .data-icon { width: 140px; height: 130px; }
+  .data-icon :deep(.lottie-container) { width: 140px; height: 130px; }
+  .data-title { font-size: 1.35rem; }
+  .example-card { padding: 12px 16px; font-size: 0.9rem; }
+}
 </style>

@@ -665,5 +665,70 @@ function handleAvatarClick() {
   font-size: 0; /* 去掉多余间距，仅影响内部尺寸 */
 }
 
+/* 自适应：窄屏默认收起侧栏，提供更多内容空间 */
+@media (max-width: 1100px) {
+  .primary:not(.collapsed) {
+    width: 180px;
+  }
+}
 
+@media (max-width: 900px) {
+  .layout {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .primary:not(.collapsed) {
+    width: 72px;
+  }
+  .primary:not(.collapsed) .brand-text,
+  .primary:not(.collapsed) .pi-label,
+  .primary:not(.collapsed) .sub-list {
+    display: none;
+  }
+  .primary:not(.collapsed) .primary-item {
+    justify-content: center;
+    padding: 10px 8px;
+  }
+  .primary:not(.collapsed) .primary-top {
+    justify-content: center;
+  }
+  .primary:not(.collapsed) .pi-chevron {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .primary {
+    width: 56px;
+    min-width: 56px;
+  }
+  .primary.collapsed {
+    width: 56px;
+  }
+  .primary .brand-text,
+  .primary .pi-label,
+  .primary .sub-list {
+    display: none;
+  }
+  .primary .primary-item {
+    justify-content: center;
+    padding: 8px 6px;
+  }
+  .primary .primary-top {
+    justify-content: center;
+    padding: 12px 6px;
+  }
+  .primary .pi-chevron {
+    display: none;
+  }
+  .primary .pi-icon,
+  .primary.collapsed .pi-icon {
+    width: 18px;
+  }
+  .primary .pi-icon svg,
+  .primary.collapsed .pi-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+}
 </style>

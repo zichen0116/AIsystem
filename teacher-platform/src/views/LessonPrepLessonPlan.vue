@@ -280,4 +280,9 @@ onBeforeUnmount(() => {
 .lesson-plan-page { display: flex; height: calc(100vh - 60px); gap: 0; background: #f1f5f9; padding: 16px; }
 .chat-column { width: 33%; min-width: 300px; max-width: 420px; flex-shrink: 0; padding: 0 12px; }
 .editor-column { flex: 1; min-width: 0; }
+
+@media (max-width: 960px) {
+  .lesson-plan-page { flex-direction: column; height: auto; min-height: calc(100vh - 60px); }
+  .chat-column { width: 100%; max-width: none; min-width: 0; }
+}
 </style>
