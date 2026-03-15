@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .lesson-plan-page {
   display: flex;
-  height: calc(100vh - 60px);
+  height: 100%;
   background: #f1f5f9;
   position: relative;
 }
