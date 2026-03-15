@@ -1,47 +1,85 @@
 <template>
-  <BubbleMenu v-if="editor" :editor="editor" :tippy-options="{ duration: 150 }">
-    <div class="floating-toolbar">
-      <button @click="editor.chain().focus().toggleBold().run()" :class="{ active: editor.isActive('bold') }">
-        <strong>B</strong>
-      </button>
-      <button @click="editor.chain().focus().toggleItalic().run()" :class="{ active: editor.isActive('italic') }">
-        <em>I</em>
-      </button>
-      <button @click="editor.chain().focus().toggleUnderline().run()" :class="{ active: editor.isActive('underline') }">
-        <u>U</u>
-      </button>
-      <div class="divider" />
-      <button @click="editor.chain().focus().toggleHeading({ level: 2 }).run()" :class="{ active: editor.isActive('heading', { level: 2 }) }">
-        H2
-      </button>
-      <button @click="editor.chain().focus().toggleHeading({ level: 3 }).run()" :class="{ active: editor.isActive('heading', { level: 3 }) }">
-        H3
-      </button>
-      <div class="divider" />
-      <button @click="editor.chain().focus().toggleBulletList().run()" :class="{ active: editor.isActive('bulletList') }">
-        •
-      </button>
-      <button @click="editor.chain().focus().toggleOrderedList().run()" :class="{ active: editor.isActive('orderedList') }">
-        ≡
-      </button>
-      <div class="divider" />
-      <button @click="editor.chain().focus().toggleHighlight().run()" :class="{ active: editor.isActive('highlight') }">
-        🖍
-      </button>
-    </div>
-  </BubbleMenu>
+  <div v-if="visible" class="floating-toolbar" :style="toolbarStyle">
+    <button @click="editor.chain().focus().toggleBold().run()" :class="{ active: editor.isActive('bold') }">
+      <strong>B</strong>
+    </button>
+    <button @click="editor.chain().focus().toggleItalic().run()" :class="{ active: editor.isActive('italic') }">
+      <em>I</em>
+    </button>
+    <button @click="editor.chain().focus().toggleUnderline().run()" :class="{ active: editor.isActive('underline') }">
+      <u>U</u>
+    </button>
+    <div class="divider" />
+    <button @click="editor.chain().focus().toggleHeading({ level: 2 }).run()" :class="{ active: editor.isActive('heading', { level: 2 }) }">
+      H2
+    </button>
+    <button @click="editor.chain().focus().toggleHeading({ level: 3 }).run()" :class="{ active: editor.isActive('heading', { level: 3 }) }">
+      H3
+    </button>
+    <div class="divider" />
+    <button @click="editor.chain().focus().toggleBulletList().run()" :class="{ active: editor.isActive('bulletList') }">
+      •
+    </button>
+    <button @click="editor.chain().focus().toggleOrderedList().run()" :class="{ active: editor.isActive('orderedList') }">
+      ≡
+    </button>
+    <div class="divider" />
+    <button @click="editor.chain().focus().toggleHighlight().run()" :class="{ active: editor.isActive('highlight') }">
+      🖍
+    </button>
+  </div>
 </template>
 
 <script setup>
-import { BubbleMenu } from '@tiptap/vue-3'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 
-defineProps({
+const props = defineProps({
   editor: { type: Object, default: null },
+})
+
+const visible = ref(false)
+const toolbarTop = ref(0)
+const toolbarLeft = ref(0)
+
+const toolbarStyle = computed(() => ({
+  top: `${toolbarTop.value}px`,
+  left: `${toolbarLeft.value}px`,
+}))
+
+function updateToolbar() {
+  if (!props.editor) { visible.value = false; return }
+  const { state } = props.editor
+  const { from, to, empty } = state.selection
+  if (empty) { visible.value = false; return }
+
+  visible.value = true
+  const view = props.editor.view
+  const start = view.coordsAtPos(from)
+  const end = view.coordsAtPos(to)
+  const editorRect = view.dom.closest('.editor-canvas')?.getBoundingClientRect()
+  if (!editorRect) return
+
+  toolbarTop.value = start.top - editorRect.top - 44
+  toolbarLeft.value = (start.left + end.left) / 2 - editorRect.left - 120
+}
+
+watch(() => props.editor, (editor) => {
+  if (editor) {
+    editor.on('selectionUpdate', updateToolbar)
+    editor.on('blur', () => { visible.value = false })
+  }
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  if (props.editor) {
+    props.editor.off('selectionUpdate', updateToolbar)
+  }
 })
 </script>
 
 <style scoped>
 .floating-toolbar {
+  position: absolute;
   background: #1a1a2e;
   border-radius: 8px;
   padding: 4px 8px;
