@@ -11,7 +11,7 @@
 
     <!-- Streaming indicator -->
     <div v-if="isStreaming" class="chat-msg assistant">
-      <div class="msg-bubble">
+      <div class="msg-content">
         <div v-if="streamingText" v-html="renderStreaming(streamingText)" />
         <div v-else class="typing-indicator">
           <span /><span /><span />
@@ -59,23 +59,17 @@ defineExpose({ scrollToBottom })
 .chat-flow {
   flex: 1;
   overflow-y: auto;
-  padding: 24px 15%;
+  padding: 24px;
 }
 .chat-msg.assistant {
   margin-bottom: 20px;
   display: flex;
   justify-content: flex-start;
 }
-.chat-msg.assistant .msg-bubble {
-  background: #fff;
+.chat-msg.assistant .msg-content {
   color: #333;
-  border: 1px solid #e8ecf0;
-  border-radius: 12px;
-  border-bottom-left-radius: 4px;
-  padding: 12px 16px;
   font-size: 14px;
   line-height: 1.7;
-  max-width: 75%;
 }
 .typing-indicator {
   display: flex;

@@ -1,14 +1,8 @@
 <template>
   <div class="chat-msg" :class="msg.role">
-    <div class="msg-bubble">
+    <div class="msg-content">
       <div v-if="msg.role === 'assistant'" v-html="renderedContent" />
       <template v-else>{{ msg.content }}</template>
-    </div>
-    <div v-if="msg.role === 'assistant'" class="ai-actions">
-      <button @click="copyContent">📋 复制</button>
-      <button @click="$emit('regenerate')">🔄 重新生成</button>
-      <button @click="$emit('like')">👍</button>
-      <button @click="$emit('dislike')">👎</button>
     </div>
   </div>
 </template>
@@ -23,23 +17,11 @@ const props = defineProps({
   msg: { type: Object, required: true },
 })
 
-defineEmits(['regenerate', 'like', 'dislike'])
+defineEmits(['regenerate'])
 
 const renderedContent = computed(() => {
   return md.render(props.msg.content || '')
 })
-
-function copyContent() {
-  navigator.clipboard.writeText(props.msg.content).catch(() => {
-    // Fallback for non-HTTPS contexts
-    const ta = document.createElement('textarea')
-    ta.value = props.msg.content
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-  })
-}
 </script>
 
 <style scoped>
@@ -53,57 +35,36 @@ function copyContent() {
 .chat-msg.assistant {
   justify-content: flex-start;
 }
-.msg-bubble {
-  max-width: 75%;
-  padding: 12px 16px;
-  border-radius: 12px;
+.msg-content {
   font-size: 14px;
   line-height: 1.7;
 }
-.chat-msg.user .msg-bubble {
+/* User: keep bubble style */
+.chat-msg.user .msg-content {
+  max-width: 75%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border-bottom-right-radius: 4px;
   background: #2563eb;
   color: #fff;
-  border-bottom-right-radius: 4px;
 }
-.chat-msg.assistant .msg-bubble {
-  background: #fff;
+/* AI: no bubble, plain text */
+.chat-msg.assistant .msg-content {
   color: #333;
-  border: 1px solid #e8ecf0;
-  border-bottom-left-radius: 4px;
 }
-.msg-bubble :deep(h3) {
+.msg-content :deep(h3) {
   font-size: 15px;
   font-weight: 600;
   margin: 8px 0 4px;
 }
-.msg-bubble :deep(ul) {
+.msg-content :deep(ul) {
   padding-left: 18px;
   margin: 4px 0;
 }
-.msg-bubble :deep(li) {
+.msg-content :deep(li) {
   margin: 2px 0;
 }
-.msg-bubble :deep(p) {
+.msg-content :deep(p) {
   margin: 4px 0;
-}
-.ai-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-  align-self: flex-start;
-}
-.ai-actions button {
-  background: none;
-  border: 1px solid #e0e3e8;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
-  color: #888;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.ai-actions button:hover {
-  color: #2563eb;
-  border-color: #2563eb;
 }
 </style>

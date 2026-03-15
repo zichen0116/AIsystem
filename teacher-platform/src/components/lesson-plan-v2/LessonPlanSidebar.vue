@@ -2,7 +2,10 @@
   <div class="sidebar-wrapper">
     <transition name="sidebar-slide">
       <div v-if="!collapsed" class="lesson-sidebar" :class="{ overlay: isOverlay }">
-        <button class="new-btn" @click="$emit('new-conversation')">＋ 新建对话</button>
+        <div class="sidebar-header">
+          <button class="new-btn" @click="$emit('new-conversation')">＋ 新建对话</button>
+          <button class="collapse-btn" @click="$emit('toggle')" title="收起侧边栏">‹</button>
+        </div>
         <div class="history-list">
           <div
             v-for="item in mockHistory"
@@ -78,13 +81,36 @@ const mockHistory = [
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  margin-bottom: 16px;
+  flex: 1;
   transition: all 0.2s;
 }
 .new-btn:hover {
   background: #1d4ed8;
-  transform: scale(1.02);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+.sidebar-header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  align-items: stretch;
+}
+.collapse-btn {
+  width: 36px;
+  background: #f7f8fa;
+  border: 1px solid #e0e3e8;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #999;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.collapse-btn:hover {
+  color: #2563eb;
+  border-color: #2563eb;
+  background: #f0f5ff;
 }
 .history-list {
   flex: 1;
