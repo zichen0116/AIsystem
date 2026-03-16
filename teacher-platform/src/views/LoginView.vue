@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { apiRequest } from '../api/http'
 import smartImg from '../assets/智能.png'
 
 const userStore = useUserStore()
@@ -9,39 +10,96 @@ const router = useRouter()
 const route = useRoute()
 
 const isLogin = ref(true)
+const loading = ref(false)
+const errorMsg = ref('')
+const codeCooldown = ref(0)
+let cooldownTimer = null
 
 const form = ref({
   phone: '',
   password: '',
   confirmPassword: '',
   code: '',
-  role: 'teacher'
+  fullName: '',
 })
 
 function setMode(nextIsLogin) {
   if (isLogin.value === nextIsLogin) return
   isLogin.value = nextIsLogin
-  form.value = { phone: '', password: '', confirmPassword: '', code: '', role: 'teacher' }
+  form.value = { phone: '', password: '', confirmPassword: '', code: '', fullName: '' }
+  errorMsg.value = ''
 }
 
-function switchMode() {
-  isLogin.value = !isLogin.value
-  form.value = { phone: '', password: '', confirmPassword: '', code: '', role: 'teacher' }
-}
-
-function handleSubmit() {
-  if (isLogin.value) {
-    userStore.login({ name: form.value.phone, phone: form.value.phone, role: form.value.role })
-  } else {
-    userStore.login({ name: form.value.phone, phone: form.value.phone, role: form.value.role })
+async function sendCode() {
+  if (codeCooldown.value > 0) return
+  if (!form.value.phone || form.value.phone.length < 11) {
+    errorMsg.value = '请输入正确的手机号'
+    return
   }
-  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-  if (redirect) {
-    router.replace(redirect)
-  } else if (form.value.role === 'admin') {
-    router.replace('/admin')
-  } else {
-    router.replace('/lesson-prep')
+  try {
+    await apiRequest('/api/v1/auth/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: form.value.phone }),
+    })
+    // 开始冷却倒计时
+    codeCooldown.value = 60
+    cooldownTimer = setInterval(() => {
+      codeCooldown.value--
+      if (codeCooldown.value <= 0) clearInterval(cooldownTimer)
+    }, 1000)
+    errorMsg.value = ''
+  } catch (e) {
+    errorMsg.value = e.message || '验证码发送失败'
+  }
+}
+
+async function handleSubmit() {
+  errorMsg.value = ''
+
+  if (!form.value.phone || !form.value.password) {
+    errorMsg.value = '请填写手机号和密码'
+    return
+  }
+
+  if (!isLogin.value) {
+    if (form.value.password !== form.value.confirmPassword) {
+      errorMsg.value = '两次密码不一致'
+      return
+    }
+    if (!form.value.code) {
+      errorMsg.value = '请输入验证码'
+      return
+    }
+  }
+
+  loading.value = true
+  try {
+    let user
+    if (isLogin.value) {
+      user = await userStore.login(form.value.phone, form.value.password)
+    } else {
+      user = await userStore.register(
+        form.value.phone,
+        form.value.password,
+        form.value.code,
+        form.value.fullName || undefined,
+      )
+    }
+
+    // 跳转
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    if (redirect) {
+      router.replace(redirect)
+    } else if (user.is_admin) {
+      router.replace('/admin')
+    } else {
+      router.replace('/lesson-prep')
+    }
+  } catch (e) {
+    errorMsg.value = e.message || '操作失败'
+  } finally {
+    loading.value = false
   }
 }
 
@@ -76,42 +134,49 @@ function goHome() {
           <button type="button" class="tab" :class="{ active: isLogin }" @click="setMode(true)">登录账号</button>
         </div>
 
+        <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
+
         <form class="auth-form" @submit.prevent="handleSubmit">
           <label class="field">
-            <span class="label">Phone</span>
-            <input v-model="form.phone" type="tel" placeholder="手机号" class="input" required />
+            <span class="label">手机号</span>
+            <input v-model="form.phone" type="tel" placeholder="请输入手机号" class="input" required />
           </label>
 
           <label class="field">
-            <span class="label">role</span>
-            <select v-model="form.role" class="input select">
-              <option value="teacher">教师</option>
-              <option value="admin">管理员</option>
-            </select>
-          </label>
-
-
-          <label class="field">
-            <span class="label">Password</span>
-            <input v-model="form.password" type="password" placeholder="密码" class="input" required />
+            <span class="label">密码</span>
+            <input v-model="form.password" type="password" placeholder="请输入密码" class="input" required />
           </label>
 
           <template v-if="!isLogin">
             <label class="field">
-              <span class="label">Confirm password</span>
-              <input v-model="form.confirmPassword" type="password" placeholder="确认密码" class="input" required />
+              <span class="label">确认密码</span>
+              <input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" class="input" required />
+            </label>
+
+            <label class="field">
+              <span class="label">姓名（选填）</span>
+              <input v-model="form.fullName" type="text" placeholder="请输入姓名" class="input" />
             </label>
 
             <div class="code-row">
               <label class="field field-code">
-                <span class="label">Code</span>
-                <input v-model="form.code" type="text" placeholder="验证码" class="input" required />
+                <span class="label">验证码</span>
+                <input v-model="form.code" type="text" placeholder="请输入验证码" class="input" required />
               </label>
-              <button type="button" class="code-btn">获取验证码</button>
+              <button
+                type="button"
+                class="code-btn"
+                :disabled="codeCooldown > 0"
+                @click="sendCode"
+              >
+                {{ codeCooldown > 0 ? `${codeCooldown}s 后重发` : '获取验证码' }}
+              </button>
             </div>
           </template>
 
-          <button type="submit" class="submit-btn">{{ isLogin ? '登录' : '注册' }}</button>
+          <button type="submit" class="submit-btn" :disabled="loading">
+            {{ loading ? '处理中...' : (isLogin ? '登录' : '注册') }}
+          </button>
         </form>
       </section>
     </div>
@@ -185,8 +250,8 @@ function goHome() {
 .illus-hero {
   position: relative;
   width: 100%;
-  width: 560px;
-  height: 400px;
+  max-width: 520px;
+  height: 360px;
   z-index: 1;
   display: flex;
   align-items: center;
@@ -239,14 +304,6 @@ function goHome() {
 .spark-1 { left: 22%; top: 38%; opacity: 0.6; }
 .spark-2 { right: 26%; top: 28%; opacity: 0.35; background: rgba(99,102,241,0.5); }
 
-.illus-hero {
-  position: relative;
-  width: 100%;
-  max-width: 520px;
-  height: 360px;
-}
-
-
 .auth-right {
   flex: 1 1 0;
   padding: 40px 64px 40px;
@@ -296,6 +353,16 @@ function goHome() {
   background: #3b82f6;
 }
 
+.error-msg {
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 14px;
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -306,10 +373,6 @@ function goHome() {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.select {
-  padding-right: 32px;
 }
 
 .label {
@@ -346,6 +409,11 @@ function goHome() {
   transition: filter 0.2s;
 }
 
+.code-btn:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
 .submit-btn {
   margin-top: 8px;
   height: 50px;
@@ -359,8 +427,13 @@ function goHome() {
   transition: filter 0.2s;
 }
 
-.submit-btn:hover,
-.code-btn:hover {
+.submit-btn:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+.submit-btn:hover:not(:disabled),
+.code-btn:hover:not(:disabled) {
   filter: brightness(0.95);
 }
 

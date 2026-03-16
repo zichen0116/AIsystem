@@ -101,8 +101,8 @@ function logout() {
   showLogoutConfirm.value = true
 }
 
-function confirmLogout() {
-  userStore.logout()
+async function confirmLogout() {
+  await userStore.logout()
   showLogoutConfirm.value = false
   router.push('/')
 }

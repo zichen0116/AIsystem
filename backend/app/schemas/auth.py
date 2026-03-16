@@ -10,6 +10,7 @@ class UserRegister(BaseModel):
     phone: str = Field(..., min_length=11, max_length=20)
     password: str = Field(..., min_length=6)
     full_name: str | None = None
+    code: str = Field(..., min_length=4, max_length=8, description="短信验证码")
 
 
 class UserLogin(BaseModel):
@@ -18,23 +19,36 @@ class UserLogin(BaseModel):
     password: str = Field(...)
 
 
-class TokenResponse(BaseModel):
-    """令牌响应"""
-    access_token: str
-    token_type: str = "bearer"
-
-
 class UserResponse(BaseModel):
     """用户信息响应"""
     id: int
     phone: str
     full_name: str | None
+    is_admin: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class LoginResponse(BaseModel):
+    """登录/注册响应（token + 用户信息）"""
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
+
+class TokenResponse(BaseModel):
+    """令牌响应（保留兼容）"""
+    access_token: str
+    token_type: str = "bearer"
 
 
 class ChangePassword(BaseModel):
     """修改密码请求"""
     old_password: str = Field(..., min_length=6)
     new_password: str = Field(..., min_length=6)
+
+
+class SendCodeRequest(BaseModel):
+    """发送验证码请求"""
+    phone: str = Field(..., min_length=11, max_length=20)

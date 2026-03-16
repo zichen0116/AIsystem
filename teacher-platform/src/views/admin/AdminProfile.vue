@@ -1,13 +1,22 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useUserStore } from '../../stores/user'
 import AdminUserManage from './AdminUserManage.vue'
 import AdminResourceAudit from './AdminResourceAudit.vue'
 import AdminSystemLogs from './AdminSystemLogs.vue'
 
+const router = useRouter()
+const userStore = useUserStore()
 const currentSection = ref('overview') // overview | users | audit | logs
 
 function goSection(target) {
   currentSection.value = target
+}
+
+async function handleLogout() {
+  await userStore.logout()
+  router.push('/')
 }
 </script>
 
@@ -195,7 +204,7 @@ function goSection(target) {
                   <span class="settings-arrow">›</span>
                 </li>
               </ul>
-              <button type="button" class="logout-btn">退出登录</button>
+              <button type="button" class="logout-btn" @click="handleLogout">退出登录</button>
             </aside>
           </section>
         </template>

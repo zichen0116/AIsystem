@@ -20,7 +20,7 @@ const primaryItems = [
   { id: 'resource', path: '/resource-search', label: '资源搜索', icon: 'search' }
 ]
 
-const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+const isAdmin = computed(() => userStore.userInfo?.is_admin === true)
 
 const otherPrimaryItems = computed(() => {
   if (isAdmin.value) {

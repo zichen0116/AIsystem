@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     OSS_ACCESS_KEY_ID: str = ""
     OSS_ACCESS_KEY_SECRET: str = ""
 
+    # ========== 短信服务（国阳云） ==========
+    SMS_APPCODE: str = ""
+
     # ========== 其他 API（可选） ==========
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
