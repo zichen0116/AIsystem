@@ -26,16 +26,43 @@ def _extract_txt(file_path: Path) -> str:
 
 
 def _extract_pdf(file_path: Path) -> str:
+    """
+    PDF 文本提取：
+    - 优先使用 PyMuPDF（pymupdf），对中文/编码通常更稳
+    - 回退 PyPDF2
+    """
+    # 1) PyMuPDF (fitz)
+    try:
+        import fitz  # PyMuPDF
+
+        doc = fitz.open(str(file_path))
+        parts = []
+        for page in doc:
+            text = page.get_text("text") or ""
+            text = text.strip()
+            if text:
+                parts.append(text)
+        doc.close()
+        content = "\n\n".join(parts).strip()
+        if content:
+            return content
+    except Exception:
+        # 继续回退
+        pass
+
+    # 2) PyPDF2 fallback
     try:
         import PyPDF2
+
         with open(file_path, "rb") as f:
             reader = PyPDF2.PdfReader(f)
             parts = []
             for page in reader.pages:
-                text = page.extract_text()
+                text = page.extract_text() or ""
+                text = text.strip()
                 if text:
                     parts.append(text)
-            return "\n\n".join(parts)
+            return "\n\n".join(parts).strip()
     except Exception:
         return ""
 
