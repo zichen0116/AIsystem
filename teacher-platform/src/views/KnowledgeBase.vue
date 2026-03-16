@@ -5,7 +5,7 @@ import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
-const isAdmin = computed(() => userStore.userInfo?.role === 'admin')
+const isAdmin = computed(() => userStore.userInfo?.is_admin === true)
 
 const systemSearch = ref('')
 const personalSearch = ref('')

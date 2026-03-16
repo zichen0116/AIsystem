@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { getToken } from '../api/http'
 
 const routes = [
   { path: '/', name: 'Home', component: () => import('../views/Home.vue') },
@@ -84,9 +85,21 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to) => {
-  if (!to.meta?.requiresAuth) return true
+// 首屏是否已恢复登录态
+let authRestored = false
+
+router.beforeEach(async (to) => {
   const userStore = useUserStore()
+
+  // 首屏：用 localStorage token 恢复登录态
+  if (!authRestored) {
+    authRestored = true
+    if (getToken()) {
+      await userStore.fetchUser()
+    }
+  }
+
+  if (!to.meta?.requiresAuth) return true
   if (userStore.isLoggedIn) return true
   return { path: '/login', query: { redirect: to.fullPath } }
 })

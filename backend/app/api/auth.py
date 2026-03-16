@@ -12,17 +12,41 @@ from app.core.jwt import create_access_token, token_to_hash, get_token_expired_a
 from app.core.auth import CurrentUser
 from app.models.user import User
 from app.models.token_blacklist import TokenBlacklist
-from app.schemas.auth import UserRegister, UserLogin, TokenResponse, UserResponse, ChangePassword
+from app.schemas.auth import (
+    UserRegister, UserLogin, LoginResponse, UserResponse,
+    ChangePassword, SendCodeRequest,
+)
+from app.services.sms import send_sms_code, verify_sms_code
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/send-code", status_code=status.HTTP_200_OK)
+async def send_code(data: SendCodeRequest):
+    """发送短信验证码"""
+    try:
+        await send_sms_code(data.phone)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(e)
+        )
+    return {"message": "验证码已发送"}
+
+
+@router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     data: UserRegister,
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """用户注册"""
+    # 校验验证码
+    if not await verify_sms_code(data.phone, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证码错误或已过期"
+        )
+
     # 检查手机号是否已存在
     result = await db.execute(
         select(User).where(User.phone == data.phone)
@@ -45,10 +69,13 @@ async def register(
 
     # 生成令牌（带 token_version）
     access_token = create_access_token(user.id, user.token_version)
-    return TokenResponse(access_token=access_token)
+    return LoginResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(user),
+    )
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=LoginResponse)
 async def login(
     data: UserLogin,
     db: Annotated[AsyncSession, Depends(get_db)]
@@ -68,7 +95,10 @@ async def login(
 
     # 生成令牌（带 token_version）
     access_token = create_access_token(user.id, user.token_version)
-    return TokenResponse(access_token=access_token)
+    return LoginResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_200_OK)

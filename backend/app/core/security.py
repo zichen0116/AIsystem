@@ -21,4 +21,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     # bcrypt 限制密码最长 72 字节
     password_bytes = plain_password.encode('utf-8')[:BCRYPT_MAX_PASSWORD_LENGTH]
     hashed_bytes = hashed_password.encode('utf-8')
-    return bcrypt.checkpw(password_bytes, hashed_bytes)
+    try:
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except ValueError:
+        # Avoid 500 if a stored hash is malformed.
+        return False
