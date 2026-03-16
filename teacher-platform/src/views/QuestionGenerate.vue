@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 
 const form = ref({
   subject: '计算机科学',
@@ -15,6 +15,26 @@ const form = ref({
 })
 
 const hasGenerated = ref(false)
+const uploading = ref(false)
+const generating = ref(false)
+const uploadPreview = ref('')
+const uploadedFilename = ref('')
+const questions = ref([])
+const errorMsg = ref('')
+const previewRef = ref(null)
+const exporting = ref(false)
+
+function formatTfAnswer(ans) {
+  const s = (ans ?? '').toString().trim().toLowerCase()
+  if (s === 'true' || s === 't' || s === '1' || s.includes('正确')) return '正确'
+  if (s === 'false' || s === 'f' || s === '0' || s.includes('错误')) return '错误'
+  return ans ?? ''
+}
+
+function isTfTrue(ans) {
+  const s = (ans ?? '').toString().trim().toLowerCase()
+  return s === 'true' || s === 't' || s === '1' || s.includes('正确')
+}
 
 function toggleDifficulty(level) {
   form.value.difficulty = level
@@ -24,14 +44,147 @@ function toggleType(key) {
   form.value.types[key] = !form.value.types[key]
 }
 
-function handleGenerate() {
-  hasGenerated.value = true
-}
-
 const difficultyLabel = computed(() => {
   const map = { easy: '简单', medium: '中等', hard: '困难' }
   return map[form.value.difficulty]
 })
+
+const hasSource = computed(() => {
+  return !!form.value.source || !!uploadPreview.value
+})
+
+const finalSource = computed(() => {
+  if (form.value.source && uploadPreview.value) {
+    return `${form.value.source}\n\n【以下为上传文档解析内容】\n${uploadPreview.value}`
+  }
+  return form.value.source || uploadPreview.value || ''
+})
+
+function selectFile() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.pdf,.doc,.docx,.ppt,.pptx,.txt'
+  input.onchange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await handleUpload(file)
+  }
+  input.click()
+}
+
+async function handleUpload(file) {
+  uploading.value = true
+  errorMsg.value = ''
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const resp = await fetch('/api/v1/html/upload', {
+      method: 'POST',
+      body: formData
+    })
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || '上传失败')
+    }
+
+    const data = await resp.json()
+    uploadPreview.value = data.preview || ''
+    uploadedFilename.value = data.filename || file.name
+  } catch (e) {
+    console.error(e)
+    errorMsg.value = e.message || '上传失败，请稍后重试'
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function handleGenerate() {
+  errorMsg.value = ''
+  generating.value = true
+  try {
+    const selectedTypes = Object.entries(form.value.types)
+      .filter(([, v]) => v)
+      .map(([k]) => k)
+
+    if (!selectedTypes.length) {
+      errorMsg.value = '请至少选择一种题目类型'
+      generating.value = false
+      return
+    }
+
+    const payload = {
+      subject: form.value.subject || '未指定学科',
+      difficulty: form.value.difficulty,
+      types: selectedTypes,
+      count: form.value.count || 1,
+      source: finalSource.value || null
+    }
+
+    const resp = await fetch('/api/v1/question-generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    })
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || '生成试题失败')
+    }
+
+    const data = await resp.json()
+
+    if (Array.isArray(data.questions) && data.questions.length > 0) {
+      questions.value = data.questions
+    } else if (data.raw_text) {
+      questions.value = [
+        {
+          type: 'essay',
+          stem: '模型未按预期返回结构化题目，以下为原始文本：',
+          answer: data.raw_text
+        }
+      ]
+    } else {
+      questions.value = []
+    }
+
+    hasGenerated.value = true
+  } catch (e) {
+    console.error(e)
+    errorMsg.value = e.message || '生成试题失败，请稍后重试'
+  } finally {
+    generating.value = false
+  }
+}
+
+async function handleExportPdf() {
+  if (!hasGenerated.value || !previewRef.value || exporting.value) return
+  try {
+    exporting.value = true
+    await nextTick()
+
+    const { default: html2pdf } = await import('html2pdf.js')
+    const element = previewRef.value
+
+    const opt = {
+      margin: [10, 10, 10, 10],
+      filename: `${form.value.subject || '试题'}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }
+
+    await html2pdf().set(opt).from(element).save()
+  } catch (e) {
+    console.error(e)
+    errorMsg.value = '导出 PDF 失败，请稍后重试'
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -142,7 +295,14 @@ const difficultyLabel = computed(() => {
       <div class="field">
         <div class="label-row">
           <label class="label">来源材料 / 知识点</label>
-          <button type="button" class="link-btn">上传 PDF / 文档</button>
+          <button
+            type="button"
+            class="link-btn"
+            :disabled="uploading"
+            @click="selectFile"
+          >
+            {{ uploading ? '上传中...' : '上传 PDF / 文档' }}
+          </button>
         </div>
         <textarea
           v-model="form.source"
@@ -150,50 +310,108 @@ const difficultyLabel = computed(() => {
           placeholder="粘贴教学材料、知识点列表，或输入希望考察的内容..."
           rows="5"
         />
+        <p v-if="uploadedFilename || uploadPreview" class="upload-hint">
+          已上传：{{ uploadedFilename }}；
+          提取文本长度：{{ uploadPreview.length }} 字
+        </p>
       </div>
 
-      <button type="button" class="primary-btn" @click="handleGenerate">
-        生成试题
+      <p v-if="errorMsg" class="error-text">
+        {{ errorMsg }}
+      </p>
+
+      <button
+        type="button"
+        class="primary-btn"
+        :disabled="generating"
+        @click="handleGenerate"
+      >
+        {{ generating ? '生成中...' : '生成试题' }}
       </button>
     </section>
 
     <!-- 右侧：生成后预览 -->
-    <section v-if="hasGenerated" class="preview-card">
+    <section
+      v-if="hasGenerated"
+      ref="previewRef"
+      class="preview-card"
+      :class="{ exporting: exporting }"
+    >
       <header class="preview-header">
         <h2 class="preview-title">试题预览</h2>
         <button type="button" class="outline-btn">保存试卷</button>
       </header>
 
       <div class="preview-body">
-        <div class="question-block">
-          <div class="q-tag">第 1 题 · 单选题</div>
-          <p class="q-text">以下哪种排序算法在最坏情况下的时间复杂度为 O(n log n)?</p>
-          <ul class="option-list">
-            <li class="option">A. 冒泡排序</li>
-            <li class="option active">B. 归并排序</li>
-            <li class="option">C. 插入排序</li>
-            <li class="option">D. 选择排序</li>
-          </ul>
-        </div>
-
-        <div v-if="form.types.essay" class="question-block">
-          <div class="q-tag yellow">第 2 题 · 论述题</div>
+        <div
+          v-for="(q, index) in questions"
+          :key="index"
+          class="question-block"
+        >
+          <div
+            class="q-tag"
+            :class="{ yellow: q.type === 'essay' || q.type === 'sa' }"
+          >
+            第 {{ index + 1 }} 题 ·
+            {{
+              q.type === 'mc'
+                ? '单选题'
+                : q.type === 'tf'
+                  ? '判断题'
+                  : q.type === 'sa'
+                    ? '简答题'
+                    : '论述题'
+            }}
+          </div>
           <p class="q-text">
-            请比较过程式编程与面向对象编程的不同，并举例说明在什么情境下更适合使用面向对象编程。
+            {{ q.stem }}
           </p>
-          <div class="answer-hint">
-            <div class="hint-title">参考要点：</div>
+
+          <!-- 单选题：选项列表 -->
+          <ul v-if="q.type === 'mc' && q.options && q.options.length" class="option-list">
+            <li
+              v-for="opt in q.options"
+              :key="opt.label"
+              class="option"
+              :class="{ active: opt.label === q.answer }"
+            >
+              {{ opt.label }}. {{ opt.text }}
+            </li>
+          </ul>
+
+          <!-- 判断题：正确/错误 -->
+          <div v-if="q.type === 'tf'" class="tf-wrap">
+            <span class="tf-pill" :class="{ active: isTfTrue(q.answer) }">正确</span>
+            <span class="tf-pill" :class="{ active: !isTfTrue(q.answer) }">错误</span>
+            <span class="tf-answer">答案：{{ formatTfAnswer(q.answer) }}</span>
+          </div>
+
+          <!-- 简答/论述：答案与解析 -->
+          <div v-if="(q.type === 'sa' || q.type === 'essay') && (q.answer || q.analysis)" class="answer-hint">
+            <div class="hint-title">参考答案与解析：</div>
+            <div class="hint-text" v-if="q.answer">
+              <div class="hint-k">答案</div>
+              <div class="hint-v">{{ q.answer }}</div>
+            </div>
+            <div class="hint-text" v-if="q.analysis">
+              <div class="hint-k">解析</div>
+              <div class="hint-v">{{ q.analysis }}</div>
+            </div>
+          </div>
+
+          <!-- 兜底：显示答案/解析 -->
+          <div v-if="q.type !== 'tf' && q.type !== 'mc' && q.type !== 'sa' && q.type !== 'essay' && (q.answer || q.analysis)" class="answer-hint">
+            <div class="hint-title">参考答案与解析：</div>
             <ul class="hint-list">
-              <li>模块化与封装性</li>
-              <li>继承、多态对代码复用的影响</li>
-              <li>在大型项目或复杂业务建模中的优势</li>
+              <li v-if="q.answer">答案：{{ q.answer }}</li>
+              <li v-if="q.analysis">解析：{{ q.analysis }}</li>
             </ul>
           </div>
         </div>
       </div>
 
       <footer class="preview-footer">
-        <button type="button" class="outline-btn">导出 PDF</button>
+        <button type="button" class="outline-btn" @click="handleExportPdf">导出 PDF</button>
       </footer>
     </section>
   </div>
@@ -206,12 +424,11 @@ const difficultyLabel = computed(() => {
   background: linear-gradient(180deg, #f3f8ff 0%, #f9fbff 100%);
   display: flex;
   gap: 20px;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
 }
 
 .page-wrap.with-preview {
-  align-items: stretch;
   justify-content: flex-start;
 }
 
@@ -225,6 +442,7 @@ const difficultyLabel = computed(() => {
   border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
+  /* 由内容自然撑开高度，避免按钮被挤出卡片外 */
   min-height: 520px;
 }
 
@@ -358,11 +576,27 @@ const difficultyLabel = computed(() => {
 }
 
 .link-btn {
-  border: none;
-  background: transparent;
-  color: #2563eb;
-  font-size: 14px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  padding: 6px 12px;
+  border-radius: 999px;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.link-btn:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+  transform: translateY(-1px);
+}
+
+.link-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .source-input {
@@ -429,6 +663,8 @@ const difficultyLabel = computed(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 右侧内部自己滚动，不影响左侧 */
+  max-height: calc(100vh - 48px);
 }
 
 .preview-header {
@@ -460,6 +696,23 @@ const difficultyLabel = computed(() => {
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+  /* 隐藏滚动条但保留滚动能力 */
+  scrollbar-width: none; /* Firefox */
+}
+
+.preview-body::-webkit-scrollbar {
+  display: none; /* Chrome / Edge / Safari */
+}
+
+/* 导出 PDF 时，取消高度限制和内部滚动，导出完整内容 */
+.preview-card.exporting {
+  max-height: none;
+}
+
+.preview-card.exporting .preview-body {
+  overflow: visible;
+  max-height: none;
+  scrollbar-width: auto;
 }
 
 .question-block {
@@ -517,6 +770,56 @@ const difficultyLabel = computed(() => {
   border-radius: 10px;
   background: #ffffff;
   border: 1px dashed #e5e7eb;
+}
+
+.tf-wrap {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tf-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tf-pill.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+
+.tf-answer {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.hint-text {
+  margin-top: 8px;
+}
+
+.hint-k {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  margin-bottom: 2px;
+}
+
+.hint-v {
+  font-size: 13px;
+  color: #111827;
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .hint-title {

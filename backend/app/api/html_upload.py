@@ -32,15 +32,29 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(500, detail=f"保存文件失败: {str(e)}")
 
     # 提取文本用于后续生成（提取失败不影响上传成功，仅预览为空）
+    extract_engine = "unknown"
     try:
         text_content = extract_text_from_file(save_path)
     except Exception as e:
         text_content = ""
+    # 简单推断引擎（便于前端排查）：PDF 优先 PyMuPDF，其它按后缀
+    try:
+        if suffix == ".pdf":
+            extract_engine = "pymupdf_then_pypdf2"
+        elif suffix == ".txt":
+            extract_engine = "txt"
+        elif suffix in (".doc", ".docx"):
+            extract_engine = "docx"
+        elif suffix in (".ppt", ".pptx"):
+            extract_engine = "pptx"
+    except Exception:
+        extract_engine = "unknown"
 
     return {
         "file_id": file_id,
         "filename": file.filename,
         "size": save_path.stat().st_size,
         "extracted_length": len(text_content),
+        "extract_engine": extract_engine,
         "preview": text_content[:500] + "..." if len(text_content) > 500 else text_content,
     }
