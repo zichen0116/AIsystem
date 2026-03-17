@@ -18,8 +18,15 @@
             :class="{ active: item.id === activeId }"
             @click="selectHistory(item)"
           >
-            <div class="history-title">{{ item.title }}</div>
-            <div class="history-time">{{ item.time }}</div>
+            <div class="item-content">
+              <div class="history-title">{{ item.title }}</div>
+              <div class="history-time">{{ item.time }}</div>
+            </div>
+            <button
+              class="delete-btn"
+              @click.stop="handleDelete(item)"
+              title="删除"
+            >×</button>
           </div>
         </div>
       </div>
@@ -32,14 +39,14 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { resolveApiUrl, getToken } from '../../api/http.js'
+import { resolveApiUrl, getToken, authFetch } from '../../api/http.js'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
   isOverlay: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['new-conversation', 'toggle', 'select-history'])
+const emit = defineEmits(['new-conversation', 'toggle', 'select-history', 'delete-history', 'toast'])
 
 const activeId = ref(null)
 const historyList = ref([])
@@ -191,15 +198,16 @@ defineExpose({
   color: #f56c6c;
 }
 .history-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 13px;
   color: #444;
   cursor: pointer;
   margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: background 0.2s;
 }
 .history-item:hover {
@@ -210,10 +218,46 @@ defineExpose({
   color: #2563eb;
   font-weight: 500;
 }
+.item-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.history-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .history-time {
   font-size: 11px;
   color: #aaa;
   margin-top: 2px;
+}
+.delete-btn {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: #e0e7ff;
+  color: #6366f1;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.history-item:hover .delete-btn {
+  opacity: 1;
+}
+.delete-btn:hover {
+  background: #c7d2fe;
+  color: #4f46e5;
 }
 .sidebar-toggle {
   position: absolute;
