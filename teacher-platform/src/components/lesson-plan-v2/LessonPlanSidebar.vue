@@ -32,6 +32,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { resolveApiUrl, getToken } from '../../api/http.js'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
@@ -66,10 +67,9 @@ async function loadHistory() {
   loading.value = true
   error.value = null
   try {
-    const token = localStorage.getItem('token')
-    const response = await fetch('http://localhost:8000/api/v1/lesson-plan/list', {
+    const response = await fetch(resolveApiUrl('/api/v1/lesson-plan/list'), {
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${getToken()}`
       }
     })
 
