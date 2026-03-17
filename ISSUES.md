@@ -1,27 +1,27 @@
-High 文档内部有自相矛盾，开发会无所适从
-在示例代码里，任一接口失败就直接 return（不恢复任何内容）
-design.md:343
-但降级策略又写“消息失败时只加载教案内容”
-design.md:474
-这两处必须统一成一种行为。
-High “每次进页面默认新会话”还没覆盖到现有 onActivated 逻辑
-文档只写了改 onMounted 去掉 loadLatest
-design.md:321
-但当前代码还有 onActivated -> loadLatest()，会再次自动恢复历史：
-LessonPlanPage.vue:379
-LessonPlanPage.vue:381
-文档应明确“同时移除/禁用 onActivated 的自动恢复”。
+High emit 会未定义，按计划做会直接报错
+在 selectConversation 里用了 emit(...)，但后面还是 defineEmits([...]) 没接收返回值。
+参考：plan.md:357、plan.md:424
+应改成：const emit = defineEmits([...])。
 
-Medium “无需迁移”与“要求 updated_at 索引”冲突
-文档一处要求确保 updated_at 有索引
-design.md:153
-design.md:234
-另一处又写无需改表/无需迁移
-design.md:656
-竞赛+YAGNI建议：删掉“必须加索引”的要求。
+High startNewConversation 的示例会把现有清理逻辑“抹掉”
+示例只清状态，没保留当前代码里的 abortController?.abort()、clearTimeout(saveTimer)、destroyEditor() 等清理，容易出现流式请求未中断/定时器残留。
+参考：plan.md:539
+建议写成“在现有函数上增量修改”，不要整段替换。
 
-Medium 教案快照过滤规则是启发式，需标注“竞赛版折中”
-当前规则：startsWith('#') && len>100
-design.md:227
-design.md:425
-可用，但建议文档明确这是临时规则，避免被误认为精确语义分类。
+Medium 生命周期计划还不够干净
+你已经要求去掉 onActivated 的 loadLatest，但计划里保留了一个空 onActivated，同时还保留 isFirstMount 语义，容易让实现者困惑。
+参考：plan.md:470
+建议：直接删 onActivated 相关自动恢复逻辑与 isFirstMount 变量，保持“每次进入默认新会话”。
+
+Medium 侧边栏历史只在 onMounted 拉一次，后续可能不刷新
+计划只写了 onMounted -> loadHistory()。新生成会话后，侧边栏可能不立即出现新记录。
+参考：plan.md:390
+建议加一个最小机制：生成完成后触发一次 loadHistory（比如父组件事件或 defineExpose 调用）。
+
+Low 计划写了新增 schema，但路由示例没用 response_model
+会导致 schema 形同虚设、接口契约容易漂移。
+参考：plan.md:109、plan.md:183、plan.md:237
+
+Low 文件清单写了要新增测试文件，但任务里主要是手工测试
+参考：plan.md:21
+建议二选一：要么补最小 API 自动化测试，要么把“新增测试文件”从范围里去掉。

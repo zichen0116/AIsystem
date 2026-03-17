@@ -309,7 +309,7 @@ git commit -m "feat(api): 添加教案对话历史查询端点"
 
 找到并删除 `mockHistory` 相关代码（约第11-41行）。
 
-- [ ] **Step 2: 添加真实数据状态**
+- [ ] **Step 2: 添加真实数据状态和事件定义**
 
 在 `<script setup>` 中添加：
 
@@ -320,6 +320,9 @@ import { resolveApiUrl, getToken } from '../../api/http.js'
 const historyList = ref([])
 const loading = ref(false)
 const activeId = ref(null)
+
+// 定义事件
+const emit = defineEmits(['select-conversation', 'new-conversation'])
 ```
 
 - [ ] **Step 3: 实现加载历史列表方法**
@@ -382,13 +385,18 @@ function formatTime(timestamp) {
 }
 ```
 
-- [ ] **Step 6: 添加生命周期钩子**
+- [ ] **Step 6: 添加生命周期钩子和暴露刷新方法**
 
 添加：
 
 ```javascript
 onMounted(() => {
   loadHistory()
+})
+
+// 暴露刷新方法供父组件调用
+defineExpose({
+  loadHistory
 })
 ```
 
@@ -450,30 +458,33 @@ git commit -m "feat(frontend): 侧边栏加载真实历史会话列表"
 **Files:**
 - Modify: `teacher-platform/src/views/LessonPlanPage.vue`
 
-- [ ] **Step 1: 修改onMounted钩子**
+- [ ] **Step 1: 删除onActivated和isFirstMount相关逻辑**
 
-找到 `onMounted` 函数（约第336行），删除 `loadLatest()` 调用：
+找到 `onMounted` 函数（约第336行），删除 `loadLatest()` 调用和 `isFirstMount` 赋值：
 
 ```javascript
 onMounted(() => {
   // 删除 loadLatest() 调用
+  // 删除 isFirstMount = false
   // 只显示欢迎界面
-  isFirstMount = false
 })
 ```
 
-- [ ] **Step 2: 修改onActivated钩子**
-
-找到 `onActivated` 函数（约第379行），删除或注释掉 `loadLatest()` 调用：
+找到 `onActivated` 函数（约第379行），完全删除该函数及其内容：
 
 ```javascript
-onActivated(() => {
-  // 删除或注释掉 loadLatest() 调用
-  // 保持欢迎界面状态
-})
+// 删除整个 onActivated 函数
+// onActivated(() => {
+//   ...
+// })
 ```
 
-- [ ] **Step 3: 添加handleSelectConversation方法**
+找到 `isFirstMount` 变量声明（约第69行），删除该变量：
+
+```javascript
+// 删除这一行
+// let isFirstMount = true
+```
 
 在 `<script setup>` 中添加新方法：
 
@@ -531,13 +542,20 @@ async function handleSelectConversation({ lessonPlanId, sessionId, title }) {
 }
 ```
 
-- [ ] **Step 4: 修改startNewConversation方法**
+- [ ] **Step 3: 修改startNewConversation方法（增量修改）**
 
-找到 `startNewConversation` 函数，确保清空所有状态：
+找到现有的 `startNewConversation` 函数，在现有清理逻辑基础上添加状态清空：
+
+**保留现有的清理逻辑**（如 `abortController?.abort()`, `clearTimeout(saveTimer)`, `destroyEditor()` 等），然后添加：
 
 ```javascript
 function startNewConversation() {
-  // 清空所有状态
+  // 保留现有的清理逻辑（不要删除）
+  // 例如：abortController?.abort()
+  // 例如：clearTimeout(saveTimer)
+  // 例如：writerRef.value?.destroyEditor()
+
+  // 添加状态清空
   messages.value = []
   currentMarkdown.value = ''
   lessonPlanId.value = null
@@ -546,14 +564,17 @@ function startNewConversation() {
   streamingMarkdown.value = ''
   restoredFiles.value = []
 
-  // 切换到对话模式，显示欢迎界面
+  // 切换到对话模式
   mode.value = 'dialog'
 
-  // 不调用 loadLatest()
+  // 刷新侧边栏历史列表
+  if (sidebarRef.value) {
+    sidebarRef.value.loadHistory()
+  }
 }
 ```
 
-- [ ] **Step 5: 删除前端的启发式过滤逻辑**
+**注意**：这是增量修改，不要替换整个函数，保留现有的清理代码。
 
 找到约第356行的消息过滤代码并删除：
 
@@ -566,18 +587,36 @@ const isLessonPlan = msg.role === 'assistant' &&
 
 因为后端已经过滤了教案快照。
 
-- [ ] **Step 6: 更新模板绑定**
+- [ ] **Step 5: 添加侧边栏ref和更新模板绑定**
 
-在模板中找到 `<LessonPlanSidebar>`，添加事件绑定：
+在 `<script setup>` 顶部添加侧边栏ref：
+
+```javascript
+const sidebarRef = ref(null)
+```
+
+在模板中找到 `<LessonPlanSidebar>`，添加ref和事件绑定：
 
 ```vue
 <LessonPlanSidebar
+  ref="sidebarRef"
   :collapsed="sidebarCollapsed"
   :is-overlay="mode === 'writer'"
   @toggle="sidebarCollapsed = !sidebarCollapsed"
   @new-conversation="startNewConversation"
   @select-conversation="handleSelectConversation"
 />
+```
+
+- [ ] **Step 6: 在教案生成完成后刷新侧边栏**
+
+找到教案生成完成的位置（`save_after_stream` 调用后或SSE流结束后），添加刷新调用：
+
+```javascript
+// 在教案生成完成后
+if (sidebarRef.value) {
+  sidebarRef.value.loadHistory()
+}
 ```
 
 - [ ] **Step 7: 测试完整流程（手动）**
