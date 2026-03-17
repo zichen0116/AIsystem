@@ -42,22 +42,22 @@ alembic revision -m "add cascade delete for chat_history"
 
 - [ ] **Step 2: 编写迁移脚本**
 
-在生成的迁移文件中添加以下内容：
+在生成的迁移文件中添加以下内容（**注意：保留 alembic 自动生成的 revision 和 down_revision 值，不要使用占位符**）：
 
 ```python
 """add cascade delete for chat_history
 
-Revision ID: xxxx
-Revises: yyyy
+Revision ID: <保留自动生成的值>
+Revises: <保留自动生成的值>
 Create Date: 2026-03-18
 
 """
 from alembic import op
 import sqlalchemy as sa
 
-# revision identifiers
-revision = 'xxxx'  # 保持自动生成的值
-down_revision = 'yyyy'  # 保持自动生成的值
+# revision identifiers - 保留 alembic 自动生成的值
+revision = '<保留自动生成的值>'
+down_revision = '<保留自动生成的值>'
 branch_labels = None
 depends_on = None
 
@@ -66,8 +66,9 @@ def upgrade():
     # 1. 清理孤儿消息（session_id 在 lesson_plans 中不存在的记录）
     op.execute("""
         DELETE FROM chat_history
-        WHERE session_id NOT IN (
-            SELECT session_id FROM lesson_plans
+        WHERE NOT EXISTS (
+            SELECT 1 FROM lesson_plans
+            WHERE lesson_plans.session_id = chat_history.session_id
         )
     """)
 
@@ -90,6 +91,11 @@ def downgrade():
         type_='foreignkey'
     )
 ```
+
+**重要提示：**
+- `revision` 和 `down_revision` 的值由 alembic 自动生成，**不要手动填写或使用占位符**
+- 只需复制 `upgrade()` 和 `downgrade()` 函数的内容
+- 孤儿清理使用 `NOT EXISTS` 而非 `NOT IN`，性能更好且更安全
 
 - [ ] **Step 3: 运行迁移**
 
@@ -185,7 +191,13 @@ python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_succe
 
 - [ ] **Step 3: 实现 DELETE 端点**
 
-在 `backend/app/api/lesson_plan.py` 文件末尾添加：
+在 `backend/app/api/lesson_plan.py` 文件顶部导入部分（约第9行），添加 `status` 导入：
+
+```python
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+```
+
+然后在文件末尾添加删除端点：
 
 ```python
 # --------------- 10. Delete ---------------
@@ -252,29 +264,65 @@ python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_not_f
 
 ```python
 @pytest.mark.asyncio
-async def test_delete_lesson_plan_unauthorized(
-    client: AsyncClient, db_session: AsyncSession, test_user_id: int
+async def test_delete_lesson_plan_cross_user(
+    client: AsyncClient, db_session: AsyncSession, auth_headers: dict
 ):
-    """测试删除其他用户的教案"""
+    """测试用户B删除用户A的教案（跨用户删除）"""
+    # 创建用户A的教案（假设 test_user_id 是用户A）
+    from app.models.user import User
+
+    # 创建用户B
+    user_b = User(username="userb", email="userb@test.com", hashed_password="hash")
+    db_session.add(user_b)
+    await db_session.flush()
+
     # 用户A创建教案
+    from tests.conftest import test_user_id  # 获取用户A的ID
     plan = LessonPlan(user_id=test_user_id, title="用户A的教案", content="内容", status="draft")
     db_session.add(plan)
     await db_session.commit()
     await db_session.refresh(plan)
 
-    # 用户B尝试删除（使用不同的 auth_headers）
-    # 注意：需要创建第二个用户的 token，这里假设返回 404（不暴露存在性）
+    # 生成用户B的 token
+    from app.core.auth import create_access_token
+    user_b_token = create_access_token({"sub": str(user_b.id)})
+    user_b_headers = {"Authorization": f"Bearer {user_b_token}"}
+
+    # 用户B尝试删除用户A的教案
+    response = await client.delete(f"/api/v1/lesson-plan/{plan.id}", headers=user_b_headers)
+
+    # 应该返回 404（不暴露资源存在性）
+    assert response.status_code == 404
+    assert response.json()["detail"] == "教案不存在"
+
+    # 验证教案未被删除
+    from sqlalchemy import select
+    result = await db_session.execute(select(LessonPlan).where(LessonPlan.id == plan.id))
+    assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_lesson_plan_no_auth(client: AsyncClient, db_session: AsyncSession, test_user_id: int):
+    """测试无认证令牌删除教案"""
+    # 创建教案
+    plan = LessonPlan(user_id=test_user_id, title="测试教案", content="内容", status="draft")
+    db_session.add(plan)
+    await db_session.commit()
+    await db_session.refresh(plan)
+
+    # 无 token 尝试删除
     response = await client.delete(f"/api/v1/lesson-plan/{plan.id}")
-    assert response.status_code == 401  # 无 token
+    assert response.status_code == 401
 ```
 
 - [ ] **Step 8: 运行权限测试**
 
 ```bash
-python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_unauthorized -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_cross_user -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_no_auth -v
 ```
 
-预期：PASS
+预期：两个测试都 PASS
 
 - [ ] **Step 9: 运行所有删除测试**
 
