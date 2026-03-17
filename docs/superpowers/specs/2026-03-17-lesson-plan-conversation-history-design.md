@@ -116,9 +116,13 @@
 
 **请求：**
 ```http
-GET /api/v1/lesson-plan/list
+GET /api/v1/lesson-plan/list?limit=100&offset=0
 Authorization: Bearer <token>
 ```
+
+**查询参数：**
+- `limit` (可选): 返回记录数量，默认100，最大200
+- `offset` (可选): 跳过的记录数，默认0
 
 **响应：**
 ```json
@@ -132,18 +136,31 @@ Authorization: Bearer <token>
       "created_at": "2026-03-17T10:30:00Z",
       "updated_at": "2026-03-17T11:45:00Z"
     }
-  ]
+  ],
+  "total": 150
 }
 ```
+
+**说明：**
+- `session_id` 为 UUID 类型，响应时转换为字符串格式
+- 侧边栏显示的时间为 `updated_at`（最后修改时间）
 
 **实现要点：**
 - 查询条件：`user_id = current_user.id`
 - 排序：`ORDER BY updated_at DESC`
 - 返回字段：id, session_id, title, status, created_at, updated_at
+- 分页：支持可选的 `limit` 和 `offset` 查询参数（默认 limit=100）
+- 性能：确保 `updated_at` 列有索引以支持高效排序
 
 ### 3.2 GET /api/v1/lesson-plan/{lesson_plan_id}
 
-获取指定教案的详细信息。
+获取指定教案的详细信息（不包含对话历史）。
+
+**设计说明：**
+此端点只返回教案本身的信息，不包含 messages 字段。对话历史通过独立的 `/messages` 端点获取。这样设计的原因：
+- 职责分离：教案详情和对话历史是两个独立的关注点
+- 灵活性：允许独立加载大量消息历史，不影响教案详情的加载速度
+- 可扩展性：未来可以为消息历史添加分页等功能
 
 **请求：**
 ```http
@@ -164,10 +181,13 @@ Authorization: Bearer <token>
 }
 ```
 
+**说明：**
+- `session_id` 为 UUID 类型，响应时转换为字符串格式
+
 **实现要点：**
 - 验证：`lesson_plan.user_id == current_user.id`
 - 不存在或无权限：返回 404
-- 返回完整的教案信息
+- 返回完整的教案信息（不含消息）
 
 ### 3.3 GET /api/v1/lesson-plan/{lesson_plan_id}/messages
 
@@ -197,13 +217,30 @@ Authorization: Bearer <token>
 }
 ```
 
+**说明：**
+- 如果该教案没有对话历史，返回空数组 `{"messages": []}`
+- 消息按时间正序排列（从早到晚）
+
 **实现要点：**
 - 验证：先获取 lesson_plan，确认 user_id 匹配
 - 查询：`session_id = lesson_plan.session_id`
 - 过滤：排除教案快照（`role='assistant' AND content.startswith('#') AND len(content) > 100`）
 - 排序：`ORDER BY created_at ASC`
+- 空历史：如果没有消息记录，返回空数组
 
-### 3.4 安全性
+### 3.4 数据库注意事项
+
+**索引优化：**
+- `lesson_plans.updated_at` 需要有索引以支持高效排序
+- `lesson_plans.user_id` 已有索引（外键）
+- `chat_history.session_id` 已有索引
+
+**外键约束：**
+- 当前 `chat_history.session_id` 和 `lesson_plans.session_id` 之间没有外键约束
+- 这是设计决策：允许灵活性，但需要在应用层保证数据一致性
+- 未来可考虑添加外键约束以防止孤儿记录
+
+### 3.5 安全性
 
 所有端点都需要：
 1. **JWT认证** - 通过 `CurrentUser` 依赖注入
