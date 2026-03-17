@@ -59,7 +59,7 @@ const props = defineProps({
   streamingMarkdown: { type: String, default: '' },
 })
 
-const emit = defineEmits(['back', 'update:markdown', 'blur'])
+const emit = defineEmits(['back', 'update:markdown', 'blur', 'toast'])
 
 const canvasRef = ref(null)
 const editor = ref(null)
@@ -119,9 +119,29 @@ function getMarkdown() {
   return editor.value?.storage.markdown.getMarkdown() || ''
 }
 
+function normalizeTaskListHtml(html) {
+  if (!html || typeof document === 'undefined') return html
+
+  const template = document.createElement('template')
+  template.innerHTML = html
+
+  template.content.querySelectorAll('ul.contains-task-list').forEach((ul) => {
+    ul.setAttribute('data-type', 'taskList')
+  })
+
+  template.content.querySelectorAll('li.task-list-item').forEach((li) => {
+    li.setAttribute('data-type', 'taskItem')
+    const checkbox = li.querySelector('input[type="checkbox"]')
+    li.setAttribute('data-checked', checkbox?.checked ? 'true' : 'false')
+    checkbox?.remove()
+  })
+
+  return template.innerHTML
+}
+
 function setMarkdownContent(markdown) {
   if (!markdown) return
-  const html = md.render(markdown)
+  const html = normalizeTaskListHtml(md.render(markdown))
   if (!editor.value) {
     createEditor()
     nextTick(() => {
@@ -149,52 +169,109 @@ watch(() => props.isStreaming, (streaming, wasStreaming) => {
 
 function copyAll() {
   const text = getMarkdown()
-  navigator.clipboard.writeText(text).catch(() => {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-  })
+  if (!text) {
+    emit('toast', '没有内容可复制')
+    return
+  }
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      emit('toast', '复制成功')
+    })
+    .catch(() => {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      emit('toast', '\u590d\u5236\u6210\u529f')
+    })
 }
 
 async function downloadWord() {
   try {
+    const markdown = getMarkdown()
+    if (!markdown) {
+      emit('toast', '暂无可导出的内容')
+      return
+    }
+
     const res = await fetch(resolveApiUrl('/api/v1/lesson-plan/export/docx'), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${getToken()}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ content: getMarkdown(), title: '教案' }),
+      body: JSON.stringify({ content: markdown, title: '教案' }),
     })
-    if (!res.ok) throw new Error('导出失败')
+
+    if (!res.ok) {
+      let detail = ''
+      const contentType = res.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        try {
+          const data = await res.json()
+          detail = data?.detail || ''
+        } catch {
+          detail = ''
+        }
+      } else {
+        detail = (await res.text()).trim()
+      }
+
+      console.error('DOCX export failed:', res.status, detail)
+      emit('toast', detail ? `Word 导出失败：${detail}` : 'Word 导出失败')
+      return
+    }
+
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = '教案.docx'; a.click()
+    a.href = url
+    a.download = '教案.docx'
+    a.click()
     URL.revokeObjectURL(url)
+    emit('toast', 'Word 导出成功')
   } catch (err) {
     console.error('DOCX export error:', err)
+    emit('toast', 'Word 导出失败，请稍后重试')
   }
 }
 
 function downloadPDF() {
+  const text = getMarkdown()
+  if (!text) {
+    emit('toast', '没有内容可导出')
+    return
+  }
   import('html2pdf.js').then(({ default: html2pdf }) => {
     const el = canvasRef.value?.querySelector('.ProseMirror')
-    if (!el) return
+    if (!el) {
+      emit('toast', '导出失败')
+      return
+    }
     html2pdf().set({ margin: 10, filename: '教案.pdf' }).from(el).save()
+    emit('toast', 'PDF 导出成功')
+  }).catch(err => {
+    console.error('PDF export error:', err)
+    emit('toast', '导出失败')
   })
 }
 
 function downloadMarkdown() {
   const text = getMarkdown()
+  if (!text) {
+    emit('toast', '暂无可导出的内容')
+    return
+  }
   const blob = new Blob([text], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = '教案.md'; a.click()
+  a.href = url
+  a.download = '教案.md'
+  a.click()
   URL.revokeObjectURL(url)
+  emit('toast', 'Markdown 导出成功')
 }
 
 function destroy() {
@@ -270,6 +347,12 @@ onBeforeUnmount(destroy)
   color: #333;
   position: relative;
 }
+.editor-canvas :deep(.ProseMirror) {
+  outline: none;
+}
+.editor-canvas :deep(.ProseMirror:focus) {
+  outline: none;
+}
 .editor-canvas :deep(h1) {
   font-size: 22px;
   font-weight: 700;
@@ -299,6 +382,29 @@ onBeforeUnmount(destroy)
 }
 .editor-canvas :deep(li) {
   margin-bottom: 4px;
+}
+.editor-canvas :deep(ul[data-type="taskList"]) {
+  list-style: none;
+  padding-left: 0;
+}
+.editor-canvas :deep(ul[data-type="taskList"] li) {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+.editor-canvas :deep(ul[data-type="taskList"] li > label) {
+  flex: 0 0 auto;
+  margin-right: 8px;
+  user-select: none;
+}
+.editor-canvas :deep(ul[data-type="taskList"] li > label input) {
+  margin: 5px 0 0 0;
+}
+.editor-canvas :deep(ul[data-type="taskList"] li > div) {
+  flex: 1 1 auto;
+}
+.editor-canvas :deep(ul[data-type="taskList"] li > div p) {
+  margin: 0;
 }
 .editor-canvas :deep(table) {
   width: 100%;
@@ -347,6 +453,19 @@ onBeforeUnmount(destroy)
 .streaming-preview :deep(ul) {
   padding-left: 20px;
   margin-bottom: 12px;
+}
+.streaming-preview :deep(.contains-task-list) {
+  list-style: none;
+  padding-left: 0;
+}
+.streaming-preview :deep(.task-list-item) {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.streaming-preview :deep(.task-list-item input) {
+  margin-top: 5px;
 }
 .streaming-preview :deep(table) {
   width: 100%;

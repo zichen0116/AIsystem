@@ -45,6 +45,7 @@
           @back="exitWriterMode"
           @update:markdown="handleMarkdownUpdate"
           @editor-blur="autoSave"
+          @toast="showToast"
         />
       </transition>
     </div>
