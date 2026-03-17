@@ -292,7 +292,28 @@ async def list_lesson_plans(user: CurrentUser, db: DbSession):
     return LessonPlanListResponse(items=items, total=len(items))
 
 
-# --------------- 7. Export DOCX ---------------
+# --------------- 7. Detail ---------------
+
+@router.get("/{lesson_plan_id}", response_model=LessonPlanInfo)
+async def get_lesson_plan_detail(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的详细信息"""
+    result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    return LessonPlanInfo(
+        id=plan.id,
+        session_id=str(plan.session_id),
+        title=plan.title,
+        content=plan.content,
+        status=plan.status,
+    )
+
+
+# --------------- 8. Export DOCX ---------------
 
 def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
     """Best-effort Markdown -> DOCX fallback without pandoc."""
