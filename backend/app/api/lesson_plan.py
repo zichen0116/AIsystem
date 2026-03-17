@@ -313,7 +313,34 @@ async def get_lesson_plan_detail(lesson_plan_id: int, user: CurrentUser, db: DbS
     )
 
 
-# --------------- 8. Export DOCX ---------------
+# --------------- 9. Messages ---------------
+
+@router.get("/{lesson_plan_id}/messages", response_model=LessonPlanMessagesResponse)
+async def get_lesson_plan_messages(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的对话历史"""
+    # 验证教案存在且属于当前用户
+    plan_result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = plan_result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 获取对话历史
+    hist_result = await db.execute(
+        select(ChatHistory)
+        .where(ChatHistory.session_id == plan.session_id)
+        .order_by(ChatHistory.created_at)
+    )
+    messages = [
+        ChatMessageInfo(role=h.role, content=h.content, created_at=h.created_at.isoformat())
+        for h in hist_result.scalars().all()
+    ]
+
+    return LessonPlanMessagesResponse(messages=messages)
+
+
+# --------------- 10. Export DOCX ---------------
 
 def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
     """Best-effort Markdown -> DOCX fallback without pandoc."""
