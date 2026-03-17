@@ -28,6 +28,10 @@ from app.schemas.lesson_plan import (
     LessonPlanInfo,
     MessageInfo,
     FileInfo,
+    LessonPlanListResponse,
+    LessonPlanListItem,
+    LessonPlanMessagesResponse,
+    ChatMessageInfo,
 )
 from app.services.lesson_plan_service import (
     LESSON_PLAN_MODIFY_PROMPT,
@@ -264,7 +268,31 @@ async def get_latest_lesson_plan(user: CurrentUser, db: DbSession):
     )
 
 
-# --------------- 6. Export DOCX ---------------
+# --------------- 6. List ---------------
+
+@router.get("/list", response_model=LessonPlanListResponse)
+async def list_lesson_plans(user: CurrentUser, db: DbSession):
+    """获取当前用户的所有教案列表，按创建时间倒序"""
+    stmt = select(LessonPlan).where(LessonPlan.user_id == user.id).order_by(LessonPlan.created_at.desc())
+    result = await db.execute(stmt)
+    plans = result.scalars().all()
+
+    items = [
+        LessonPlanListItem(
+            id=p.id,
+            session_id=str(p.session_id),
+            title=p.title,
+            status=p.status,
+            created_at=p.created_at.isoformat(),
+            updated_at=p.updated_at.isoformat(),
+        )
+        for p in plans
+    ]
+
+    return LessonPlanListResponse(items=items, total=len(items))
+
+
+# --------------- 7. Export DOCX ---------------
 
 def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
     """Best-effort Markdown -> DOCX fallback without pandoc."""
