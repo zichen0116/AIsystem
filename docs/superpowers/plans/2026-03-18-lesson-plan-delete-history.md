@@ -178,7 +178,7 @@ async def test_delete_lesson_plan_success(
 
 ```bash
 cd backend
-conda run -n base python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_success -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_success -v
 ```
 
 预期：FAIL - "404: Not Found" (端点不存在)
@@ -220,7 +220,7 @@ async def delete_lesson_plan(
 - [ ] **Step 4: 运行测试验证通过**
 
 ```bash
-conda run -n base python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_success -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_success -v
 ```
 
 预期：PASS
@@ -241,7 +241,7 @@ async def test_delete_lesson_plan_not_found(client: AsyncClient, auth_headers: d
 - [ ] **Step 6: 运行 404 测试**
 
 ```bash
-conda run -n base python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_not_found -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_not_found -v
 ```
 
 预期：PASS
@@ -271,7 +271,7 @@ async def test_delete_lesson_plan_unauthorized(
 - [ ] **Step 8: 运行权限测试**
 
 ```bash
-conda run -n base python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_unauthorized -v
+python -m pytest tests/test_lesson_plan_delete.py::test_delete_lesson_plan_unauthorized -v
 ```
 
 预期：PASS
@@ -279,7 +279,7 @@ conda run -n base python -m pytest tests/test_lesson_plan_delete.py::test_delete
 - [ ] **Step 9: 运行所有删除测试**
 
 ```bash
-conda run -n base python -m pytest tests/test_lesson_plan_delete.py -v
+python -m pytest tests/test_lesson_plan_delete.py -v
 ```
 
 预期：所有测试 PASS
@@ -339,6 +339,16 @@ git commit -m "feat(api): 添加教案删除端点及测试"
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.2s;
+}
+
+.history-item:hover {
+  background: #f0f5ff;
+}
+
+.history-item.active {
+  background: #e8f0fe;
+  color: #2563eb;
+  font-weight: 500;
 }
 
 .item-content {
