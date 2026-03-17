@@ -119,19 +119,31 @@ function getMarkdown() {
   return editor.value?.storage.markdown.getMarkdown() || ''
 }
 
-function loadContent(markdown) {
-  if (!editor.value) createEditor(markdown)
-  else {
-    const html = md.render(markdown)
+function setMarkdownContent(markdown) {
+  if (!markdown) return
+  const html = md.render(markdown)
+  if (!editor.value) {
+    createEditor()
+    nextTick(() => {
+      if (editor.value) {
+        editor.value.commands.setContent(html)
+        extractHeadings()
+      }
+    })
+  } else {
     editor.value.commands.setContent(html)
+    nextTick(extractHeadings)
   }
-  nextTick(extractHeadings)
+}
+
+function loadContent(markdown) {
+  setMarkdownContent(markdown)
 }
 
 // When streaming ends, load content into editor
 watch(() => props.isStreaming, (streaming, wasStreaming) => {
   if (wasStreaming && !streaming && props.streamingMarkdown) {
-    loadContent(props.streamingMarkdown)
+    setMarkdownContent(props.streamingMarkdown)
   }
 })
 

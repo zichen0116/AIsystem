@@ -15,7 +15,7 @@
 
     <!-- Main content area -->
     <div class="main-area">
-      <transition name="fade" mode="out-in">
+      <transition name="fade" mode="out-in" @after-enter="handleMainTransitionAfterEnter">
         <!-- Dialog Mode -->
         <LessonPlanDialog
           v-if="mode === 'dialog'"
@@ -90,15 +90,17 @@ function enterWriterMode() {
   sidebarCollapsed.value = true
   // Clear streamingText so document content doesn't appear in chat
   streamingText.value = ''
-  nextTick(() => {
-    writerRef.value?.createEditor(currentMarkdown.value || '')
-  })
+}
+
+function handleMainTransitionAfterEnter() {
+  if (mode.value !== 'writer') return
+  writerRef.value?.loadContent(currentMarkdown.value || '')
 }
 
 function exitWriterMode() {
   // Preserve editor content
   const md = writerRef.value?.getMarkdown()
-  if (md) currentMarkdown.value = md
+  if (typeof md === 'string') currentMarkdown.value = md
   writerRef.value?.destroyEditor()
   mode.value = 'dialog'
   sidebarCollapsed.value = false
@@ -205,8 +207,9 @@ function handleSend(payload) {
         messages.value.push({ role: 'assistant', content: streamingMarkdown.value })
       }
       streamingText.value = ''
-      streamingMarkdown.value = ''
+      // Delay clearing streamingMarkdown to allow editor to load first
       nextTick(() => {
+        streamingMarkdown.value = ''
         dialogRef.value?.scrollToBottom()
         writerRef.value?.scrollChatToBottom()
       })
@@ -247,8 +250,11 @@ function handleModify(payload) {
       currentMarkdown.value = streamingMarkdown.value
       messages.value.push({ role: 'assistant', content: '教案已更新。' })
       streamingText.value = ''
-      streamingMarkdown.value = ''
-      nextTick(() => writerRef.value?.scrollChatToBottom())
+      // Delay clearing streamingMarkdown to allow editor to load first
+      nextTick(() => {
+        streamingMarkdown.value = ''
+        writerRef.value?.scrollChatToBottom()
+      })
     },
     (errMsg) => {
       // Rollback on failure
@@ -344,7 +350,18 @@ async function loadLatest() {
       currentMarkdown.value = data.lesson_plan.content || ''
     }
     if (data.messages?.length) {
-      messages.value = data.messages.map(m => ({ role: m.role, content: m.content }))
+      // Filter out lesson plan content from messages
+      messages.value = data.messages
+        .map(m => ({ role: m.role, content: m.content }))
+        .filter(m => {
+          // Keep user messages
+          if (m.role === 'user') return true
+          // Filter out AI messages that are lesson plans (starts with # and long)
+          const isLessonPlan = m.content.trim().startsWith('#') && m.content.length > 100
+          return !isLessonPlan
+        })
+
+      // Insert document card if we have lesson plan content
       if (currentMarkdown.value) {
         insertDocumentCard()
       }
