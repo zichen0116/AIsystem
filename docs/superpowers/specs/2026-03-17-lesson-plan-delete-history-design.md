@@ -146,7 +146,15 @@ depends_on = None
 
 
 def upgrade():
-    # 添加外键约束，支持级联删除
+    # 1. 清理孤儿消息（session_id 在 lesson_plans 中不存在的记录）
+    op.execute("""
+        DELETE FROM chat_history
+        WHERE session_id NOT IN (
+            SELECT session_id FROM lesson_plans
+        )
+    """)
+
+    # 2. 添加外键约束，支持级联删除
     op.create_foreign_key(
         'fk_chat_history_session_id',
         'chat_history',
@@ -170,8 +178,14 @@ def downgrade():
 ```bash
 cd backend
 alembic revision --autogenerate -m "add cascade delete for chat_history"
+# 编辑生成的迁移文件，添加上述孤儿数据清理逻辑
 alembic upgrade head
 ```
+
+**注意事项：**
+- 迁移前会自动清理孤儿消息，避免外键约束添加失败
+- 孤儿消息是指 `session_id` 在 `lesson_plans` 表中不存在的 `chat_history` 记录
+- 这些记录通常是由于之前的数据不一致或手动删除导致的
 
 ## 前端 UI 设计
 
