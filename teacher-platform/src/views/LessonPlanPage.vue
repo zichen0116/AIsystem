@@ -2,10 +2,12 @@
   <div class="lesson-plan-page">
     <!-- Sidebar -->
     <LessonPlanSidebar
+      ref="sidebarRef"
       :collapsed="sidebarCollapsed"
       :is-overlay="mode === 'writer'"
       @toggle="sidebarCollapsed = !sidebarCollapsed"
       @new-conversation="startNewConversation"
+      @select-history="loadHistorySession"
     />
 
     <!-- Toast notification -->
@@ -64,6 +66,7 @@ const restoredFiles = ref([])
 
 const dialogRef = ref(null)
 const writerRef = ref(null)
+const sidebarRef = ref(null)
 let abortController = null
 let saveTimer = null
 let isFirstMount = true
@@ -330,6 +333,59 @@ function startNewConversation() {
   lessonPlanId.value = null
   sessionId.value = null
   isSending.value = false
+  // 刷新侧边栏历史列表
+  sidebarRef.value?.refresh()
+}
+
+// ----- Load History Session -----
+async function loadHistorySession(historyItem) {
+  try {
+    // 并行请求详情和消息
+    const [detailRes, messagesRes] = await Promise.all([
+      fetch(resolveApiUrl(`/api/v1/lesson-plan/${historyItem.id}`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+      fetch(resolveApiUrl(`/api/v1/lesson-plan/${historyItem.id}/messages`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+    ])
+
+    if (!detailRes.ok || !messagesRes.ok) {
+      showToast('加载历史会话失败')
+      return
+    }
+
+    const detail = await detailRes.json()
+    const messagesData = await messagesRes.json()
+
+    // 重置状态
+    mode.value = 'dialog'
+    lessonPlanId.value = detail.id
+    sessionId.value = detail.session_id
+    currentMarkdown.value = detail.content || ''
+    streamingMarkdown.value = ''
+    streamingText.value = ''
+    isSending.value = false
+
+    // 过滤消息（去除教案内容）
+    messages.value = messagesData.messages
+      .map(m => ({ role: m.role, content: m.content }))
+      .filter(m => {
+        if (m.role === 'user') return true
+        const isLessonPlan = m.content.trim().startsWith('#') && m.content.length > 100
+        return !isLessonPlan
+      })
+
+    // 插入文档卡片
+    if (currentMarkdown.value) {
+      insertDocumentCard()
+    }
+
+    showToast('已加载历史会话')
+  } catch (err) {
+    console.error('加载历史会话失败:', err)
+    showToast('加载失败，请重试')
+  }
 }
 
 // ----- Load Latest -----
@@ -373,12 +429,14 @@ async function loadLatest() {
 // ----- Lifecycle -----
 onMounted(() => {
   isFirstMount = true
-  loadLatest()
+  // 每次打开页面显示欢迎界面，不自动加载历史
+  startNewConversation()
 })
 
 onActivated(() => {
   if (isFirstMount) { isFirstMount = false; return }
-  loadLatest()
+  // 从其他页面返回时也显示欢迎界面
+  startNewConversation()
 })
 
 onDeactivated(() => {
