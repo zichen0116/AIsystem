@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -442,3 +442,32 @@ async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(500, f"DOCX导出失败: {e}")
+
+
+# --------------- 10. Delete ---------------
+
+@router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lesson_plan(
+    lesson_plan_id: int,
+    user: CurrentUser,
+    db: DbSession
+):
+    """删除指定的教案记录及其关联数据"""
+    # 查询教案记录
+    result = await db.execute(
+        select(LessonPlan).where(
+            LessonPlan.id == lesson_plan_id,
+            LessonPlan.user_id == user.id
+        )
+    )
+    plan = result.scalar_one_or_none()
+
+    # 验证存在性和所有权
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 删除教案记录（触发级联删除）
+    await db.delete(plan)
+    await db.commit()
+
+    return None
