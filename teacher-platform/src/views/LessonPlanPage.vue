@@ -15,45 +15,32 @@
 
     <!-- Main content area -->
     <div class="main-area">
-      <transition name="fade" mode="out-in" @after-enter="handleMainTransitionAfterEnter">
-        <!-- Dialog Mode -->
-        <LessonPlanDialog
-          v-if="mode === 'dialog'"
-          key="dialog"
-          ref="dialogRef"
-          :messages="messages"
-          :is-streaming="isSending"
-          :streaming-text="streamingText"
-          :lesson-plan-id="lessonPlanId"
-          @send="handleSend"
-          @send-prompt="handleSendPrompt"
-          @open-document="enterWriterMode"
-          @regenerate="handleRegenerate"
-        />
-
-        <!-- Writer Mode -->
-        <LessonPlanWriter
-          v-else
-          key="writer"
-          ref="writerRef"
+      <keep-alive>
+        <component
+          :is="currentComponent"
+          :ref="mode === 'dialog' ? 'dialogRef' : 'writerRef'"
           :messages="messages"
           :is-streaming="isSending"
           :streaming-text="streamingText"
           :streaming-markdown="streamingMarkdown"
           :lesson-plan-id="lessonPlanId"
+          @send="handleSend"
+          @send-prompt="handleSendPrompt"
+          @open-document="enterWriterMode"
+          @regenerate="handleRegenerate"
           @send-modify="handleModify"
           @back="exitWriterMode"
           @update:markdown="handleMarkdownUpdate"
           @editor-blur="autoSave"
           @toast="showToast"
         />
-      </transition>
+      </keep-alive>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
 import { resolveApiUrl, getToken } from '../api/http.js'
 import LessonPlanSidebar from '../components/lesson-plan-v2/LessonPlanSidebar.vue'
 import LessonPlanDialog from '../components/lesson-plan-v2/LessonPlanDialog.vue'
@@ -80,6 +67,19 @@ const writerRef = ref(null)
 let abortController = null
 let saveTimer = null
 let isFirstMount = true
+
+// Computed property for dynamic component
+const currentComponent = computed(() => {
+  return mode.value === 'dialog' ? LessonPlanDialog : LessonPlanWriter
+})
+
+// Watch mode changes to load content when entering writer mode
+watch(mode, async (newMode) => {
+  if (newMode === 'writer') {
+    await nextTick()
+    writerRef.value?.loadContent(currentMarkdown.value || '')
+  }
+})
 const toastMsg = ref('')
 
 // ----- Reset Key Watch -----
@@ -91,11 +91,6 @@ function enterWriterMode() {
   sidebarCollapsed.value = true
   // Clear streamingText so document content doesn't appear in chat
   streamingText.value = ''
-}
-
-function handleMainTransitionAfterEnter() {
-  if (mode.value !== 'writer') return
-  writerRef.value?.loadContent(currentMarkdown.value || '')
 }
 
 function exitWriterMode() {

@@ -141,7 +141,21 @@ function removeLib(libId) {
   selectedLibIds.value = selectedLibIds.value.filter(id => id !== libId)
 }
 
-async function fetchLibraries() {
+// Cache libraries data to avoid repeated requests
+let librariesCache = null
+let cacheTimestamp = 0
+const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes
+
+async function fetchLibraries(forceRefresh = false) {
+  const now = Date.now()
+
+  // Use cache if available and not expired
+  if (!forceRefresh && librariesCache && (now - cacheTimestamp < CACHE_DURATION)) {
+    personalLibs.value = librariesCache.personal
+    systemLibs.value = librariesCache.system
+    return
+  }
+
   try {
     const token = getToken()
     const headers = { Authorization: `Bearer ${token}` }
@@ -151,6 +165,13 @@ async function fetchLibraries() {
     ])
     if (pRes.ok) personalLibs.value = (await pRes.json()).items || []
     if (sRes.ok) systemLibs.value = (await sRes.json()).items || []
+
+    // Update cache
+    librariesCache = {
+      personal: personalLibs.value,
+      system: systemLibs.value
+    }
+    cacheTimestamp = now
   } catch (err) {
     console.error('Failed to fetch libraries:', err)
   }
