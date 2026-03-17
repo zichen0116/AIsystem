@@ -1,6 +1,7 @@
 <template>
   <div
     v-if="visible"
+    ref="toolbarRef"
     class="floating-toolbar"
     :style="toolbarStyle"
     @mousedown.prevent
@@ -36,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 
 const props = defineProps({
   editor: { type: Object, default: null },
@@ -45,12 +46,24 @@ const props = defineProps({
 const visible = ref(false)
 const toolbarTop = ref(0)
 const toolbarLeft = ref(0)
+const toolbarRef = ref(null)
 let blurTimer = null
+let rafId = null
+let scrollEl = null
 
 const toolbarStyle = computed(() => ({
   top: `${toolbarTop.value}px`,
   left: `${toolbarLeft.value}px`,
 }))
+
+function getSelectionRect() {
+  const sel = window.getSelection?.()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null
+  const range = sel.getRangeAt(0)
+  const rect = range.getBoundingClientRect()
+  if (!rect || (!rect.width && !rect.height)) return null
+  return rect
+}
 
 function updateToolbar() {
   if (!props.editor) { visible.value = false; return }
@@ -58,17 +71,55 @@ function updateToolbar() {
   const { from, to, empty } = state.selection
   if (empty) { visible.value = false; return }
 
-  visible.value = true
   const view = props.editor.view
-  const start = view.coordsAtPos(from)
-  const end = view.coordsAtPos(to)
-  const editorRect = view.dom.closest('.editor-canvas')?.getBoundingClientRect()
+  const editorCanvas = view.dom.closest('.editor-canvas')
+  const editorRect = editorCanvas?.getBoundingClientRect()
   if (!editorRect) return
 
-  // Center toolbar above selection
-  const toolbarWidth = 280
-  toolbarTop.value = start.top - editorRect.top - 44
-  toolbarLeft.value = (start.left + end.left) / 2 - editorRect.left - toolbarWidth / 2
+  visible.value = true
+
+  let rect = getSelectionRect()
+  if (!rect) {
+    const start = view.coordsAtPos(from)
+    const end = view.coordsAtPos(to)
+    const top = Math.min(start.top, end.top)
+    const bottom = Math.max(start.bottom, end.bottom)
+    const left = Math.min(start.left, end.left)
+    const right = Math.max(start.right, end.right)
+    rect = { top, bottom, left, right, width: right - left, height: bottom - top }
+  }
+
+  const toolbarWidth = toolbarRef.value?.offsetWidth || 280
+  const toolbarHeight = toolbarRef.value?.offsetHeight || 36
+  const gap = 8
+
+  let top = rect.top - editorRect.top + editorCanvas.scrollTop - toolbarHeight - gap
+  let left = rect.left + rect.width / 2 - editorRect.left + editorCanvas.scrollLeft - toolbarWidth / 2
+
+  // Keep toolbar inside viewport of editor canvas.
+  const minLeft = editorCanvas.scrollLeft + gap
+  const maxLeft = editorCanvas.scrollLeft + editorCanvas.clientWidth - toolbarWidth - gap
+  left = Math.max(minLeft, Math.min(left, maxLeft))
+
+  const minTop = editorCanvas.scrollTop + gap
+  top = Math.max(minTop, top)
+
+  toolbarTop.value = top
+  toolbarLeft.value = left
+}
+
+function scheduleUpdateToolbar() {
+  if (rafId !== null) cancelAnimationFrame(rafId)
+  rafId = requestAnimationFrame(() => {
+    rafId = null
+    updateToolbar()
+  })
+}
+
+function bindScrollListener(editor) {
+  scrollEl?.removeEventListener('scroll', scheduleUpdateToolbar)
+  scrollEl = editor?.view?.dom?.closest?.('.editor-canvas') || null
+  scrollEl?.addEventListener('scroll', scheduleUpdateToolbar, { passive: true })
 }
 
 function handleBlur() {
@@ -83,21 +134,32 @@ function handleFocus() {
 
 watch(() => props.editor, (editor, oldEditor) => {
   if (oldEditor) {
-    oldEditor.off('selectionUpdate', updateToolbar)
+    oldEditor.off('selectionUpdate', scheduleUpdateToolbar)
     oldEditor.off('blur', handleBlur)
     oldEditor.off('focus', handleFocus)
   }
   if (editor) {
-    editor.on('selectionUpdate', updateToolbar)
+    editor.on('selectionUpdate', scheduleUpdateToolbar)
     editor.on('blur', handleBlur)
     editor.on('focus', handleFocus)
+    bindScrollListener(editor)
+  } else {
+    bindScrollListener(null)
   }
 }, { immediate: true })
 
+onMounted(() => {
+  window.addEventListener('resize', scheduleUpdateToolbar)
+})
+
 onBeforeUnmount(() => {
   clearTimeout(blurTimer)
+  if (rafId !== null) cancelAnimationFrame(rafId)
+  window.removeEventListener('resize', scheduleUpdateToolbar)
+  scrollEl?.removeEventListener('scroll', scheduleUpdateToolbar)
+  scrollEl = null
   if (props.editor) {
-    props.editor.off('selectionUpdate', updateToolbar)
+    props.editor.off('selectionUpdate', scheduleUpdateToolbar)
     props.editor.off('blur', handleBlur)
     props.editor.off('focus', handleFocus)
   }
@@ -107,9 +169,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .floating-toolbar {
   position: absolute;
-  background: #1a1a2e;
-  border-radius: 8px;
-  padding: 4px 8px;
+  background: rgba(55, 53, 47, 0.95);
+  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  padding: 4px 6px;
   display: flex;
   gap: 2px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
@@ -120,7 +183,7 @@ onBeforeUnmount(() => {
   height: 28px;
   background: none;
   border: none;
-  color: #ccc;
+  color: rgba(255, 255, 255, 0.8);
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
@@ -140,7 +203,7 @@ onBeforeUnmount(() => {
 }
 .divider {
   width: 1px;
-  background: #444;
+  background: rgba(255, 255, 255, 0.2);
   margin: 4px 4px;
 }
 </style>

@@ -24,7 +24,14 @@ LESSON_PLAN_SYSTEM_PROMPT = """你是一位经验丰富的教学设计专家。
 - 学科
 - 课题/单元主题
 
-只有在上述关键信息都已明确时，才按照以下 Markdown 结构生成完整教案：
+只有在上述关键信息都已明确时，才按照以下 Markdown 结构生成完整教案。
+
+**格式要求（严格遵守）：**
+- 必须直接以 # 开头输出教案，不要添加任何前言、客套话或解释性文字
+- 第一个字符必须是 #，不要有"好的，我来为您生成教案"等开场白
+- 只输出教案 Markdown 内容，不要输出其他格式
+
+教案结构：
 
 # {课程名称} — 教案
 
@@ -179,19 +186,37 @@ async def get_chat_history(db: AsyncSession, session_id, limit: int = 10) -> lis
 async def save_after_stream(plan_id: int, session_id: str, user_id: int, content: str):
     """Save AI response to DB after streaming completes. Uses a NEW session (the request session is closed)."""
     from datetime import datetime, timezone
+    import re
     try:
         async with AsyncSessionLocal() as db:
             try:
                 now = datetime.now(timezone.utc)
-                # Update lesson plan - only write content if it looks like a lesson plan
-                if content.strip().startswith("#"):
-                    title = content.strip().split("\n")[0].lstrip("# ").split("—")[0].strip() or "未命名教案"
+
+                # Extract lesson plan content intelligently
+                lesson_plan_content = None
+
+                # Try to find the first line starting with # (Markdown heading)
+                lines = content.split("\n")
+                first_heading_idx = None
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("#"):
+                        first_heading_idx = i
+                        break
+
+                # If found a heading, extract from that point onwards
+                if first_heading_idx is not None:
+                    lesson_plan_content = "\n".join(lines[first_heading_idx:]).strip()
+
+                # Update lesson plan - write content if we extracted a lesson plan
+                if lesson_plan_content:
+                    title = lesson_plan_content.split("\n")[0].lstrip("# ").split("—")[0].strip() or "未命名教案"
                     await db.execute(
                         update(LessonPlan)
                         .where(LessonPlan.id == plan_id)
-                        .values(content=content, title=title, status="completed", updated_at=now)
+                        .values(content=lesson_plan_content, title=title, status="completed", updated_at=now)
                     )
                 else:
+                    # No lesson plan structure found, keep as draft
                     await db.execute(
                         update(LessonPlan)
                         .where(LessonPlan.id == plan_id)

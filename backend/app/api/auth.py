@@ -40,14 +40,7 @@ async def register(
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """用户注册"""
-    # 校验验证码
-    if not await verify_sms_code(data.phone, data.code):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="验证码错误或已过期"
-        )
-
-    # 检查手机号是否已存在
+    # 先检查手机号是否已存在（避免消耗验证码）
     result = await db.execute(
         select(User).where(User.phone == data.phone)
     )
@@ -55,6 +48,13 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="手机号已被注册"
+        )
+
+    # 再校验验证码
+    if not await verify_sms_code(data.phone, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证码错误或已过期"
         )
 
     # 创建新用户（id 自增）

@@ -1,5 +1,6 @@
-import json
+﻿import json
 import logging
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -146,7 +147,7 @@ async def modify_lesson_plan(req: LessonPlanModifyRequest, user: CurrentUser, db
     for msg in history[:-1]:  # history minus current instruction (already in prompt)
         messages.append({"role": msg["role"], "content": msg["content"]})
 
-    user_msg = f"当前教案内容：\n\n{req.current_content}\n\n"
+    user_msg = f"当前教案内容:\n\n{req.current_content}\n\n"
     if context:
         user_msg += f"参考资料：\n\n{context}\n\n"
     user_msg += f"修改要求：{req.instruction}"
@@ -265,20 +266,96 @@ async def get_latest_lesson_plan(user: CurrentUser, db: DbSession):
 
 # --------------- 6. Export DOCX ---------------
 
+def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
+    """Best-effort Markdown -> DOCX fallback without pandoc."""
+    from docx import Document
+
+    doc = Document()
+    lines = markdown_content.splitlines()
+
+    task_re = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*)$")
+    bullet_re = re.compile(r"^\s*[-*]\s+(.*)$")
+    ordered_re = re.compile(r"^\s*\d+\.\s+(.*)$")
+
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:].strip(), level=3)
+            continue
+        if stripped.startswith("## "):
+            doc.add_heading(stripped[3:].strip(), level=2)
+            continue
+        if stripped.startswith("# "):
+            doc.add_heading(stripped[2:].strip(), level=1)
+            continue
+
+        task_match = task_re.match(stripped)
+        if task_match:
+            checked = task_match.group(1).lower() == "x"
+            text = task_match.group(2).strip()
+            p = doc.add_paragraph(("☑ " if checked else "☐ ") + text)
+            p.style = "List Bullet"
+            continue
+
+        bullet_match = bullet_re.match(stripped)
+        if bullet_match:
+            p = doc.add_paragraph(bullet_match.group(1).strip())
+            p.style = "List Bullet"
+            continue
+
+        ordered_match = ordered_re.match(stripped)
+        if ordered_match:
+            p = doc.add_paragraph(ordered_match.group(1).strip())
+            p.style = "List Number"
+            continue
+
+        doc.add_paragraph(stripped)
+
+    doc.save(output_path)
+
+
 @router.post("/export/docx")
 async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
-    """Convert Markdown to DOCX via pypandoc."""
-    import pypandoc
+    """Convert Markdown to DOCX. Prefer pandoc, fallback to python-docx."""
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         tmp_path = tmp.name
 
     try:
+        last_error = None
+
+        # Primary path: pypandoc + pandoc
         try:
-            pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
-        except OSError:
-            pypandoc.download_pandoc()
-            pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+            import pypandoc
+
+            try:
+                pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+                last_error = None
+            except OSError:
+                try:
+                    pypandoc.download_pandoc()
+                    pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+                    last_error = None
+                except Exception as e:
+                    last_error = e
+            except Exception as e:
+                last_error = e
+        except Exception as e:
+            last_error = e
+
+        # Fallback path: python-docx (no pandoc dependency)
+        if last_error is not None:
+            try:
+                _export_docx_with_python_docx(req.content, tmp_path)
+                last_error = None
+            except Exception as e:
+                last_error = e
+
+        if last_error is not None:
+            raise last_error
 
         return FileResponse(
             tmp_path,
@@ -288,4 +365,4 @@ async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
         )
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
-        raise HTTPException(500, f"DOCX 导出失败: {e}")
+        raise HTTPException(500, f"DOCX导出失败: {e}")

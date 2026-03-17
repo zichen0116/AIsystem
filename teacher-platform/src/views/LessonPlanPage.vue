@@ -15,44 +15,32 @@
 
     <!-- Main content area -->
     <div class="main-area">
-      <transition name="fade" mode="out-in">
-        <!-- Dialog Mode -->
-        <LessonPlanDialog
-          v-if="mode === 'dialog'"
-          key="dialog"
-          ref="dialogRef"
-          :messages="messages"
-          :is-streaming="isSending"
-          :streaming-text="streamingText"
-          :lesson-plan-id="lessonPlanId"
-          @send="handleSend"
-          @send-prompt="handleSendPrompt"
-          @open-document="enterWriterMode"
-          @regenerate="handleRegenerate"
-        />
-
-        <!-- Writer Mode -->
-        <LessonPlanWriter
-          v-else
-          key="writer"
-          ref="writerRef"
+      <keep-alive>
+        <component
+          :is="currentComponent"
+          :ref="mode === 'dialog' ? 'dialogRef' : 'writerRef'"
           :messages="messages"
           :is-streaming="isSending"
           :streaming-text="streamingText"
           :streaming-markdown="streamingMarkdown"
           :lesson-plan-id="lessonPlanId"
+          @send="handleSend"
+          @send-prompt="handleSendPrompt"
+          @open-document="enterWriterMode"
+          @regenerate="handleRegenerate"
           @send-modify="handleModify"
           @back="exitWriterMode"
           @update:markdown="handleMarkdownUpdate"
           @editor-blur="autoSave"
+          @toast="showToast"
         />
-      </transition>
+      </keep-alive>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
 import { resolveApiUrl, getToken } from '../api/http.js'
 import LessonPlanSidebar from '../components/lesson-plan-v2/LessonPlanSidebar.vue'
 import LessonPlanDialog from '../components/lesson-plan-v2/LessonPlanDialog.vue'
@@ -79,6 +67,19 @@ const writerRef = ref(null)
 let abortController = null
 let saveTimer = null
 let isFirstMount = true
+
+// Computed property for dynamic component
+const currentComponent = computed(() => {
+  return mode.value === 'dialog' ? LessonPlanDialog : LessonPlanWriter
+})
+
+// Watch mode changes to load content when entering writer mode
+watch(mode, async (newMode) => {
+  if (newMode === 'writer') {
+    await nextTick()
+    writerRef.value?.loadContent(currentMarkdown.value || '')
+  }
+})
 const toastMsg = ref('')
 
 // ----- Reset Key Watch -----
@@ -90,15 +91,12 @@ function enterWriterMode() {
   sidebarCollapsed.value = true
   // Clear streamingText so document content doesn't appear in chat
   streamingText.value = ''
-  nextTick(() => {
-    writerRef.value?.createEditor(currentMarkdown.value || '')
-  })
 }
 
 function exitWriterMode() {
   // Preserve editor content
   const md = writerRef.value?.getMarkdown()
-  if (md) currentMarkdown.value = md
+  if (typeof md === 'string') currentMarkdown.value = md
   writerRef.value?.destroyEditor()
   mode.value = 'dialog'
   sidebarCollapsed.value = false
@@ -205,8 +203,9 @@ function handleSend(payload) {
         messages.value.push({ role: 'assistant', content: streamingMarkdown.value })
       }
       streamingText.value = ''
-      streamingMarkdown.value = ''
+      // Delay clearing streamingMarkdown to allow editor to load first
       nextTick(() => {
+        streamingMarkdown.value = ''
         dialogRef.value?.scrollToBottom()
         writerRef.value?.scrollChatToBottom()
       })
@@ -247,8 +246,11 @@ function handleModify(payload) {
       currentMarkdown.value = streamingMarkdown.value
       messages.value.push({ role: 'assistant', content: '教案已更新。' })
       streamingText.value = ''
-      streamingMarkdown.value = ''
-      nextTick(() => writerRef.value?.scrollChatToBottom())
+      // Delay clearing streamingMarkdown to allow editor to load first
+      nextTick(() => {
+        streamingMarkdown.value = ''
+        writerRef.value?.scrollChatToBottom()
+      })
     },
     (errMsg) => {
       // Rollback on failure
@@ -344,7 +346,18 @@ async function loadLatest() {
       currentMarkdown.value = data.lesson_plan.content || ''
     }
     if (data.messages?.length) {
-      messages.value = data.messages.map(m => ({ role: m.role, content: m.content }))
+      // Filter out lesson plan content from messages
+      messages.value = data.messages
+        .map(m => ({ role: m.role, content: m.content }))
+        .filter(m => {
+          // Keep user messages
+          if (m.role === 'user') return true
+          // Filter out AI messages that are lesson plans (starts with # and long)
+          const isLessonPlan = m.content.trim().startsWith('#') && m.content.length > 100
+          return !isLessonPlan
+        })
+
+      // Insert document card if we have lesson plan content
       if (currentMarkdown.value) {
         insertDocumentCard()
       }
