@@ -49,9 +49,10 @@ DELETE /api/v1/lesson-plan/{id}
   ↓
 验证 user_id 匹配
   ↓
+手动删除 chat_history (通过 session_id)
+  ↓
 删除 lesson_plan 记录
   ↓
-级联删除 chat_history (通过 session_id)
 级联删除 lesson_plan_reference (通过 lesson_plan_id)
   ↓
 返回 204 No Content
@@ -86,7 +87,10 @@ DELETE /api/v1/lesson-plan/{id}
 **实现逻辑：**
 
 ```python
-@router.delete("/{lesson_plan_id}", status_code=204)
+from fastapi import status, HTTPException
+from sqlalchemy import select
+
+@router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_lesson_plan(
     lesson_plan_id: int,
     user: CurrentUser,
@@ -105,25 +109,31 @@ async def delete_lesson_plan(
     if not plan:
         raise HTTPException(404, "教案不存在")
 
-    # 3. 删除记录（触发级联删除）
+    # 3. 手动删除关联的对话历史（无外键约束）
+    hist_result = await db.execute(
+        select(ChatHistory).where(ChatHistory.session_id == plan.session_id)
+    )
+    for msg in hist_result.scalars().all():
+        await db.delete(msg)
+
+    # 4. 删除教案记录（触发 lesson_plan_reference 的级联删除）
     await db.delete(plan)
     await db.commit()
 
-    # 4. 返回 204
-    return Response(status_code=204)
+    # 5. 返回 204
+    return None
 ```
 
 **级联删除依赖：**
 
 需要确认以下外键已配置 `ondelete="CASCADE"`：
-- `chat_history` 表：通过 `session_id` 关联到 `lesson_plans.session_id`
-- `lesson_plan_reference` 表：通过 `lesson_plan_id` 关联到 `lesson_plans.id`
+- ✅ `lesson_plan_reference.lesson_plan_id` 关联到 `lesson_plans.id` - 已有外键约束，会自动级联删除
 
-当前数据库模型检查：
-- ✅ `lesson_plan_reference.lesson_plan_id` 已有 `ForeignKey` 但需确认级联配置
-- ⚠️ `chat_history.session_id` 没有外键约束，需要手动删除或添加外键
-
-**注意**：如果 `chat_history` 没有外键约束，需要在删除 `lesson_plan` 前手动删除关联的 `chat_history` 记录。
+**chat_history 手动删除：**
+- ⚠️ `chat_history.session_id` 没有外键约束到 `lesson_plans.session_id`
+- 解决方案：在删除 `lesson_plan` 前手动删除关联的 `chat_history` 记录
+- 原因：添加外键约束需要数据库迁移，超出本功能范围
+- 实现：查询所有 `session_id` 匹配的 `chat_history` 记录并逐个删除
 
 ## 前端 UI 设计
 
