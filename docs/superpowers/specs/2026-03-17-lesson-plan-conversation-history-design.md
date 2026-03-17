@@ -225,8 +225,6 @@ Authorization: Bearer <token>
 - 验证：先获取 lesson_plan，确认 user_id 匹配
 - 查询：`session_id = lesson_plan.session_id`
 - 过滤：排除教案快照（`role='assistant' AND content.startswith('#') AND len(content) > 100`）
-  - **注意**：这是竞赛版本的启发式规则，非精确语义分类
-  - 适用于当前场景，未来可改为在数据库添加消息类型字段
 - 排序：`ORDER BY created_at ASC`
 - 空历史：如果没有消息记录，返回空数组
 
@@ -433,8 +431,6 @@ const isLessonPlan = msg.role === 'assistant' &&
 **解决方案：**
 后端在返回消息时过滤掉教案快照：
 - 条件：`role='assistant' AND content.startswith('#') AND len(content) > 100`
-- **注意**：这是竞赛版本的启发式规则，非精确语义分类
-- 适用于当前场景，未来可改为在数据库添加消息类型字段
 - 保留所有 user 消息
 - 保留短消息和不以 # 开头的 assistant 消息
 
