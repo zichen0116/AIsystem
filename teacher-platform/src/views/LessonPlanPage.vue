@@ -8,6 +8,8 @@
       @toggle="sidebarCollapsed = !sidebarCollapsed"
       @new-conversation="startNewConversation"
       @select-history="loadHistorySession"
+      @delete-history="handleDeleteHistory"
+      @toast="showToast"
     />
 
     <!-- Toast notification -->
@@ -335,6 +337,13 @@ function startNewConversation() {
   isSending.value = false
   // 刷新侧边栏历史列表
   sidebarRef.value?.refresh()
+}
+
+// ----- Handle Delete History -----
+function handleDeleteHistory(deletedId) {
+  if (lessonPlanId.value === deletedId) {
+    startNewConversation()
+  }
 }
 
 // ----- Load History Session -----
