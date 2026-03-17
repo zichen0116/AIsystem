@@ -106,6 +106,38 @@ function selectHistory(item) {
   emit('select-history', item)
 }
 
+// 删除历史记录
+async function handleDelete(item) {
+  if (!confirm(`确定要删除"${item.title}"吗？此操作不可恢复。`)) {
+    return
+  }
+
+  try {
+    const response = await authFetch(
+      `/api/v1/lesson-plan/${item.id}`,
+      { method: 'DELETE' }
+    )
+
+    if (response.status === 404) {
+      emit('toast', '会话不存在（可能已被删除）')
+      await loadHistory()
+      return
+    }
+
+    if (!response.ok) {
+      emit('toast', '删除失败，请稍后重试')
+      return
+    }
+
+    emit('delete-history', item.id)
+    emit('toast', '删除成功')
+    await loadHistory()
+  } catch (err) {
+    console.error('删除失败:', err)
+    emit('toast', '删除失败，请稍后重试')
+  }
+}
+
 onMounted(() => {
   loadHistory()
 })
