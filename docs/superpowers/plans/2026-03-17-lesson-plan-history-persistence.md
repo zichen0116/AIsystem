@@ -18,7 +18,7 @@
 ### 后端新增/修改文件
 - **修改**: `backend/app/api/lesson_plan.py` - 新增3个路由端点
 - **修改**: `backend/app/schemas/lesson_plan.py` - 新增响应schema
-- **测试**: `backend/tests/test_lesson_plan_api.py` - API端点测试
+- **新增**: `backend/tests/test_lesson_plan_api.py` - API端点测试
 
 ### 前端修改文件
 - **修改**: `teacher-platform/src/components/lesson-plan-v2/LessonPlanSidebar.vue` - 删除mock，加载真实历史
@@ -69,6 +69,13 @@ class LessonPlanMessagesResponse(BaseModel):
 - [ ] **Step 3: 验证schema定义**
 
 检查导入是否完整，确保 `BaseModel`, `ConfigDict` 已导入。
+
+运行语法检查：
+```bash
+python -m py_compile backend/app/schemas/lesson_plan.py
+```
+
+预期：无输出表示语法正确。
 
 - [ ] **Step 4: Commit**
 
