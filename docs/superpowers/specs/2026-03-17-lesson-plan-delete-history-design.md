@@ -89,6 +89,8 @@ DELETE /api/v1/lesson-plan/{id}
 ```python
 from fastapi import status, HTTPException
 from sqlalchemy import select
+from app.models.lesson_plan import LessonPlan
+from app.models.chat_history import ChatHistory
 
 @router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_lesson_plan(
@@ -117,6 +119,7 @@ async def delete_lesson_plan(
         await db.delete(msg)
 
     # 4. 删除教案记录（触发 lesson_plan_reference 的级联删除）
+    # 注意：所有删除操作在同一事务中执行，确保原子性
     await db.delete(plan)
     await db.commit()
 
