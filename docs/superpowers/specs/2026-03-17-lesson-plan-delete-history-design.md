@@ -49,11 +49,10 @@ DELETE /api/v1/lesson-plan/{id}
   ↓
 验证 user_id 匹配
   ↓
-手动删除 chat_history (通过 session_id)
-  ↓
 删除 lesson_plan 记录
   ↓
-级联删除 lesson_plan_reference (通过 lesson_plan_id)
+级联删除 chat_history (通过 session_id 外键)
+级联删除 lesson_plan_reference (通过 lesson_plan_id 外键)
   ↓
 返回 204 No Content
   ↓
@@ -90,7 +89,6 @@ DELETE /api/v1/lesson-plan/{id}
 from fastapi import status, HTTPException
 from sqlalchemy import select
 from app.models.lesson_plan import LessonPlan
-from app.models.chat_history import ChatHistory
 
 @router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_lesson_plan(
@@ -111,32 +109,69 @@ async def delete_lesson_plan(
     if not plan:
         raise HTTPException(404, "教案不存在")
 
-    # 3. 手动删除关联的对话历史（无外键约束）
-    hist_result = await db.execute(
-        select(ChatHistory).where(ChatHistory.session_id == plan.session_id)
-    )
-    for msg in hist_result.scalars().all():
-        await db.delete(msg)
-
-    # 4. 删除教案记录（触发 lesson_plan_reference 的级联删除）
-    # 注意：所有删除操作在同一事务中执行，确保原子性
+    # 3. 删除教案记录（触发级联删除）
     await db.delete(plan)
     await db.commit()
 
-    # 5. 返回 204
+    # 4. 返回 204
     return None
 ```
 
 **级联删除依赖：**
 
-需要确认以下外键已配置 `ondelete="CASCADE"`：
-- ✅ `lesson_plan_reference.lesson_plan_id` 关联到 `lesson_plans.id` - 已有外键约束，会自动级联删除
+需要添加外键约束以支持级联删除：
+- `chat_history.session_id` → `lesson_plans.session_id` (需要添加外键)
+- `lesson_plan_reference.lesson_plan_id` → `lesson_plans.id` (已有外键)
 
-**chat_history 手动删除：**
-- ⚠️ `chat_history.session_id` 没有外键约束到 `lesson_plans.session_id`
-- 解决方案：在删除 `lesson_plan` 前手动删除关联的 `chat_history` 记录
-- 原因：添加外键约束需要数据库迁移，超出本功能范围
-- 实现：查询所有 `session_id` 匹配的 `chat_history` 记录并逐个删除
+**数据库迁移：**
+
+需要创建 Alembic 迁移脚本添加外键约束：
+
+```python
+"""add cascade delete for chat_history
+
+Revision ID: xxxx
+Revises: yyyy
+Create Date: 2026-03-18
+
+"""
+from alembic import op
+import sqlalchemy as sa
+
+# revision identifiers
+revision = 'xxxx'
+down_revision = 'yyyy'
+branch_labels = None
+depends_on = None
+
+
+def upgrade():
+    # 添加外键约束，支持级联删除
+    op.create_foreign_key(
+        'fk_chat_history_session_id',
+        'chat_history',
+        'lesson_plans',
+        ['session_id'],
+        ['session_id'],
+        ondelete='CASCADE'
+    )
+
+
+def downgrade():
+    # 移除外键约束
+    op.drop_constraint(
+        'fk_chat_history_session_id',
+        'chat_history',
+        type_='foreignkey'
+    )
+```
+
+**迁移执行：**
+```bash
+cd backend
+alembic revision --autogenerate -m "add cascade delete for chat_history"
+alembic upgrade head
+```
 
 ## 前端 UI 设计
 
@@ -229,6 +264,8 @@ async def delete_lesson_plan(
 #### 交互逻辑
 
 ```javascript
+import { resolveApiUrl, getToken, authFetch } from '../../api/http.js'
+
 // 新增 emit 事件
 const emit = defineEmits([
   'new-conversation',
@@ -245,14 +282,11 @@ async function handleDelete(item) {
     return
   }
 
-  // 2. 调用 DELETE API
+  // 2. 调用 DELETE API（使用 authFetch 自动处理 401）
   try {
-    const response = await fetch(
-      resolveApiUrl(`/api/v1/lesson-plan/${item.id}`),
-      {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${getToken()}` }
-      }
+    const response = await authFetch(
+      `/api/v1/lesson-plan/${item.id}`,
+      { method: 'DELETE' }
     )
 
     // 3. 错误处理
@@ -275,6 +309,7 @@ async function handleDelete(item) {
     await loadHistory()
 
   } catch (err) {
+    // authFetch 会自动处理 401，这里捕获其他异常
     console.error('删除失败:', err)
     emit('toast', '删除失败，请稍后重试')
   }
@@ -319,7 +354,7 @@ function handleDeleteHistory(deletedId) {
 |--------|------|----------|
 | 204 | 删除成功 | Toast "删除成功"，刷新列表 |
 | 404 | 教案不存在 | Toast "会话不存在（可能已被删除）"，刷新列表 |
-| 401 | 认证失败 | 由 `http.js` 自动处理，跳转登录页 |
+| 401 | 认证失败 | 由 `authFetch` 自动处理，清除 token 并跳转登录页 |
 | 其他 | 网络错误或服务器错误 | Toast "删除失败，请稍后重试" |
 
 ### 特殊情况处理
