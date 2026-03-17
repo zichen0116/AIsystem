@@ -150,7 +150,7 @@ Authorization: Bearer <token>
 - 排序：`ORDER BY updated_at DESC`
 - 返回字段：id, session_id, title, status, created_at, updated_at
 - 分页：支持可选的 `limit` 和 `offset` 查询参数（默认 limit=100）
-- 性能：确保 `updated_at` 列有索引以支持高效排序
+- 性能：现有索引已足够（user_id有索引），竞赛项目数据量不大
 
 ### 3.2 GET /api/v1/lesson-plan/{lesson_plan_id}
 
@@ -225,15 +225,19 @@ Authorization: Bearer <token>
 - 验证：先获取 lesson_plan，确认 user_id 匹配
 - 查询：`session_id = lesson_plan.session_id`
 - 过滤：排除教案快照（`role='assistant' AND content.startswith('#') AND len(content) > 100`）
+  - **注意**：这是竞赛版本的启发式规则，非精确语义分类
+  - 适用于当前场景，未来可改为在数据库添加消息类型字段
 - 排序：`ORDER BY created_at ASC`
 - 空历史：如果没有消息记录，返回空数组
 
 ### 3.4 数据库注意事项
 
 **索引优化：**
-- `lesson_plans.updated_at` 需要有索引以支持高效排序
 - `lesson_plans.user_id` 已有索引（外键）
+- `lesson_plans.session_id` 已有唯一索引
 - `chat_history.session_id` 已有索引
+- `chat_history.user_id` 已有索引
+- 现有索引已足够支持查询性能，无需额外添加
 
 **外键约束：**
 - 当前 `chat_history.session_id` 和 `lesson_plans.session_id` 之间没有外键约束
@@ -316,12 +320,18 @@ onMounted(() => {
 
 ### 4.2 LessonPlanPage.vue 改动
 
-**修改 onMounted：**
+**修改生命周期钩子：**
 ```javascript
 onMounted(() => {
   // 删除 loadLatest() 调用
   // 只显示欢迎界面
   isFirstMount = false
+})
+
+// 同时禁用 onActivated 的自动恢复
+onActivated(() => {
+  // 删除或注释掉 loadLatest() 调用
+  // 保持欢迎界面状态
 })
 ```
 
@@ -423,6 +433,8 @@ const isLessonPlan = msg.role === 'assistant' &&
 **解决方案：**
 后端在返回消息时过滤掉教案快照：
 - 条件：`role='assistant' AND content.startswith('#') AND len(content) > 100`
+- **注意**：这是竞赛版本的启发式规则，非精确语义分类
+- 适用于当前场景，未来可改为在数据库添加消息类型字段
 - 保留所有 user 消息
 - 保留短消息和不以 # 开头的 assistant 消息
 
@@ -468,10 +480,10 @@ if (response.status === 404) {
 }
 ```
 
-**降级策略：**
-- 侧边栏加载失败 → 显示"加载失败"，但不影响新建会话
-- 历史会话加载失败 → 显示toast，保持当前状态
-- 消息加载失败 → 只加载教案内容，不显示对话历史
+**说明：**
+- 任何请求失败都不进行部分恢复
+- 保持当前状态不变，避免数据不一致
+- 用户可以重试或返回欢迎界面
 
 ## 6. 边界情况
 
