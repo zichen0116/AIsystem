@@ -631,7 +631,12 @@ if (sidebarRef.value) {
 
 ```bash
 git add teacher-platform/src/views/LessonPlanPage.vue
-git commit -m "feat(frontend): 实现历史会话加载和恢复功能"
+git commit -m "feat(frontend): 实现历史会话加载和恢复功能
+
+- 删除onActivated和isFirstMount保持代码清晰
+- 增量修改startNewConversation保留清理逻辑
+- 添加侧边栏刷新机制
+- 删除前端启发式过滤逻辑"
 ```
 
 ---
