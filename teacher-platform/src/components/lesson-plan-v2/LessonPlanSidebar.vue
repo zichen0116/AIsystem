@@ -7,12 +7,16 @@
           <button class="collapse-btn" @click="$emit('toggle')" title="收起侧边栏">‹</button>
         </div>
         <div class="history-list">
+          <div v-if="loading" class="loading-state">加载中...</div>
+          <div v-else-if="error" class="error-state">{{ error }}</div>
+          <div v-else-if="historyList.length === 0" class="empty-state">暂无历史记录</div>
           <div
-            v-for="item in mockHistory"
+            v-else
+            v-for="item in historyList"
             :key="item.id"
             class="history-item"
             :class="{ active: item.id === activeId }"
-            @click="activeId = item.id"
+            @click="selectHistory(item)"
           >
             <div class="history-title">{{ item.title }}</div>
             <div class="history-time">{{ item.time }}</div>
@@ -27,23 +31,82 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
   isOverlay: { type: Boolean, default: false },
 })
 
-defineEmits(['new-conversation', 'toggle'])
+const emit = defineEmits(['new-conversation', 'toggle', 'select-history'])
 
-const activeId = ref(1)
+const activeId = ref(null)
+const historyList = ref([])
+const loading = ref(false)
+const error = ref(null)
 
-const mockHistory = [
-  { id: 1, title: '小学数学分数教案', time: '今天 14:30', preview: '三年级分数的初步认识...' },
-  { id: 2, title: '高中物理力学教案', time: '昨天 09:15', preview: '牛顿第二定律应用...' },
-  { id: 3, title: '初中英语阅读课', time: '3月12日', preview: 'Reading comprehension...' },
-  { id: 4, title: '七年级生物细胞结构', time: '3月10日', preview: '动物细胞与植物细胞...' },
-]
+// 格式化时间显示
+function formatTime(isoString) {
+  const date = new Date(isoString)
+  const now = new Date()
+  const diffMs = now - date
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) {
+    return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  } else if (diffDays === 1) {
+    return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  } else {
+    return `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+}
+
+// 加载历史列表
+async function loadHistory() {
+  loading.value = true
+  error.value = null
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch('http://localhost:8000/api/v1/lesson-plan/list', {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error('加载历史失败')
+    }
+
+    const data = await response.json()
+    historyList.value = data.items.map(item => ({
+      id: item.id,
+      title: item.title,
+      time: formatTime(item.created_at),
+      status: item.status,
+      sessionId: item.session_id
+    }))
+  } catch (err) {
+    console.error('加载历史失败:', err)
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+// 选择历史记录
+function selectHistory(item) {
+  activeId.value = item.id
+  emit('select-history', item)
+}
+
+onMounted(() => {
+  loadHistory()
+})
+
+// 暴露刷新方法供父组件调用
+defineExpose({
+  refresh: loadHistory
+})
 </script>
 
 <style scoped>
@@ -115,6 +178,17 @@ const mockHistory = [
 .history-list {
   flex: 1;
   overflow-y: auto;
+}
+.loading-state,
+.error-state,
+.empty-state {
+  padding: 20px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}
+.error-state {
+  color: #f56c6c;
 }
 .history-item {
   padding: 10px 12px;
