@@ -6,9 +6,23 @@
 
 - **平台封面**：顶部导航栏，含 [进入备课]、[课件管理]、[知识库] 三个入口，右侧圆形头像
 - **进入备课**：左侧导航含 [生成ppt和教案]、[做动画和小游戏]、[数据分析]、[知识图谱]，默认显示生成 PPT 与教案界面
+- **教案生成**：支持对话式教案生成，可查看历史会话、恢复之前的对话、继续编辑教案
 - **课件管理**：展示课件列表，支持按日期、文件类型筛选，可添加新课件
 - **知识库**：RAG 文档管理，文档仓库、来源映射、知识库容量展示
 - **个人中心**：未登录时头像为灰色，点击弹出登录/注册弹窗；登录后点击进入个人中心
+
+## API 端点
+
+### 教案管理
+
+- `POST /api/v1/lesson-plan/generate` - 生成教案
+- `POST /api/v1/lesson-plan/modify` - 修改教案
+- `GET /api/v1/lesson-plan/list` - 获取教案列表
+- `GET /api/v1/lesson-plan/{id}` - 获取教案详情
+- `GET /api/v1/lesson-plan/{id}/messages` - 获取对话历史
+- `PATCH /api/v1/lesson-plan/{id}` - 保存教案
+- `POST /api/v1/lesson-plan/upload` - 上传参考文件
+- `POST /api/v1/lesson-plan/export` - 导出教案为DOCX
 
 ## 快速开始
 
