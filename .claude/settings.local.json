@@ -13,7 +13,10 @@
       "Bash(git:*)",
       "Bash(wc -l /d/Develop/Project/AIsystem/teacher-platform/src/views/*.vue | sort -rn | head -20)",
       "WebSearch",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "WebFetch(domain:docmee.cn)",
+      "WebFetch(domain:open.docmee.cn)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

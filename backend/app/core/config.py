@@ -84,6 +84,16 @@ class Settings(BaseSettings):
     # 例如 Windows: C:/Windows/Fonts/msyh.ttc
     DATA_ANALYSIS_FONT_PATH: str = ""
 
+    # ========== Docmee PPT 生成 ==========
+    DOCMEE_API_KEY: str = ""
+    DOCMEE_BASE_URL: str = "https://docmee.cn"
+
+    # ========== Unsplash 图片搜索 ==========
+    UNSPLASH_ACCESS_KEY: str = ""
+
+    # ========== SiliconFlow AI 生图 ==========
+    SILICONFLOW_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

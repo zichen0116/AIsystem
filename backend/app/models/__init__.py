@@ -9,6 +9,10 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.models.token_blacklist import TokenBlacklist
 from app.models.lesson_plan import LessonPlan
 from app.models.lesson_plan_reference import LessonPlanReference
+from app.models.ppt_session import PptSession
+from app.models.ppt_outline import PptOutline
+from app.models.ppt_message import PptMessage
+from app.models.ppt_result import PptResult
 from app.models.enums import (
     CoursewareType,
     CoursewareStatus,
@@ -26,6 +30,10 @@ __all__ = [
     "TokenBlacklist",
     "LessonPlan",
     "LessonPlanReference",
+    "PptSession",
+    "PptOutline",
+    "PptMessage",
+    "PptResult",
     "CoursewareType",
     "CoursewareStatus",
     "ChatRole",
