@@ -27,7 +27,8 @@ DATABASE_URL = os.getenv(
 )
 # 替换为异步驱动
 DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
-config.set_main_option("sqlalchemy.url", DATABASE_URL)
+# ConfigParser 将 % 视为插值，密码中含 %40 等需转义为 %%
+config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 # 设置日志
 if config.config_file_name is not None:
