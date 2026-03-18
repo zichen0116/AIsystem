@@ -8,7 +8,7 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -466,7 +466,15 @@ async def delete_lesson_plan(
     if not plan:
         raise HTTPException(404, "教案不存在")
 
-    # 删除教案记录（触发级联删除）
+    # 业务侧手动删除 chat_history，避免共享表被全局外键约束
+    await db.execute(
+        delete(ChatHistory).where(
+            ChatHistory.session_id == plan.session_id,
+            ChatHistory.user_id == user.id,
+        )
+    )
+
+    # 删除教案记录（lesson_plan_references 仍通过 lesson_plan_id 级联删除）
     await db.delete(plan)
     await db.commit()
 
