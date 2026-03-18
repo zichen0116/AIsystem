@@ -7,15 +7,26 @@
           <button class="collapse-btn" @click="$emit('toggle')" title="收起侧边栏">‹</button>
         </div>
         <div class="history-list">
+          <div v-if="loading" class="loading-state">加载中...</div>
+          <div v-else-if="error" class="error-state">{{ error }}</div>
+          <div v-else-if="historyList.length === 0" class="empty-state">暂无历史记录</div>
           <div
-            v-for="item in mockHistory"
+            v-else
+            v-for="item in historyList"
             :key="item.id"
             class="history-item"
             :class="{ active: item.id === activeId }"
-            @click="activeId = item.id"
+            @click="selectHistory(item)"
           >
-            <div class="history-title">{{ item.title }}</div>
-            <div class="history-time">{{ item.time }}</div>
+            <div class="item-content">
+              <div class="history-title">{{ item.title }}</div>
+              <div class="history-time">{{ item.time }}</div>
+            </div>
+            <button
+              class="delete-btn"
+              @click.stop="handleDelete(item)"
+              title="删除"
+            >×</button>
           </div>
         </div>
       </div>
@@ -27,23 +38,114 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { resolveApiUrl, getToken, authFetch } from '../../api/http.js'
 
 defineProps({
   collapsed: { type: Boolean, default: false },
   isOverlay: { type: Boolean, default: false },
 })
 
-defineEmits(['new-conversation', 'toggle'])
+const emit = defineEmits(['new-conversation', 'toggle', 'select-history', 'delete-history', 'toast'])
 
-const activeId = ref(1)
+const activeId = ref(null)
+const historyList = ref([])
+const loading = ref(false)
+const error = ref(null)
 
-const mockHistory = [
-  { id: 1, title: '小学数学分数教案', time: '今天 14:30', preview: '三年级分数的初步认识...' },
-  { id: 2, title: '高中物理力学教案', time: '昨天 09:15', preview: '牛顿第二定律应用...' },
-  { id: 3, title: '初中英语阅读课', time: '3月12日', preview: 'Reading comprehension...' },
-  { id: 4, title: '七年级生物细胞结构', time: '3月10日', preview: '动物细胞与植物细胞...' },
-]
+// 格式化时间显示
+function formatTime(isoString) {
+  const date = new Date(isoString)
+  const now = new Date()
+  const diffMs = now - date
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) {
+    return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  } else if (diffDays === 1) {
+    return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+  } else {
+    return `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+}
+
+// 加载历史列表
+async function loadHistory() {
+  loading.value = true
+  error.value = null
+  try {
+    const response = await fetch(resolveApiUrl('/api/v1/lesson-plan/list'), {
+      headers: {
+        'Authorization': `Bearer ${getToken()}`
+      }
+    })
+
+    if (!response.ok) {
+      throw new Error('加载历史失败')
+    }
+
+    const data = await response.json()
+    historyList.value = data.items.map(item => ({
+      id: item.id,
+      title: item.title,
+      time: formatTime(item.created_at),
+      status: item.status,
+      sessionId: item.session_id
+    }))
+  } catch (err) {
+    console.error('加载历史失败:', err)
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
+
+// 选择历史记录
+function selectHistory(item) {
+  activeId.value = item.id
+  emit('select-history', item)
+}
+
+// 删除历史记录
+async function handleDelete(item) {
+  if (!confirm(`确定要删除"${item.title}"吗？此操作不可恢复。`)) {
+    return
+  }
+
+  try {
+    const response = await authFetch(
+      `/api/v1/lesson-plan/${item.id}`,
+      { method: 'DELETE' }
+    )
+
+    if (response.status === 404) {
+      emit('toast', '会话不存在（可能已被删除）')
+      await loadHistory()
+      return
+    }
+
+    if (!response.ok) {
+      emit('toast', '删除失败，请稍后重试')
+      return
+    }
+
+    emit('delete-history', item.id)
+    emit('toast', '删除成功')
+    await loadHistory()
+  } catch (err) {
+    console.error('删除失败:', err)
+    emit('toast', '删除失败，请稍后重试')
+  }
+}
+
+onMounted(() => {
+  loadHistory()
+})
+
+// 暴露刷新方法供父组件调用
+defineExpose({
+  refresh: loadHistory
+})
 </script>
 
 <style scoped>
@@ -116,16 +218,28 @@ const mockHistory = [
   flex: 1;
   overflow-y: auto;
 }
+.loading-state,
+.error-state,
+.empty-state {
+  padding: 20px;
+  text-align: center;
+  color: #999;
+  font-size: 13px;
+}
+.error-state {
+  color: #f56c6c;
+}
 .history-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 10px 12px;
   border-radius: 8px;
   font-size: 13px;
   color: #444;
   cursor: pointer;
   margin-bottom: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: background 0.2s;
 }
 .history-item:hover {
@@ -136,10 +250,46 @@ const mockHistory = [
   color: #2563eb;
   font-weight: 500;
 }
+.item-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.history-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .history-time {
   font-size: 11px;
   color: #aaa;
   margin-top: 2px;
+}
+.delete-btn {
+  opacity: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: #e0e7ff;
+  color: #6366f1;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-left: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.history-item:hover .delete-btn {
+  opacity: 1;
+}
+.delete-btn:hover {
+  background: #c7d2fe;
+  color: #4f46e5;
 }
 .sidebar-toggle {
   position: absolute;

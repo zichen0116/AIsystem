@@ -6,9 +6,9 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -28,6 +28,10 @@ from app.schemas.lesson_plan import (
     LessonPlanInfo,
     MessageInfo,
     FileInfo,
+    LessonPlanListResponse,
+    LessonPlanListItem,
+    LessonPlanMessagesResponse,
+    ChatMessageInfo,
 )
 from app.services.lesson_plan_service import (
     LESSON_PLAN_MODIFY_PROMPT,
@@ -264,7 +268,79 @@ async def get_latest_lesson_plan(user: CurrentUser, db: DbSession):
     )
 
 
-# --------------- 6. Export DOCX ---------------
+# --------------- 6. List ---------------
+
+@router.get("/list", response_model=LessonPlanListResponse)
+async def list_lesson_plans(user: CurrentUser, db: DbSession):
+    """获取当前用户的所有教案列表，按创建时间倒序"""
+    stmt = select(LessonPlan).where(LessonPlan.user_id == user.id).order_by(LessonPlan.created_at.desc())
+    result = await db.execute(stmt)
+    plans = result.scalars().all()
+
+    items = [
+        LessonPlanListItem(
+            id=p.id,
+            session_id=str(p.session_id),
+            title=p.title,
+            status=p.status,
+            created_at=p.created_at.isoformat(),
+            updated_at=p.updated_at.isoformat(),
+        )
+        for p in plans
+    ]
+
+    return LessonPlanListResponse(items=items, total=len(items))
+
+
+# --------------- 7. Detail ---------------
+
+@router.get("/{lesson_plan_id}", response_model=LessonPlanInfo)
+async def get_lesson_plan_detail(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的详细信息"""
+    result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    return LessonPlanInfo(
+        id=plan.id,
+        session_id=str(plan.session_id),
+        title=plan.title,
+        content=plan.content,
+        status=plan.status,
+    )
+
+
+# --------------- 9. Messages ---------------
+
+@router.get("/{lesson_plan_id}/messages", response_model=LessonPlanMessagesResponse)
+async def get_lesson_plan_messages(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的对话历史"""
+    # 验证教案存在且属于当前用户
+    plan_result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = plan_result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 获取对话历史
+    hist_result = await db.execute(
+        select(ChatHistory)
+        .where(ChatHistory.session_id == plan.session_id)
+        .order_by(ChatHistory.created_at)
+    )
+    messages = [
+        ChatMessageInfo(role=h.role, content=h.content, created_at=h.created_at.isoformat())
+        for h in hist_result.scalars().all()
+    ]
+
+    return LessonPlanMessagesResponse(messages=messages)
+
+
+# --------------- 10. Export DOCX ---------------
 
 def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
     """Best-effort Markdown -> DOCX fallback without pandoc."""
@@ -366,3 +442,40 @@ async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(500, f"DOCX导出失败: {e}")
+
+
+# --------------- 10. Delete ---------------
+
+@router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lesson_plan(
+    lesson_plan_id: int,
+    user: CurrentUser,
+    db: DbSession
+):
+    """删除指定的教案记录及其关联数据"""
+    # 查询教案记录
+    result = await db.execute(
+        select(LessonPlan).where(
+            LessonPlan.id == lesson_plan_id,
+            LessonPlan.user_id == user.id
+        )
+    )
+    plan = result.scalar_one_or_none()
+
+    # 验证存在性和所有权
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 业务侧手动删除 chat_history，避免共享表被全局外键约束
+    await db.execute(
+        delete(ChatHistory).where(
+            ChatHistory.session_id == plan.session_id,
+            ChatHistory.user_id == user.id,
+        )
+    )
+
+    # 删除教案记录（lesson_plan_references 仍通过 lesson_plan_id 级联删除）
+    await db.delete(plan)
+    await db.commit()
+
+    return None
