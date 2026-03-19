@@ -25,9 +25,30 @@ export function getThumbnailRenderIndices({ slideCount, dirtySlideIndex = null }
 }
 
 export function getPdfExportLayerPosition(isCapturing) {
-  return isCapturing
-    ? { left: '0px', top: '0px', zIndex: '-1' }
-    : { left: '-99999px', top: '0px', zIndex: '-1' }
+  return {
+    left: '-99999px',
+    top: '0px',
+    zIndex: '-1',
+  }
+}
+
+export function openPendingPptDownloadWindow(options = {}) {
+  const openWindow = options.openWindow
+    || ((url, target, features) => window.open(url, target, features))
+
+  try {
+    return openWindow('about:blank', '_blank') || null
+  } catch {
+    return null
+  }
+}
+
+export function getPptDownloadUrl(primaryUrl, fallbackUrl = '') {
+  const primary = String(primaryUrl || '').trim()
+  if (primary) return primary
+
+  const fallback = String(fallbackUrl || '').trim()
+  return fallback
 }
 
 export function triggerPptDownload(fileUrl, options = {}) {

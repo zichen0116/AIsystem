@@ -673,12 +673,70 @@ async def download_result(
         raise HTTPException(status_code=404, detail="PPT结果不存在")
     if not ppt_result.docmee_ppt_id:
         raise HTTPException(status_code=400, detail="PPT尚未生成完成")
+    has_latest_edits = bool(getattr(ppt_result, "edited_pptx_property", None))
     try:
-        file_url = await docmee_client.download_pptx(ppt_result.docmee_ppt_id, refresh=True)
+        if has_latest_edits:
+            latest_pptx = docmee_client.decompress_pptx_property(
+                ppt_result.edited_pptx_property
+            )
+            if not latest_pptx:
+                raise RuntimeError("Failed to decode latest edited PPT data")
+            sync_error: Exception | None = None
+            try:
+                await docmee_client.save_pptx(ppt_result.docmee_ppt_id, latest_pptx)
+            except Exception as exc:
+                sync_error = exc
+                logger.warning(
+                    "Docmee savePptx timed out or failed before download result=%s docmee_ppt_id=%s error=%s",
+                    result_id,
+                    ppt_result.docmee_ppt_id,
+                    describe_exception(exc),
+                )
+
+            remote_ppt = await docmee_client.wait_until_ppt_ready(
+                ppt_result.docmee_ppt_id,
+                expected_pptx_property=latest_pptx,
+            )
+            if not docmee_client.pptx_property_matches(
+                remote_ppt.get("pptxProperty"),
+                latest_pptx,
+            ):
+                detail = (
+                    describe_exception(sync_error)
+                    if sync_error is not None
+                    else "Remote PPT did not reach the latest edited snapshot"
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Failed to sync latest edited PPT before download: {detail}",
+                )
+
+            ppt_result.source_pptx_property = (
+                remote_ppt.get("pptxProperty") or ppt_result.edited_pptx_property
+            )
+            file_url = await docmee_client.download_pptx(
+                ppt_result.docmee_ppt_id,
+                refresh=False,
+            )
+        else:
+            file_url = await docmee_client.download_pptx(
+                ppt_result.docmee_ppt_id,
+                refresh=True,
+            )
         ppt_result.file_url = file_url
         await db.flush()
         return {"file_url": file_url}
     except Exception as e:
+        if has_latest_edits:
+            if isinstance(e, HTTPException):
+                raise e
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Failed to sync latest edited PPT before download: "
+                    f"{describe_exception(e)}"
+                ),
+            )
         if ppt_result.file_url:
             logger.warning(
                 "Falling back to stored PPT file_url result=%s docmee_ppt_id=%s error=%s",

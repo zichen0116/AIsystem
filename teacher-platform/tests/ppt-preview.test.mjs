@@ -10,7 +10,9 @@ import {
   ZOOM_TOAST_DURATION_MS,
   getPdfExportLayerPosition,
   getNextZoomPercent,
+  getPptDownloadUrl,
   getThumbnailRenderIndices,
+  openPendingPptDownloadWindow,
   triggerPptDownload,
 } from '../src/utils/pptPreview.js'
 import { resolveSpeakerNotes } from '../src/utils/pptOutlineCard.js'
@@ -72,17 +74,39 @@ test('preview notes fall back to empty string when missing', () => {
   assert.equal(resolveSpeakerNotes(null, 0), '')
 })
 
-test('pdf export layer moves onscreen while capturing', () => {
+test('pdf export layer stays offscreen before capture', () => {
   assert.deepEqual(getPdfExportLayerPosition(false), {
     left: '-99999px',
     top: '0px',
     zIndex: '-1',
   })
+})
+
+test('pdf export layer stays offscreen during capture because canvases are exported directly', () => {
   assert.deepEqual(getPdfExportLayerPosition(true), {
-    left: '0px',
+    left: '-99999px',
     top: '0px',
     zIndex: '-1',
   })
+})
+
+test('ppt download pre-opens a controllable window handle', () => {
+  const popup = { close() {} }
+  const calls = []
+
+  const result = openPendingPptDownloadWindow({
+    openWindow(url, target, features) {
+      calls.push({ url, target, features })
+      return popup
+    },
+  })
+
+  assert.equal(result, popup)
+  assert.deepEqual(calls, [{
+    url: 'about:blank',
+    target: '_blank',
+    features: undefined,
+  }])
 })
 
 test('ppt download reuses pre-opened window when available', () => {
@@ -126,7 +150,26 @@ test('ppt download falls back to anchor click when popup is unavailable', () => 
   assert.deepEqual(events, ['append:true', 'clicked', 'removed'])
 })
 
+test('ppt download falls back to cached file url when latest request returns empty', () => {
+  assert.equal(
+    getPptDownloadUrl('', 'https://example.com/cached.pptx'),
+    'https://example.com/cached.pptx',
+  )
+  assert.equal(
+    getPptDownloadUrl('https://example.com/latest.pptx', 'https://example.com/cached.pptx'),
+    'https://example.com/latest.pptx',
+  )
+  assert.equal(getPptDownloadUrl('   ', '   '), '')
+})
+
+test('ppt download refreshes the current session result before requesting backend download', () => {
+  assert.match(lessonPrepPptSource, /getSessionDetail\(currentSessionId\.value\)/)
+  assert.match(lessonPrepPptSource, /latestSessionDetail\.results\?\.find\(r => r\.is_current\)/)
+  assert.match(lessonPrepPptSource, /await loadResultDetail\(latestResult\.id\)/)
+})
+
 test('pdf export uses canvas renderer instead of svg export layer', () => {
   assert.match(lessonPrepPptSource, /import\s+\{\s*Ppt2Canvas\s*\}\s+from\s+'..\/utils\/docmee\/ppt2canvas\.js'/)
+  assert.match(lessonPrepPptSource, /import\(\s*'jspdf'\s*\)/)
   assert.match(lessonPrepPptSource, /class="pdf-export-canvas"/)
 })

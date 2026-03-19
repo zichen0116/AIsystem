@@ -67,6 +67,28 @@ class DocmeeClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["pptxProperty"], "encoded-pptx")
         self.assertEqual(client.load_pptx.await_count, 2)
 
+    async def test_wait_until_ppt_ready_retries_until_snapshot_matches(self):
+        client = DocmeeClient()
+        expected = {"pages": [{"title": "latest"}], "width": 960, "height": 540}
+        client.load_pptx = AsyncMock(side_effect=[
+            {"id": "ppt-1", "pptxProperty": None, "extInfo": {"uploadStatus": "processing"}},
+            {
+                "id": "ppt-1",
+                "pptxProperty": DocmeeClient.compress_pptx_property(expected),
+                "extInfo": {"uploadStatus": "ready"},
+            },
+        ])
+
+        result = await client.wait_until_ppt_ready(
+            "ppt-1",
+            expected_pptx_property=expected,
+            poll_attempts=2,
+            poll_delay=0,
+        )
+
+        self.assertEqual(client.load_pptx.await_count, 2)
+        self.assertEqual(result["extInfo"]["uploadStatus"], "ready")
+
     def test_get_page_count_supports_pages_key(self):
         encoded = DocmeeClient.compress_pptx_property({
             "pages": [{}, {}, {}],
@@ -75,6 +97,13 @@ class DocmeeClientTests(unittest.IsolatedAsyncioTestCase):
         })
 
         self.assertEqual(DocmeeClient.get_page_count(encoded), 3)
+
+    def test_pptx_property_matches_decoded_snapshot(self):
+        expected = {"pages": [{"title": "latest"}], "width": 960, "height": 540}
+        encoded = DocmeeClient.compress_pptx_property(expected)
+
+        self.assertTrue(DocmeeClient.pptx_property_matches(encoded, expected))
+        self.assertFalse(DocmeeClient.pptx_property_matches(encoded, {"pages": []}))
 
     def test_describe_exception_uses_class_name_when_message_is_empty(self):
         exc = httpx.ReadTimeout("")

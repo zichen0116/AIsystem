@@ -24,7 +24,12 @@ import { encodePptxProperty } from '../utils/docmee/encodePptxProperty.js'
 import { Ppt2Canvas } from '../utils/docmee/ppt2canvas.js'
 import { CLARIFICATION_STEPS, buildClarificationRequest, getClarificationQuestion } from '../utils/pptOutlineFlow.js'
 import { cloneOutlinePayload, hasRenderableOutlinePayload, markdownToOutlinePayload, resolveSpeakerNotes } from '../utils/pptOutlineCard.js'
-import { getPdfExportLayerPosition, triggerPptDownload } from '../utils/pptPreview.js'
+import {
+  getPdfExportLayerPosition,
+  getPptDownloadUrl,
+  openPendingPptDownloadWindow,
+  triggerPptDownload,
+} from '../utils/pptPreview.js'
 
 // ========== 状态 ==========
 const stage = ref('welcome') // welcome | chat | preview
@@ -725,16 +730,42 @@ async function streamModifyPpt(text) {
 
 // ========== 下载 ==========
 async function handleDownload() {
-  if (!currentResult.value?.result_id) return
-  const pendingWindow = window.open('', '_blank', 'noopener,noreferrer')
+  let resultId = currentResult.value?.result_id
+  if (currentSessionId.value) {
+    try {
+      const latestSessionDetail = await getSessionDetail(currentSessionId.value)
+      const latestResult = latestSessionDetail.results?.find(r => r.is_current)
+      if (latestResult?.id && latestResult.id !== currentResult.value?.result_id) {
+        currentResult.value = normalizeResultRecord(latestResult)
+        await loadResultDetail(latestResult.id)
+      }
+      resultId = latestResult?.id || resultId
+    } catch (error) {
+      console.warn('刷新当前PPT结果失败，继续使用页面已有结果:', error)
+    }
+  }
+  if (!resultId) return
+  const pendingWindow = openPendingPptDownloadWindow()
   try {
-    const data = await downloadResult(currentResult.value.result_id)
-    if (data.file_url) {
-      triggerPptDownload(data.file_url, { presetWindow: pendingWindow })
+    const data = await downloadResult(resultId)
+    const fileUrl = getPptDownloadUrl(data?.file_url, currentResult.value?.file_url)
+    if (fileUrl) {
+      currentResult.value = {
+        ...currentResult.value,
+        result_id: resultId,
+        id: resultId,
+        file_url: fileUrl,
+      }
+      triggerPptDownload(fileUrl, { presetWindow: pendingWindow })
     } else {
       pendingWindow?.close?.()
     }
   } catch (e) {
+    const fallbackUrl = getPptDownloadUrl('', currentResult.value?.file_url)
+    if (fallbackUrl) {
+      triggerPptDownload(fallbackUrl, { presetWindow: pendingWindow })
+      return
+    }
     pendingWindow?.close?.()
     console.error('下载失败:', e)
     messages.value.push({
@@ -900,28 +931,67 @@ function handleFullscreen() {
 }
 
 async function handleExportPdf() {
+  return handleExportPdfDirect()
+}
+
+async function handleExportPdfDirect() {
   if (!pptxDoc.value?.pages?.length || isExportingPdf.value) return
 
   try {
     isExportingPdf.value = true
     await renderExportSlides()
 
-    const { default: html2pdf } = await import('html2pdf.js')
-    const filename = `${currentSession.value?.title || 'PPT预览'}.pdf`
-    await html2pdf().set({
-      margin: [8, 8, 8, 8],
-      filename,
-      image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
-      pagebreak: { mode: ['css', 'legacy'] },
-    }).from(exportContainerRef.value).save()
+    const { jsPDF } = await import('jspdf')
+    const filename = `${currentSession.value?.title || 'PPT棰勮'}.pdf`
+    const canvases = exportCanvasRefs
+      .slice(0, slides.value.length)
+      .filter(canvas => canvas && canvas.width > 0 && canvas.height > 0)
+
+    if (!canvases.length) {
+      throw new Error('PDF 瀵煎嚭鐢荤布鏈噯澶囧畬鎴?')
+    }
+
+    const pdf = new jsPDF({
+      unit: 'pt',
+      format: 'a4',
+      orientation: 'landscape',
+      compress: true,
+    })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const margin = 24
+    const contentWidth = pageWidth - margin * 2
+    const contentHeight = pageHeight - margin * 2
+
+    canvases.forEach((canvas, index) => {
+      if (index > 0) {
+        pdf.addPage('a4', 'landscape')
+      }
+
+      const canvasRatio = canvas.width / canvas.height
+      let renderWidth = contentWidth
+      let renderHeight = renderWidth / canvasRatio
+
+      if (renderHeight > contentHeight) {
+        renderHeight = contentHeight
+        renderWidth = renderHeight * canvasRatio
+      }
+
+      const x = (pageWidth - renderWidth) / 2
+      const y = (pageHeight - renderHeight) / 2
+
+      pdf.setFillColor(255, 255, 255)
+      pdf.rect(0, 0, pageWidth, pageHeight, 'F')
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, renderWidth, renderHeight, undefined, 'FAST')
+    })
+
+    pdf.save(filename)
   } catch (error) {
     console.error('PDF export failed:', error)
     messages.value.push({
       role: 'assistant',
       message_type: 'error',
-      content: error?.message || '导出 PDF 失败，请稍后重试',
+      content: error?.message || '瀵煎嚭 PDF 澶辫触锛岃绋嶅悗閲嶈瘯',
     })
   } finally {
     isExportingPdf.value = false

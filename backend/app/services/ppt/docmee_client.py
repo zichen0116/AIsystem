@@ -219,6 +219,47 @@ class DocmeeClient:
         data = await self._request("GET", f"/api/ppt/loadPptx?id={ppt_id}", timeout_s=60)
         return data.get("data", {}).get("pptInfo", {})
 
+    @classmethod
+    def pptx_property_matches(cls, pptx_property: str | dict | None, expected_pptx_property: dict | None) -> bool:
+        """Check whether the remote pptxProperty matches the expected latest snapshot."""
+        if expected_pptx_property is None:
+            return True
+        if not pptx_property:
+            return False
+
+        remote_obj = (
+            pptx_property
+            if isinstance(pptx_property, dict)
+            else cls.decompress_pptx_property(pptx_property)
+        )
+        return bool(remote_obj) and remote_obj == expected_pptx_property
+
+    async def wait_until_ppt_ready(
+        self,
+        ppt_id: str,
+        expected_pptx_property: dict | None = None,
+        poll_attempts: int | None = None,
+        poll_delay: float | None = None,
+    ) -> dict:
+        """Poll PPT info until the latest snapshot is uploaded and ready."""
+        poll_attempts = poll_attempts if poll_attempts is not None else settings.DOCMEE_PPTX_POLL_ATTEMPTS
+        poll_delay = poll_delay if poll_delay is not None else settings.DOCMEE_PPTX_POLL_DELAY_SECONDS
+        latest: dict = {}
+
+        for attempt in range(max(poll_attempts, 1)):
+            latest = await self.load_pptx(ppt_id)
+            upload_status = (latest.get("extInfo") or {}).get("uploadStatus")
+            if upload_status == "ready" and self.pptx_property_matches(
+                latest.get("pptxProperty"),
+                expected_pptx_property,
+            ):
+                return latest
+
+            if attempt < poll_attempts - 1 and poll_delay > 0:
+                await asyncio.sleep(poll_delay)
+
+        return latest
+
     async def download_pptx(self, ppt_id: str, refresh: bool = False) -> str:
         """Get PPT download URL."""
         data = await self._request(
