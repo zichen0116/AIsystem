@@ -65,3 +65,28 @@ class LessonPlanSaveResponse(BaseModel):
 class LessonPlanUploadResponse(BaseModel):
     file_id: int
     filename: str
+
+
+class LessonPlanListItem(BaseModel):
+    id: int
+    session_id: str
+    title: str
+    status: str
+    created_at: str
+    updated_at: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LessonPlanListResponse(BaseModel):
+    items: list[LessonPlanListItem]
+    total: int
+
+
+class ChatMessageInfo(BaseModel):
+    role: str
+    content: str
+    created_at: str
+
+
+class LessonPlanMessagesResponse(BaseModel):
+    messages: list[ChatMessageInfo]

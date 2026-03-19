@@ -28,8 +28,10 @@ database_url = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_teaching",
 )
-database_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
-config.set_main_option("sqlalchemy.url", database_url)
+# 替换为异步驱动
+DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+# ConfigParser 将 % 视为插值，密码中含 %40 等需转义为 %%
+config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

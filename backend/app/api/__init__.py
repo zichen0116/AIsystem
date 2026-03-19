@@ -4,7 +4,7 @@ API 路由导出
 from fastapi import APIRouter
 from app.api import auth, courseware, chat, knowledge, libraries, data_analysis
 from app.api import html_upload, html_chat, html_export
-from app.api import lesson_plan, question_generate
+from app.api import lesson_plan, question_generate, mindmap
 from app.api import ppt
 
 api_router = APIRouter()
@@ -22,5 +22,6 @@ api_router.include_router(html_export.router, prefix="/html", tags=["html"])
 api_router.include_router(lesson_plan.router)
 api_router.include_router(question_generate.router)
 api_router.include_router(ppt.router)
+api_router.include_router(mindmap.router)
 
 __all__ = ["api_router"]

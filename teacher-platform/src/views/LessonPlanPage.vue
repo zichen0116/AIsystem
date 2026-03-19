@@ -2,10 +2,14 @@
   <div class="lesson-plan-page">
     <!-- Sidebar -->
     <LessonPlanSidebar
+      ref="sidebarRef"
       :collapsed="sidebarCollapsed"
       :is-overlay="mode === 'writer'"
       @toggle="sidebarCollapsed = !sidebarCollapsed"
       @new-conversation="startNewConversation"
+      @select-history="loadHistorySession"
+      @delete-history="handleDeleteHistory"
+      @toast="showToast"
     />
 
     <!-- Toast notification -->
@@ -15,44 +19,32 @@
 
     <!-- Main content area -->
     <div class="main-area">
-      <transition name="fade" mode="out-in">
-        <!-- Dialog Mode -->
-        <LessonPlanDialog
-          v-if="mode === 'dialog'"
-          key="dialog"
-          ref="dialogRef"
-          :messages="messages"
-          :is-streaming="isSending"
-          :streaming-text="streamingText"
-          :lesson-plan-id="lessonPlanId"
-          @send="handleSend"
-          @send-prompt="handleSendPrompt"
-          @open-document="enterWriterMode"
-          @regenerate="handleRegenerate"
-        />
-
-        <!-- Writer Mode -->
-        <LessonPlanWriter
-          v-else
-          key="writer"
-          ref="writerRef"
+      <keep-alive>
+        <component
+          :is="currentComponent"
+          :ref="mode === 'dialog' ? 'dialogRef' : 'writerRef'"
           :messages="messages"
           :is-streaming="isSending"
           :streaming-text="streamingText"
           :streaming-markdown="streamingMarkdown"
           :lesson-plan-id="lessonPlanId"
+          @send="handleSend"
+          @send-prompt="handleSendPrompt"
+          @open-document="enterWriterMode"
+          @regenerate="handleRegenerate"
           @send-modify="handleModify"
           @back="exitWriterMode"
           @update:markdown="handleMarkdownUpdate"
           @editor-blur="autoSave"
+          @toast="showToast"
         />
-      </transition>
+      </keep-alive>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick } from 'vue'
 import { resolveApiUrl, getToken } from '../api/http.js'
 import LessonPlanSidebar from '../components/lesson-plan-v2/LessonPlanSidebar.vue'
 import LessonPlanDialog from '../components/lesson-plan-v2/LessonPlanDialog.vue'
@@ -76,9 +68,23 @@ const restoredFiles = ref([])
 
 const dialogRef = ref(null)
 const writerRef = ref(null)
+const sidebarRef = ref(null)
 let abortController = null
 let saveTimer = null
 let isFirstMount = true
+
+// Computed property for dynamic component
+const currentComponent = computed(() => {
+  return mode.value === 'dialog' ? LessonPlanDialog : LessonPlanWriter
+})
+
+// Watch mode changes to load content when entering writer mode
+watch(mode, async (newMode) => {
+  if (newMode === 'writer') {
+    await nextTick()
+    writerRef.value?.loadContent(currentMarkdown.value || '')
+  }
+})
 const toastMsg = ref('')
 
 // ----- Reset Key Watch -----
@@ -90,15 +96,12 @@ function enterWriterMode() {
   sidebarCollapsed.value = true
   // Clear streamingText so document content doesn't appear in chat
   streamingText.value = ''
-  nextTick(() => {
-    writerRef.value?.createEditor(currentMarkdown.value || '')
-  })
 }
 
 function exitWriterMode() {
   // Preserve editor content
   const md = writerRef.value?.getMarkdown()
-  if (md) currentMarkdown.value = md
+  if (typeof md === 'string') currentMarkdown.value = md
   writerRef.value?.destroyEditor()
   mode.value = 'dialog'
   sidebarCollapsed.value = false
@@ -205,8 +208,9 @@ function handleSend(payload) {
         messages.value.push({ role: 'assistant', content: streamingMarkdown.value })
       }
       streamingText.value = ''
-      streamingMarkdown.value = ''
+      // Delay clearing streamingMarkdown to allow editor to load first
       nextTick(() => {
+        streamingMarkdown.value = ''
         dialogRef.value?.scrollToBottom()
         writerRef.value?.scrollChatToBottom()
       })
@@ -247,8 +251,11 @@ function handleModify(payload) {
       currentMarkdown.value = streamingMarkdown.value
       messages.value.push({ role: 'assistant', content: '教案已更新。' })
       streamingText.value = ''
-      streamingMarkdown.value = ''
-      nextTick(() => writerRef.value?.scrollChatToBottom())
+      // Delay clearing streamingMarkdown to allow editor to load first
+      nextTick(() => {
+        streamingMarkdown.value = ''
+        writerRef.value?.scrollChatToBottom()
+      })
     },
     (errMsg) => {
       // Rollback on failure
@@ -328,6 +335,66 @@ function startNewConversation() {
   lessonPlanId.value = null
   sessionId.value = null
   isSending.value = false
+  // 刷新侧边栏历史列表
+  sidebarRef.value?.refresh()
+}
+
+// ----- Handle Delete History -----
+function handleDeleteHistory(deletedId) {
+  if (lessonPlanId.value === deletedId) {
+    startNewConversation()
+  }
+}
+
+// ----- Load History Session -----
+async function loadHistorySession(historyItem) {
+  try {
+    // 并行请求详情和消息
+    const [detailRes, messagesRes] = await Promise.all([
+      fetch(resolveApiUrl(`/api/v1/lesson-plan/${historyItem.id}`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+      fetch(resolveApiUrl(`/api/v1/lesson-plan/${historyItem.id}/messages`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }),
+    ])
+
+    if (!detailRes.ok || !messagesRes.ok) {
+      showToast('加载历史会话失败')
+      return
+    }
+
+    const detail = await detailRes.json()
+    const messagesData = await messagesRes.json()
+
+    // 重置状态
+    mode.value = 'dialog'
+    lessonPlanId.value = detail.id
+    sessionId.value = detail.session_id
+    currentMarkdown.value = detail.content || ''
+    streamingMarkdown.value = ''
+    streamingText.value = ''
+    isSending.value = false
+
+    // 过滤消息（去除教案内容）
+    messages.value = messagesData.messages
+      .map(m => ({ role: m.role, content: m.content }))
+      .filter(m => {
+        if (m.role === 'user') return true
+        const isLessonPlan = m.content.trim().startsWith('#') && m.content.length > 100
+        return !isLessonPlan
+      })
+
+    // 插入文档卡片
+    if (currentMarkdown.value) {
+      insertDocumentCard()
+    }
+
+    showToast('已加载历史会话')
+  } catch (err) {
+    console.error('加载历史会话失败:', err)
+    showToast('加载失败，请重试')
+  }
 }
 
 // ----- Load Latest -----
@@ -344,7 +411,18 @@ async function loadLatest() {
       currentMarkdown.value = data.lesson_plan.content || ''
     }
     if (data.messages?.length) {
-      messages.value = data.messages.map(m => ({ role: m.role, content: m.content }))
+      // Filter out lesson plan content from messages
+      messages.value = data.messages
+        .map(m => ({ role: m.role, content: m.content }))
+        .filter(m => {
+          // Keep user messages
+          if (m.role === 'user') return true
+          // Filter out AI messages that are lesson plans (starts with # and long)
+          const isLessonPlan = m.content.trim().startsWith('#') && m.content.length > 100
+          return !isLessonPlan
+        })
+
+      // Insert document card if we have lesson plan content
       if (currentMarkdown.value) {
         insertDocumentCard()
       }
@@ -360,12 +438,14 @@ async function loadLatest() {
 // ----- Lifecycle -----
 onMounted(() => {
   isFirstMount = true
-  loadLatest()
+  // 每次打开页面显示欢迎界面，不自动加载历史
+  startNewConversation()
 })
 
 onActivated(() => {
   if (isFirstMount) { isFirstMount = false; return }
-  loadLatest()
+  // 从其他页面返回时也显示欢迎界面
+  startNewConversation()
 })
 
 onDeactivated(() => {

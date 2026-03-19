@@ -1,13 +1,14 @@
-import json
+﻿import json
 import logging
+import re
 import tempfile
 import uuid
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -27,6 +28,10 @@ from app.schemas.lesson_plan import (
     LessonPlanInfo,
     MessageInfo,
     FileInfo,
+    LessonPlanListResponse,
+    LessonPlanListItem,
+    LessonPlanMessagesResponse,
+    ChatMessageInfo,
 )
 from app.services.lesson_plan_service import (
     LESSON_PLAN_MODIFY_PROMPT,
@@ -146,7 +151,7 @@ async def modify_lesson_plan(req: LessonPlanModifyRequest, user: CurrentUser, db
     for msg in history[:-1]:  # history minus current instruction (already in prompt)
         messages.append({"role": msg["role"], "content": msg["content"]})
 
-    user_msg = f"当前教案内容：\n\n{req.current_content}\n\n"
+    user_msg = f"当前教案内容:\n\n{req.current_content}\n\n"
     if context:
         user_msg += f"参考资料：\n\n{context}\n\n"
     user_msg += f"修改要求：{req.instruction}"
@@ -263,22 +268,170 @@ async def get_latest_lesson_plan(user: CurrentUser, db: DbSession):
     )
 
 
-# --------------- 6. Export DOCX ---------------
+# --------------- 6. List ---------------
+
+@router.get("/list", response_model=LessonPlanListResponse)
+async def list_lesson_plans(user: CurrentUser, db: DbSession):
+    """获取当前用户的所有教案列表，按创建时间倒序"""
+    stmt = select(LessonPlan).where(LessonPlan.user_id == user.id).order_by(LessonPlan.created_at.desc())
+    result = await db.execute(stmt)
+    plans = result.scalars().all()
+
+    items = [
+        LessonPlanListItem(
+            id=p.id,
+            session_id=str(p.session_id),
+            title=p.title,
+            status=p.status,
+            created_at=p.created_at.isoformat(),
+            updated_at=p.updated_at.isoformat(),
+        )
+        for p in plans
+    ]
+
+    return LessonPlanListResponse(items=items, total=len(items))
+
+
+# --------------- 7. Detail ---------------
+
+@router.get("/{lesson_plan_id}", response_model=LessonPlanInfo)
+async def get_lesson_plan_detail(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的详细信息"""
+    result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    return LessonPlanInfo(
+        id=plan.id,
+        session_id=str(plan.session_id),
+        title=plan.title,
+        content=plan.content,
+        status=plan.status,
+    )
+
+
+# --------------- 9. Messages ---------------
+
+@router.get("/{lesson_plan_id}/messages", response_model=LessonPlanMessagesResponse)
+async def get_lesson_plan_messages(lesson_plan_id: int, user: CurrentUser, db: DbSession):
+    """获取指定教案的对话历史"""
+    # 验证教案存在且属于当前用户
+    plan_result = await db.execute(
+        select(LessonPlan).where(LessonPlan.id == lesson_plan_id, LessonPlan.user_id == user.id)
+    )
+    plan = plan_result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 获取对话历史
+    hist_result = await db.execute(
+        select(ChatHistory)
+        .where(ChatHistory.session_id == plan.session_id)
+        .order_by(ChatHistory.created_at)
+    )
+    messages = [
+        ChatMessageInfo(role=h.role, content=h.content, created_at=h.created_at.isoformat())
+        for h in hist_result.scalars().all()
+    ]
+
+    return LessonPlanMessagesResponse(messages=messages)
+
+
+# --------------- 10. Export DOCX ---------------
+
+def _export_docx_with_python_docx(markdown_content: str, output_path: str) -> None:
+    """Best-effort Markdown -> DOCX fallback without pandoc."""
+    from docx import Document
+
+    doc = Document()
+    lines = markdown_content.splitlines()
+
+    task_re = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+(.*)$")
+    bullet_re = re.compile(r"^\s*[-*]\s+(.*)$")
+    ordered_re = re.compile(r"^\s*\d+\.\s+(.*)$")
+
+    for raw in lines:
+        stripped = raw.strip()
+        if not stripped:
+            continue
+
+        if stripped.startswith("### "):
+            doc.add_heading(stripped[4:].strip(), level=3)
+            continue
+        if stripped.startswith("## "):
+            doc.add_heading(stripped[3:].strip(), level=2)
+            continue
+        if stripped.startswith("# "):
+            doc.add_heading(stripped[2:].strip(), level=1)
+            continue
+
+        task_match = task_re.match(stripped)
+        if task_match:
+            checked = task_match.group(1).lower() == "x"
+            text = task_match.group(2).strip()
+            p = doc.add_paragraph(("☑ " if checked else "☐ ") + text)
+            p.style = "List Bullet"
+            continue
+
+        bullet_match = bullet_re.match(stripped)
+        if bullet_match:
+            p = doc.add_paragraph(bullet_match.group(1).strip())
+            p.style = "List Bullet"
+            continue
+
+        ordered_match = ordered_re.match(stripped)
+        if ordered_match:
+            p = doc.add_paragraph(ordered_match.group(1).strip())
+            p.style = "List Number"
+            continue
+
+        doc.add_paragraph(stripped)
+
+    doc.save(output_path)
+
 
 @router.post("/export/docx")
 async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
-    """Convert Markdown to DOCX via pypandoc."""
-    import pypandoc
+    """Convert Markdown to DOCX. Prefer pandoc, fallback to python-docx."""
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         tmp_path = tmp.name
 
     try:
+        last_error = None
+
+        # Primary path: pypandoc + pandoc
         try:
-            pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
-        except OSError:
-            pypandoc.download_pandoc()
-            pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+            import pypandoc
+
+            try:
+                pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+                last_error = None
+            except OSError:
+                try:
+                    pypandoc.download_pandoc()
+                    pypandoc.convert_text(req.content, "docx", format="md", outputfile=tmp_path)
+                    last_error = None
+                except Exception as e:
+                    last_error = e
+            except Exception as e:
+                last_error = e
+        except Exception as e:
+            last_error = e
+
+        # Fallback path: python-docx (no pandoc dependency)
+        if last_error is not None:
+            try:
+                _export_docx_with_python_docx(req.content, tmp_path)
+                last_error = None
+            except Exception as e:
+                last_error = e
+
+        if last_error is not None:
+            raise last_error
 
         return FileResponse(
             tmp_path,
@@ -288,4 +441,41 @@ async def export_docx(req: LessonPlanExportRequest, user: CurrentUser):
         )
     except Exception as e:
         Path(tmp_path).unlink(missing_ok=True)
-        raise HTTPException(500, f"DOCX 导出失败: {e}")
+        raise HTTPException(500, f"DOCX导出失败: {e}")
+
+
+# --------------- 10. Delete ---------------
+
+@router.delete("/{lesson_plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lesson_plan(
+    lesson_plan_id: int,
+    user: CurrentUser,
+    db: DbSession
+):
+    """删除指定的教案记录及其关联数据"""
+    # 查询教案记录
+    result = await db.execute(
+        select(LessonPlan).where(
+            LessonPlan.id == lesson_plan_id,
+            LessonPlan.user_id == user.id
+        )
+    )
+    plan = result.scalar_one_or_none()
+
+    # 验证存在性和所有权
+    if not plan:
+        raise HTTPException(404, "教案不存在")
+
+    # 业务侧手动删除 chat_history，避免共享表被全局外键约束
+    await db.execute(
+        delete(ChatHistory).where(
+            ChatHistory.session_id == plan.session_id,
+            ChatHistory.user_id == user.id,
+        )
+    )
+
+    # 删除教案记录（lesson_plan_references 仍通过 lesson_plan_id 级联删除）
+    await db.delete(plan)
+    await db.commit()
+
+    return None

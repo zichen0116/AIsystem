@@ -15,6 +15,7 @@
       @back="$emit('back')"
       @update:markdown="$emit('update:markdown', $event)"
       @blur="$emit('editor-blur')"
+      @toast="$emit('toast', $event)"
     />
   </div>
 </template>
@@ -32,7 +33,7 @@ defineProps({
   lessonPlanId: { type: [Number, String], default: null },
 })
 
-defineEmits(['send-modify', 'back', 'update:markdown', 'editor-blur'])
+defineEmits(['send-modify', 'back', 'update:markdown', 'editor-blur', 'toast'])
 
 const writerChatRef = ref(null)
 const writerEditorRef = ref(null)

@@ -1,14 +1,23 @@
 <template>
-  <div v-if="headings.length" class="editor-toc">
-    <div class="toc-title">目录</div>
-    <div
-      v-for="(h, i) in headings"
-      :key="i"
-      class="toc-item"
-      :class="[`level-${h.level}`, { active: activeIndex === i }]"
-      @click="$emit('scroll-to', h.pos)"
-    >
-      {{ h.text }}
+  <div
+    v-if="headings.length"
+    class="editor-toc"
+    :class="{ 'toc-visible': isVisible }"
+    @mouseenter="isVisible = true"
+    @mouseleave="isVisible = false"
+  >
+    <div class="toc-trigger"></div>
+    <div class="toc-content">
+      <div class="toc-title">目录</div>
+      <div
+        v-for="(h, i) in headings"
+        :key="i"
+        class="toc-item"
+        :class="[`level-${h.level}`, { active: activeIndex === i }]"
+        @click="$emit('scroll-to', h.pos)"
+      >
+        {{ h.text }}
+      </div>
     </div>
   </div>
 </template>
@@ -24,6 +33,7 @@ const props = defineProps({
 defineEmits(['scroll-to'])
 
 const activeIndex = ref(0)
+const isVisible = ref(false)
 let observer = null
 
 function setupObserver() {
@@ -55,43 +65,102 @@ onBeforeUnmount(() => { observer?.disconnect() })
 
 <style scoped>
 .editor-toc {
-  position: absolute;
-  right: 20px;
-  top: 32px;
-  width: 160px;
-  background: #fff;
-  border: 1px solid #eaedf0;
-  border-radius: 8px;
-  padding: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 40;
+  transition: all 0.3s ease;
 }
+
+.toc-trigger {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  cursor: pointer;
+}
+
+.toc-content {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%) translateX(100%);
+  width: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px 0 0 8px;
+  border-right: none;
+  padding: 16px 12px 16px 16px;
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.08);
+  transition: transform 0.3s ease;
+}
+
+.editor-toc.toc-visible .toc-content {
+  transform: translateY(-50%) translateX(0);
+}
+
 .toc-title {
   font-size: 11px;
-  color: #aaa;
-  font-weight: 500;
-  margin-bottom: 8px;
+  color: rgba(0, 0, 0, 0.4);
+  font-weight: 600;
+  margin-bottom: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
+
 .toc-item {
-  font-size: 12px;
-  color: #666;
-  padding: 3px 0;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  margin-bottom: 2px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: color 0.2s;
+  border-radius: 4px;
+  transition: all 0.2s;
+  line-height: 1.4;
 }
+
 .toc-item:hover {
-  color: #2563eb;
+  background: rgba(0, 0, 0, 0.04);
+  color: rgba(0, 0, 0, 0.8);
 }
+
 .toc-item.active {
-  color: #2563eb;
+  color: rgb(35, 131, 226);
+  background: rgba(35, 131, 226, 0.08);
   font-weight: 500;
 }
+
+.toc-item.level-2 {
+  padding-left: 8px;
+}
+
 .toc-item.level-3 {
-  padding-left: 12px;
+  padding-left: 20px;
+  font-size: 12px;
+}
+
+.toc-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.toc-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.toc-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+}
+
+.toc-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 </style>
