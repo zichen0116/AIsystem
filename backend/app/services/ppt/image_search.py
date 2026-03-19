@@ -1,8 +1,5 @@
 """
-自动配图服务
-
-从大纲中提取页面标题，通过LLM翻译为英文关键词，调用Unsplash搜索横版图片。
-配图失败不阻塞后续流程。
+Automatic image matching for PPT outlines.
 """
 import logging
 import re
@@ -18,20 +15,30 @@ UNSPLASH_API = "https://api.unsplash.com"
 
 
 def extract_page_titles(markdown: str) -> list[str]:
-    """从Markdown大纲中提取页面标题（一级和二级标题）"""
-    titles = []
-    for line in markdown.split("\n"):
-        line = line.strip()
-        match = re.match(r"^#{1,2}\s+(.+)", line)
+    """Extract per-page titles from markdown outline content."""
+    lines = [line.strip() for line in markdown.split("\n") if line.strip()]
+    level3_titles: list[str] = []
+    level2_titles: list[str] = []
+
+    for line in lines:
+        match = re.match(r"^###\s+(.+)", line)
         if match:
             title = match.group(1).strip()
             if title:
-                titles.append(title)
-    return titles
+                level3_titles.append(title)
+            continue
+
+        match = re.match(r"^##\s+(.+)", line)
+        if match:
+            title = match.group(1).strip()
+            if title:
+                level2_titles.append(title)
+
+    return level3_titles or level2_titles
 
 
 async def translate_to_search_keywords(titles: list[str]) -> list[str]:
-    """使用LLM将中文标题翻译为英文图片搜索关键词"""
+    """Translate page titles into concise English search keywords."""
     if not titles:
         return []
     try:
@@ -40,8 +47,8 @@ async def translate_to_search_keywords(titles: list[str]) -> list[str]:
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         )
         prompt = (
-            "将以下PPT页面标题翻译为简短的英文图片搜索关键词（每个标题一行，只输出关键词）：\n"
-            + "\n".join(f"- {t}" for t in titles)
+            "将以下 PPT 页面标题翻译为简短的英文图片搜索关键词（每个标题一行，只输出关键词）：\n"
+            + "\n".join(f"- {title}" for title in titles)
         )
         resp = await client.chat.completions.create(
             model=settings.LLM_MODEL,
@@ -50,43 +57,40 @@ async def translate_to_search_keywords(titles: list[str]) -> list[str]:
             max_tokens=500,
         )
         text = resp.choices[0].message.content.strip()
-        keywords = [line.strip().lstrip("- ").strip() for line in text.split("\n") if line.strip()]
-        return keywords
-    except Exception as e:
-        logger.warning(f"Failed to translate titles to keywords: {e}")
+        return [line.strip().lstrip("- ").strip() for line in text.split("\n") if line.strip()]
+    except Exception as exc:
+        logger.warning(f"Failed to translate titles to keywords: {exc}")
         return titles
 
 
-async def search_unsplash(keyword: str) -> str | None:
-    """搜索Unsplash横版图片，返回图片URL"""
+async def search_unsplash(keyword: str) -> list[str]:
+    """Search Unsplash landscape images and return up to 2 URLs."""
     if not settings.UNSPLASH_ACCESS_KEY:
-        return None
+        return []
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
+            response = await client.get(
                 f"{UNSPLASH_API}/search/photos",
-                params={
-                    "query": keyword,
-                    "orientation": "landscape",
-                    "per_page": 1,
-                },
+                params={"query": keyword, "orientation": "landscape", "per_page": 2},
                 headers={"Authorization": f"Client-ID {settings.UNSPLASH_ACCESS_KEY}"},
             )
-            data = resp.json()
-            results = data.get("results", [])
-            if results:
-                return results[0].get("urls", {}).get("regular", "")
-    except Exception as e:
-        logger.warning(f"Unsplash search failed for '{keyword}': {e}")
-    return None
+            data = response.json()
+            urls = []
+            for item in data.get("results", [])[:2]:
+                url = item.get("urls", {}).get("regular", "")
+                if url:
+                    urls.append(url)
+            return urls
+    except Exception as exc:
+        logger.warning(f"Unsplash search failed for '{keyword}': {exc}")
+        return []
 
 
-async def auto_assign_images(markdown: str) -> dict:
+async def auto_assign_images(markdown: str) -> dict[str, list[str]]:
     """
-    自动配图主入口
+    Match outline pages with image candidates.
 
-    返回: {page_index: image_url} 映射
-    配图失败返回空字典，不抛异常
+    Returns: {"0": [url1, url2], "1": [url1, url2], ...}
     """
     try:
         titles = extract_page_titles(markdown)
@@ -94,15 +98,15 @@ async def auto_assign_images(markdown: str) -> dict:
             return {}
 
         keywords = await translate_to_search_keywords(titles)
-        image_urls = {}
+        image_urls: dict[str, list[str]] = {}
 
-        for i, kw in enumerate(keywords):
-            url = await search_unsplash(kw)
-            if url:
-                image_urls[str(i)] = url
+        for index, keyword in enumerate(keywords):
+            urls = await search_unsplash(keyword)
+            if urls:
+                image_urls[str(index)] = urls
 
-        logger.info(f"Auto image assignment: {len(image_urls)}/{len(titles)} pages got images")
+        logger.info("Auto image assignment: %s/%s pages got images", len(image_urls), len(titles))
         return image_urls
-    except Exception as e:
-        logger.error(f"Auto image assignment failed: {e}")
+    except Exception as exc:
+        logger.error(f"Auto image assignment failed: {exc}")
         return {}

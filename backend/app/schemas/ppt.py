@@ -26,6 +26,7 @@ class PptOutlineBrief(BaseModel):
     version: int
     content: str
     image_urls: dict | None = None
+    outline_payload: dict | None = None
     template_id: str | None = None
     knowledge_library_ids: list | None = None
     is_current: bool
@@ -95,6 +96,7 @@ class OutlineStreamRequest(BaseModel):
 class OutlineApproveRequest(BaseModel):
     content: str | None = None
     image_urls: dict | None = None
+    outline_payload: dict | None = None
 
 
 # ========== PPT生成 ==========
@@ -107,6 +109,8 @@ class PptGenerateRequest(BaseModel):
 
 class PptModifyRequest(BaseModel):
     instruction: str = Field(..., min_length=1)
+    slide_index: int = Field(default=0, ge=0)
+    current_pptx_property: str | None = None
 
 
 # ========== 编辑快照 ==========

@@ -6,9 +6,11 @@ PPT API 路由
 """
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,11 +30,16 @@ from app.schemas.ppt import (
     PptGenerateRequest, PptModifyRequest,
     EditSnapshotRequest, VersionSummary, PptTemplate,
 )
-from app.services.ppt.docmee_client import docmee_client
+from app.services.ppt.docmee_client import describe_exception, docmee_client
 from app.services.ppt.nodes import (
-    generate_outline_streaming, modify_outline_streaming,
+    generate_outline_streaming, modify_slide_json,
 )
 from app.services.ppt.image_search import auto_assign_images
+from app.services.ppt.outline_payload import (
+    markdown_to_outline_payload,
+    outline_payload_has_renderable_content,
+    payload_to_docmee_markdown,
+)
 from app.services.ppt.state import PptAgentState
 
 logger = logging.getLogger(__name__)
@@ -116,6 +123,19 @@ async def list_sessions(
         .order_by(PptSession.updated_at.desc())
     )
     return result.scalars().all()
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除PPT会话及其关联数据"""
+    session = await _get_session_or_404(session_id, user.id, db)
+    await db.delete(session)
+    await db.commit()
+    return {"detail": "已删除"}
 
 
 @router.get("/sessions/{session_id}")
@@ -216,6 +236,7 @@ async def stream_outline(
 
             # 自动配图（不阻塞）
             image_urls = await auto_assign_images(full_outline)
+            outline_payload = markdown_to_outline_payload(full_outline, image_urls=image_urls)
 
             # 计算版本号
             version_result = await db.execute(
@@ -240,6 +261,7 @@ async def stream_outline(
                 version=new_version,
                 content=full_outline,
                 image_urls=image_urls,
+                outline_payload=outline_payload,
                 template_id=body.template_id,
                 knowledge_library_ids=body.knowledge_library_ids,
                 is_current=True,
@@ -253,10 +275,22 @@ async def stream_outline(
             session.status = "outline_ready"
 
             # 保存助手消息
+            intro_msg = PptMessage(
+                session_id=session.id,
+                role="assistant",
+                message_type="text",
+                content="明白了！我已经为你生成了大纲，请查看：",
+            )
+            db.add(intro_msg)
+
             ai_msg = PptMessage(
                 session_id=session.id, role="assistant",
                 message_type="outline", content=full_outline,
-                metadata_={"outline_id": outline.id},
+                metadata_={
+                    "outline_id": outline.id,
+                    "image_urls": image_urls,
+                    "outline_payload": outline_payload,
+                },
             )
             db.add(ai_msg)
             await db.flush()
@@ -266,6 +300,7 @@ async def stream_outline(
                 "outline_id": outline.id,
                 "content": full_outline,
                 "image_urls": image_urls,
+                "outline_payload": outline_payload,
             })
             yield sse_event({"type": "done"})
 
@@ -298,10 +333,22 @@ async def approve_outline(
     if not outline:
         raise HTTPException(status_code=404, detail="大纲不存在")
 
+    next_image_urls = body.image_urls if body.image_urls is not None else outline.image_urls
+
     if body.content:
         outline.content = body.content
     if body.image_urls is not None:
         outline.image_urls = body.image_urls
+    if body.outline_payload is not None:
+        if outline_payload_has_renderable_content(body.outline_payload):
+            outline.outline_payload = body.outline_payload
+            outline.content = payload_to_docmee_markdown(body.outline_payload)
+        else:
+            outline.outline_payload = markdown_to_outline_payload(
+                body.content or outline.content,
+                image_urls=next_image_urls,
+            )
+            outline.content = payload_to_docmee_markdown(outline.outline_payload)
 
     session = await _get_session_or_404(outline.session_id, user.id, db)
     session.status = "outline_ready"
@@ -340,9 +387,24 @@ async def stream_generate_ppt(
     async def event_generator():
         try:
             # 创建Docmee任务
-            task_id = await docmee_client.create_task(
-                content=outline.content, task_type=7
+            if outline_payload_has_renderable_content(outline.outline_payload):
+                outline_markdown = payload_to_docmee_markdown(outline.outline_payload or {})
+            else:
+                outline_markdown = outline.content
+
+            if not outline_markdown.strip() or outline_markdown.strip() == f"# {(outline.outline_payload or {}).get('title', '').strip()}":
+                outline_markdown = outline.content
+            logger.info(
+                "Generating PPT session=%s outline=%s template=%s markdown_len=%s",
+                session.id,
+                outline.id,
+                template_id,
+                len(outline_markdown or ""),
             )
+            task_id = await docmee_client.create_task(
+                content=outline_markdown, task_type=7
+            )
+            logger.info("Docmee task created session=%s task_id=%s", session.id, task_id)
 
             # 计算版本号
             ver_result = await db.execute(
@@ -384,11 +446,31 @@ async def stream_generate_ppt(
             ppt_info = await docmee_client.generate_pptx(
                 task_id=task_id,
                 template_id=template_id,
-                markdown=outline.content,
+                markdown=outline_markdown,
+            )
+            logger.info(
+                "Docmee generatePptx returned session=%s task_id=%s keys=%s",
+                session.id,
+                task_id,
+                sorted((ppt_info or {}).keys()),
             )
 
+            ppt_info = await docmee_client.finalize_ppt_info(ppt_info)
             ppt_id = ppt_info.get("id", "")
-            pptx_property = ppt_info.get("pptxProperty", "")
+            pptx_property = ppt_info.get("pptxProperty") or ""
+            logger.info(
+                "Docmee finalized session=%s ppt_id=%s has_pptx=%s has_file_url=%s",
+                session.id,
+                ppt_id or "<empty>",
+                bool(pptx_property),
+                bool(ppt_info.get("fileUrl")),
+            )
+
+            if not ppt_id:
+                raise RuntimeError("PPT 生成失败：未获取到文多多 PPT ID")
+
+            if not pptx_property:
+                raise RuntimeError("PPT 生成失败：预览数据尚未就绪，请稍后重试")
 
             # 更新结果
             ppt_result.docmee_ppt_id = ppt_id
@@ -396,19 +478,17 @@ async def stream_generate_ppt(
             ppt_result.status = "completed"
             ppt_result.completed_at = datetime.now(timezone.utc)
 
-            # 解压获取页数
-            if pptx_property:
-                pptx_obj = docmee_client.decompress_pptx_property(pptx_property)
-                pages = pptx_obj.get("slides", [])
-                ppt_result.total_pages = len(pages)
-                ppt_result.current_page = len(pages)
+            page_count = docmee_client.get_page_count(pptx_property)
+            ppt_result.total_pages = page_count
+            ppt_result.current_page = page_count
 
-            # 获取下载地址
-            try:
-                file_url = await docmee_client.download_pptx(ppt_id)
-                ppt_result.file_url = file_url
-            except Exception:
-                pass
+            file_url = ppt_info.get("fileUrl") or ""
+            if not file_url:
+                try:
+                    file_url = await docmee_client.download_pptx(ppt_id)
+                except Exception:
+                    file_url = ""
+            ppt_result.file_url = file_url or None
 
             session.current_result_id = ppt_result.id
             session.status = "preview_ready"
@@ -434,9 +514,14 @@ async def stream_generate_ppt(
             yield sse_event({"type": "done"})
 
         except Exception as e:
-            logger.error(f"PPT生成失败: {e}")
+            logger.exception(
+                "PPT generation failed session=%s outline=%s error=%s",
+                session.id,
+                outline.id,
+                describe_exception(e),
+            )
             session.status = "failed"
-            yield sse_event({"type": "error", "message": str(e)})
+            yield sse_event({"type": "error", "message": describe_exception(e)})
 
     return StreamingResponse(
         event_generator(),
@@ -454,7 +539,7 @@ async def modify_ppt(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """在当前PPT基础上继续修改，生成新版本"""
+    """直接修改当前 PPT JSON，并返回新的预览结构。"""
     result = await db.execute(
         select(PptResult)
         .join(PptSession, PptResult.session_id == PptSession.id)
@@ -465,82 +550,57 @@ async def modify_ppt(
         raise HTTPException(status_code=404, detail="PPT结果不存在")
 
     session = await _get_session_or_404(ppt_result.session_id, user.id, db)
-    outline_result = await db.execute(
-        select(PptOutline).where(PptOutline.id == ppt_result.outline_id)
-    )
-    current_outline = outline_result.scalar_one_or_none()
-
     user_msg = PptMessage(
         session_id=session.id, role="user",
         message_type="text", content=body.instruction,
     )
     db.add(user_msg)
-    session.status = "generating_outline"
+    session.status = "editing_ppt"
+    await db.flush()
+    encoded = (
+        body.current_pptx_property
+        or ppt_result.edited_pptx_property
+        or ppt_result.source_pptx_property
+    )
+    if not encoded:
+        raise HTTPException(status_code=400, detail="当前 PPT 预览数据不存在")
+
+    pptx_obj = docmee_client.decompress_pptx_property(encoded)
+    pages = pptx_obj.get("pages") or []
+    if body.slide_index >= len(pages):
+        raise HTTPException(status_code=400, detail="页码超出范围")
+
+    updated_page = await modify_slide_json(
+        instruction=body.instruction,
+        pptx_obj=pptx_obj,
+        slide_index=body.slide_index,
+    )
+    pages[body.slide_index] = updated_page
+    pptx_obj["pages"] = pages
+
+    edited_pptx_property = docmee_client.compress_pptx_property(pptx_obj)
+    ppt_result.edited_pptx_property = edited_pptx_property
+    ppt_result.current_page = min(body.slide_index + 1, len(pages))
+    ppt_result.total_pages = len(pages)
+    session.status = "preview_ready"
+
+    assistant_msg = PptMessage(
+        session_id=session.id,
+        role="assistant",
+        message_type="text",
+        content=f"已根据你的要求更新第 {body.slide_index + 1} 页内容。",
+        metadata_={"result_id": ppt_result.id, "slide_index": body.slide_index},
+    )
+    db.add(assistant_msg)
     await db.flush()
 
-    state: PptAgentState = {
-        "session_id": session.id, "user_id": user.id, "messages": [],
-        "user_input": body.instruction, "selected_library_ids": [],
-        "retrieved_context": "",
-        "template_id": current_outline.template_id if current_outline else None,
-        "outline_markdown": current_outline.content if current_outline else "",
-        "outline_id": current_outline.id if current_outline else None,
-        "outline_approved": False, "image_urls": {},
-        "result_id": ppt_result.id, "docmee_task_id": None,
-        "next_action": "modify", "error_message": "",
+    return {
+        "result_id": ppt_result.id,
+        "slide_index": body.slide_index,
+        "pptx_property": edited_pptx_property,
+        "total_pages": len(pages),
+        "message": assistant_msg.content,
     }
-
-    async def modify_event_generator():
-        try:
-            yield sse_event({"type": "meta", "session_id": session.id})
-            full_outline = ""
-            async for chunk in modify_outline_streaming(state):
-                full_outline += chunk
-                yield sse_event({"type": "outline_chunk", "content": chunk})
-
-            image_urls = await auto_assign_images(full_outline)
-
-            ver_result = await db.execute(
-                select(PptOutline)
-                .where(PptOutline.session_id == session.id)
-                .order_by(PptOutline.version.desc())
-            )
-            last = ver_result.scalars().first()
-            new_ver = (last.version + 1) if last else 1
-
-            await db.execute(
-                update(PptOutline)
-                .where(PptOutline.session_id == session.id)
-                .values(is_current=False)
-            )
-            new_outline = PptOutline(
-                session_id=session.id, version=new_ver,
-                content=full_outline, image_urls=image_urls,
-                template_id=current_outline.template_id if current_outline else None,
-                is_current=True,
-            )
-            db.add(new_outline)
-            await db.flush()
-            await db.refresh(new_outline)
-
-            session.current_outline_id = new_outline.id
-            session.status = "outline_ready"
-            await db.flush()
-
-            yield sse_event({
-                "type": "outline_ready", "outline_id": new_outline.id,
-                "content": full_outline, "image_urls": image_urls,
-            })
-            yield sse_event({"type": "done"})
-        except Exception as e:
-            logger.error(f"PPT修改失败: {e}")
-            yield sse_event({"type": "error", "message": str(e)})
-
-    return StreamingResponse(
-        modify_event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 # ========== 编辑快照与结果 ==========
@@ -649,3 +709,50 @@ async def get_versions(
             created_at=r.created_at, completed_at=r.completed_at,
         ))
     return VersionSummary(outline_versions=outline_briefs, result_versions=result_briefs)
+
+
+# ========== 文件上传 ==========
+
+@router.post("/sessions/{session_id}/upload")
+async def upload_session_file(
+    session_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    file: UploadFile = File(...),
+):
+    """上传参考文件到PPT会话，解析内容后存储"""
+    await _get_session_or_404(session_id, user.id, db)
+
+    upload_dir = Path("uploads/ppt")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix
+    dest = upload_dir / f"{uuid.uuid4()}{suffix}"
+    content_bytes = await file.read()
+    dest.write_bytes(content_bytes)
+
+    parsed = ""
+    try:
+        from app.services.parsers.factory import ParserFactory
+        result = await ParserFactory.parse_file(str(dest))
+        if result and result.chunks:
+            parsed = "\n\n".join(c.content for c in result.chunks)
+    except Exception as e:
+        logger.warning(f"Parse failed for {file.filename}: {e}")
+        parsed = content_bytes.decode("utf-8", errors="ignore")[:2000]
+
+    # 将解析内容作为消息存入会话
+    msg = PptMessage(
+        session_id=session_id,
+        role="user",
+        message_type="file",
+        content=f"[上传文件: {file.filename}]",
+        metadata_={"filename": file.filename, "file_path": str(dest), "parsed_preview": parsed[:500]},
+    )
+    db.add(msg)
+    await db.commit()
+
+    return {
+        "filename": file.filename,
+        "file_path": str(dest),
+        "parsed_length": len(parsed),
+    }

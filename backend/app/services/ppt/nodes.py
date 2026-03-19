@@ -4,6 +4,7 @@ PPT LangGraph 节点实现
 围绕业务主链路：知识检索 -> 大纲生成 -> 自动配图 -> 审批中断 -> PPT生成
 """
 import logging
+import json
 from typing import AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -132,3 +133,60 @@ async def modify_outline_streaming(state: PptAgentState) -> AsyncIterator[str]:
         delta = chunk.choices[0].delta
         if delta.content:
             yield delta.content
+
+
+async def modify_slide_json(
+    instruction: str,
+    pptx_obj: dict,
+    slide_index: int,
+) -> dict:
+    """基于当前单页 JSON 直接修改 PPT 页面结构。"""
+    pages = pptx_obj.get("pages") or []
+    if slide_index < 0 or slide_index >= len(pages):
+        raise ValueError("slide_index out of range")
+
+    current_page = pages[slide_index]
+    client = _get_llm_client()
+    response = await client.chat.completions.create(
+        model=settings.LLM_MODEL,
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是 PPT JSON 编辑助手。"
+                    "用户会给你一页当前 PPT 的 page JSON 和修改要求。"
+                    "你必须只返回修改后的单页 JSON 对象，不要返回 markdown，不要解释。"
+                    "必须保留页面现有的 id、pid、type、extInfo、children 等结构，"
+                    "只做满足要求所需的最小修改，确保结果仍然是合法 JSON。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "instruction": instruction,
+                        "slide_index": slide_index,
+                        "total_slides": len(pages),
+                        "current_page": current_page,
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    )
+
+    content = (response.choices[0].message.content or "").strip()
+    if not content:
+        raise RuntimeError("LLM 未返回页面 JSON")
+
+    try:
+        updated_page = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("LLM 返回的页面 JSON 解析失败") from exc
+
+    if not isinstance(updated_page, dict):
+        raise RuntimeError("LLM 返回的页面结构无效")
+
+    return updated_page

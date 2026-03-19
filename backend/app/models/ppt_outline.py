@@ -42,6 +42,12 @@ class PptOutline(Base):
         default=dict,
         comment="自动配图结果，格式: {page_index: image_url}"
     )
+    outline_payload: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=dict,
+        comment="结构化大纲卡片真源数据"
+    )
     template_id: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
