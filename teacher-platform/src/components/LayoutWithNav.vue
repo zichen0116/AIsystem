@@ -45,7 +45,7 @@ function isPrimaryActive(item) {
 }
 
 function goToPrimary(path) {
-  if (!path.startsWith('/lesson-prep')) lessonPrepOpen.value = false
+  if (!path.startsWith('/lesson-prep') && path !== '/ppt') lessonPrepOpen.value = false
   router.push(path)
 }
 
@@ -58,12 +58,13 @@ const lessonPrepTabs = [
   { id: 'data', label: '数据分析', icon: 'data' }
 ]
 
-const isLessonPrepRoute = computed(() => route.path.startsWith('/lesson-prep'))
+const isLessonPrepRoute = computed(() => route.path.startsWith('/lesson-prep') || route.path === '/ppt')
 const activeLessonPrepTab = computed(() => {
+  if (route.path === '/ppt') return 'ppt'
   const t = route.query.tab
   const tab = typeof t === 'string' ? t : ''
   const valid = lessonPrepTabs.map(i => i.id)
-  return valid.includes(tab) ? tab : 'ppt'
+  return valid.includes(tab) ? tab : 'lesson-plan'
 })
 
 const lessonPrepOpen = ref(false)
@@ -79,13 +80,17 @@ function toggleLessonPrep() {
 
 function goToLessonPrepTab(id) {
   lessonPrepOpen.value = true
-  router.push({ path: '/lesson-prep', query: { ...route.query, tab: id } })
+  if (id === 'ppt') {
+    router.push('/ppt')
+  } else {
+    router.push({ path: '/lesson-prep', query: { ...route.query, tab: id } })
+  }
 }
 
 watch(
   () => route.path,
   (p) => {
-    if (!p.startsWith('/lesson-prep')) lessonPrepOpen.value = false
+    if (!p.startsWith('/lesson-prep') && p !== '/ppt') lessonPrepOpen.value = false
   }
 )
 

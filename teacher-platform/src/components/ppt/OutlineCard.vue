@@ -1,53 +1,114 @@
 <template>
-  <div class="outline-card" :class="{ 'is-current': outline.is_current }">
-    <div class="card-header">
-      <span class="version-badge">v{{ outline.version }}</span>
-      <span v-if="outline.is_current" class="current-tag">当前版本</span>
-    </div>
-
-    <div class="card-body">
-      <!-- 查看模式 -->
-      <div v-if="!editing" class="outline-content" v-html="renderedContent" />
-      <!-- 编辑模式 -->
-      <textarea
-        v-else
-        v-model="editContent"
-        class="outline-editor"
-        rows="12"
-        placeholder="编辑大纲内容..."
-      />
-    </div>
-
-    <!-- 配图预览 -->
-    <div v-if="imageUrls.length" class="image-grid">
-      <div v-for="(url, idx) in imageUrls" :key="idx" class="image-thumb">
-        <img :src="url" alt="配图" @error="onImgError" />
+  <div class="outline-card">
+    <div class="outline-header">
+      <div class="outline-title">PPT大纲</div>
+      <div class="outline-actions">
+        <button v-if="!editing" class="outline-btn" @click="$emit('regenerate')">重新生成</button>
+        <button v-if="!editing && editable" class="outline-btn" @click="startEdit">编辑</button>
+        <button v-if="editing" class="outline-btn" @click="cancelEdit">取消</button>
+        <button v-if="editing" class="outline-btn" @click="saveEdit">保存</button>
+        <button v-if="showApprove && !editing" class="outline-btn primary" @click="handleApprove">确认生成PPT</button>
       </div>
     </div>
 
-    <!-- 操作按钮 -->
-    <div class="card-footer">
-      <button v-if="editable && !editing" class="btn btn-edit" @click="startEdit">
-        编辑
-      </button>
-      <button v-if="editing" class="btn btn-save" @click="saveEdit">
-        保存
-      </button>
-      <button v-if="editing" class="btn btn-cancel" @click="cancelEdit">
-        取消
-      </button>
-      <button v-if="showApprove && !editing" class="btn btn-approve" @click="handleApprove">
-        审批通过
-      </button>
+    <div v-if="editing" class="outline-form">
+      <div class="field">
+        <label>主题</label>
+        <input v-model="draft.title" class="field-input" />
+      </div>
+    </div>
+
+    <div class="outline-sections">
+      <section
+        v-for="(section, sectionIndex) in workingSections"
+        :key="section.id || `section-${sectionIndex}`"
+        class="outline-section"
+      >
+        <div class="section-title-row">
+          <input v-if="editing" v-model="section.title" class="field-input section-input" />
+          <h3 v-else class="section-title">{{ section.title }}</h3>
+        </div>
+
+        <article
+          v-for="(page, pageIndex) in section.pages || []"
+          :key="page.id || `page-${sectionIndex}-${pageIndex}`"
+          class="outline-page"
+        >
+          <div class="page-title-row">
+            <input v-if="editing" v-model="page.title" class="field-input page-input" />
+            <h4 v-else class="page-title">{{ page.title }}</h4>
+          </div>
+
+          <div v-if="editing" class="field">
+            <label>副标题</label>
+            <input v-model="page.subtitle" class="field-input" />
+          </div>
+          <div v-else-if="page.subtitle" class="page-subtitle">{{ page.subtitle }}</div>
+
+          <div
+            v-for="(block, blockIndex) in page.blocks || []"
+            :key="block.id || `block-${blockIndex}`"
+            class="page-block"
+          >
+            <input
+              v-if="editing"
+              v-model="block.title"
+              class="field-input block-input"
+              placeholder="段落标题"
+            />
+            <div v-else-if="block.title" class="block-title">{{ block.title }}</div>
+
+            <textarea
+              v-if="editing"
+              :value="formatBlockContent(block.content)"
+              class="field-textarea"
+              rows="4"
+              placeholder="段落内容，每行会转成一个要点"
+              @input="updateBlockContent(block, $event.target.value)"
+            />
+            <ul v-else class="block-list">
+              <li v-for="(item, itemIndex) in normalizeBlockContent(block.content)" :key="itemIndex">{{ item }}</li>
+            </ul>
+          </div>
+
+          <div v-if="(page.image_candidates || []).length" class="image-chooser">
+            <div class="image-label">配图选择</div>
+            <div class="image-grid">
+              <button
+                v-for="(image, imageIndex) in page.image_candidates"
+                :key="image.id || imageIndex"
+                type="button"
+                class="image-option"
+                :class="{ selected: page.selected_image_id === image.id }"
+                @click="selectImage(page, image.id)"
+              >
+                <img :src="image.url" :alt="`候选配图 ${imageIndex + 1}`" />
+                <span>配图{{ imageIndex + 1 }}</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="skip-image-btn"
+              :class="{ selected: !page.selected_image_id }"
+              @click="selectImage(page, null)"
+            >
+              不选图
+            </button>
+          </div>
+        </article>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import MarkdownIt from 'markdown-it'
-
-const md = new MarkdownIt({ html: false, breaks: true, linkify: true })
+import { computed, ref, watch } from 'vue'
+import {
+  cloneOutlinePayload,
+  hasRenderableOutlinePayload,
+  markdownToOutlinePayload,
+  payloadToMarkdown,
+} from '../../utils/pptOutlineCard.js'
 
 const props = defineProps({
   outline: { type: Object, required: true },
@@ -55,180 +116,296 @@ const props = defineProps({
   showApprove: { type: Boolean, default: true },
 })
 
-const emit = defineEmits(['approve', 'edit'])
+const emit = defineEmits(['approve', 'edit', 'regenerate'])
 
 const editing = ref(false)
-const editContent = ref('')
+const draft = ref(createDraft())
 
-const imageUrls = computed(() => {
-  return Array.isArray(props.outline.image_urls) ? props.outline.image_urls : []
+const activePayload = computed(() => {
+  if (editing.value) return draft.value
+  return resolveOutlinePayload()
 })
 
-const renderedContent = computed(() => {
-  const raw = props.outline.content || ''
-  return md.render(raw)
-})
+const workingSections = computed(() => activePayload.value.sections || [])
 
-function startEdit() {
-  editContent.value = props.outline.content || ''
-  editing.value = true
+watch(
+  () => props.outline,
+  () => {
+    if (!editing.value) {
+      draft.value = createDraft()
+    }
+  },
+  { deep: true },
+)
+
+function createFallbackPayload() {
+  return markdownToOutlinePayload(props.outline.content || '', props.outline.image_urls || {})
 }
 
-function saveEdit() {
-  emit('edit', editContent.value)
-  editing.value = false
+function resolveOutlinePayload() {
+  if (hasRenderableOutlinePayload(props.outline.outline_payload)) {
+    return props.outline.outline_payload
+  }
+  return createFallbackPayload()
+}
+
+function createDraft() {
+  return cloneOutlinePayload(resolveOutlinePayload())
+}
+
+function startEdit() {
+  draft.value = createDraft()
+  editing.value = true
 }
 
 function cancelEdit() {
   editing.value = false
-  editContent.value = ''
+  draft.value = createDraft()
+}
+
+function saveEdit() {
+  const outlinePayload = cloneOutlinePayload(draft.value)
+  emit('edit', {
+    content: payloadToMarkdown(outlinePayload),
+    outline_payload: outlinePayload,
+    image_urls: buildImagePayload(outlinePayload),
+  })
+  editing.value = false
 }
 
 function handleApprove() {
+  const outlinePayload = cloneOutlinePayload(activePayload.value)
   emit('approve', {
-    content: props.outline.content,
-    image_urls: imageUrls.value,
+    content: payloadToMarkdown(outlinePayload),
+    outline_payload: outlinePayload,
+    image_urls: buildImagePayload(outlinePayload),
   })
 }
 
-function onImgError(e) {
-  e.target.style.display = 'none'
+function normalizeBlockContent(content) {
+  if (Array.isArray(content)) return content.filter(Boolean)
+  return String(content || '').split('\n').map(item => item.trim()).filter(Boolean)
+}
+
+function formatBlockContent(content) {
+  return normalizeBlockContent(content).join('\n')
+}
+
+function updateBlockContent(block, value) {
+  block.content = value
+    .split('\n')
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function selectImage(page, imageId) {
+  if (!editing.value) {
+    const outlinePayload = cloneOutlinePayload(resolveOutlinePayload())
+    for (const section of outlinePayload.sections || []) {
+      const targetPage = (section.pages || []).find(item => item.id === page.id)
+      if (targetPage) {
+        targetPage.selected_image_id = imageId
+      }
+    }
+    emit('edit', {
+      content: payloadToMarkdown(outlinePayload),
+      outline_payload: outlinePayload,
+      image_urls: buildImagePayload(outlinePayload),
+    })
+    return
+  }
+  page.selected_image_id = imageId
+}
+
+function buildImagePayload(payload) {
+  const imageMap = {}
+  let pageCursor = 0
+  for (const section of payload.sections || []) {
+    for (const page of section.pages || []) {
+      const candidates = page.image_candidates || []
+      if (candidates.length) {
+        imageMap[String(pageCursor)] = candidates.map(item => item.url)
+      }
+      pageCursor += 1
+    }
+  }
+  return imageMap
 }
 </script>
 
 <style scoped>
 .outline-card {
+  width: min(1180px, 100%);
+  margin: 24px 0;
+  padding: 28px;
   background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  padding: 20px;
-  transition: box-shadow 0.2s;
-}
-.outline-card.is-current {
-  border: 2px solid #3a61ea;
-}
-.outline-card:hover {
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  border-radius: 18px;
+  border: 1px solid #e8ecf4;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
 }
 
-.card-header {
+.outline-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.version-badge {
-  display: inline-block;
-  padding: 2px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #3a61ea;
-  background: #eef2ff;
-  border-radius: 20px;
-}
-.current-tag {
-  font-size: 12px;
-  color: #16a34a;
-  font-weight: 500;
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
-.card-body {
-  min-height: 80px;
-}
-.outline-content {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #333;
-  word-break: break-word;
-}
-.outline-content :deep(h1),
-.outline-content :deep(h2),
-.outline-content :deep(h3) {
-  margin: 12px 0 6px;
-  color: #1a1a1a;
-}
-.outline-content :deep(ul),
-.outline-content :deep(ol) {
-  padding-left: 20px;
-}
-.outline-content :deep(p) {
-  margin: 6px 0;
+.outline-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
 }
 
-.outline-editor {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 12px;
-  font-size: 14px;
-  line-height: 1.6;
-  border: 1px solid #d0d5dd;
-  border-radius: 8px;
-  resize: vertical;
-  font-family: inherit;
-  color: #333;
-  outline: none;
-  transition: border-color 0.2s;
+.outline-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.outline-editor:focus {
+
+.outline-btn {
+  padding: 10px 16px;
+  border: 1px solid #d7deea;
+  background: #fff;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.outline-btn.primary {
+  background: #3a61ea;
+  color: #fff;
   border-color: #3a61ea;
 }
 
-/* 配图网格 */
-.image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-  gap: 8px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid #f0f0f0;
-}
-.image-thumb {
-  aspect-ratio: 1;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #f5f5f5;
-}
-.image-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.outline-form,
+.outline-page,
+.outline-section {
+  display: flex;
+  flex-direction: column;
 }
 
-/* 底部按钮 */
-.card-footer {
+.outline-sections {
+  gap: 22px;
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid #f0f0f0;
+  flex-direction: column;
 }
-.btn {
-  padding: 6px 16px;
+
+.outline-section {
+  gap: 14px;
+}
+
+.outline-page {
+  gap: 12px;
+  padding: 18px;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.section-title,
+.page-title,
+.block-title {
+  margin: 0;
+  color: #111827;
+}
+
+.section-title {
+  font-size: 18px;
+}
+
+.page-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.page-subtitle {
+  font-size: 14px;
+  color: #667085;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-input,
+.field-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.field-textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+.block-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #334155;
+}
+
+.image-chooser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.image-label {
   font-size: 13px;
-  border: none;
-  border-radius: 6px;
+  font-weight: 600;
+  color: #667085;
+}
+
+.image-grid {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.image-option {
+  width: 144px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 8px;
+  background: #fff;
   cursor: pointer;
-  font-weight: 500;
-  transition: background 0.2s, opacity 0.2s;
 }
-.btn:hover {
-  opacity: 0.85;
+
+.image-option.selected,
+.skip-image-btn.selected {
+  border-color: #3a61ea;
+  box-shadow: 0 0 0 3px rgba(58, 97, 234, 0.12);
 }
-.btn-edit {
-  background: #f0f4ff;
-  color: #3a61ea;
+
+.image-option img {
+  width: 100%;
+  height: 92px;
+  object-fit: cover;
+  border-radius: 8px;
+  display: block;
 }
-.btn-save {
-  background: #3a61ea;
-  color: #fff;
+
+.image-option span {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #475467;
 }
-.btn-cancel {
-  background: #f3f4f6;
-  color: #666;
-}
-.btn-approve {
-  background: #16a34a;
-  color: #fff;
-  margin-left: auto;
+
+.skip-image-btn {
+  align-self: flex-start;
+  border: 1px solid #d7deea;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
 }
 </style>

@@ -29,12 +29,31 @@ export function getSessionDetail(sessionId) {
   return apiRequest(`/api/v1/ppt/sessions/${sessionId}`)
 }
 
+export function deleteSession(sessionId) {
+  return apiRequest(`/api/v1/ppt/sessions/${sessionId}`, { method: 'DELETE' })
+}
+
 // ========== 大纲 ==========
 
-export function approveOutline(outlineId, content = null, imageUrls = null) {
+function normalizeImageUrlsPayload(imageUrls) {
+  if (imageUrls == null) return null
+  if (Array.isArray(imageUrls)) {
+    return Object.fromEntries(
+      imageUrls
+        .filter(Boolean)
+        .map((url, index) => [String(index), url])
+    )
+  }
+  if (typeof imageUrls === 'object') return imageUrls
+  return null
+}
+
+export function approveOutline(outlineId, content = null, imageUrls = null, outlinePayload = null) {
   const body = {}
   if (content !== null) body.content = content
-  if (imageUrls !== null) body.image_urls = imageUrls
+  const normalizedImageUrls = normalizeImageUrlsPayload(imageUrls)
+  if (normalizedImageUrls !== null) body.image_urls = normalizedImageUrls
+  if (outlinePayload !== null) body.outline_payload = outlinePayload
   return apiRequest(`/api/v1/ppt/outlines/${outlineId}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -56,6 +75,18 @@ export function saveEditSnapshot(resultId, editedPptxProperty) {
   })
 }
 
+export function modifyPptResult(resultId, instruction, slideIndex, currentPptxProperty) {
+  return apiRequest(`/api/v1/ppt/results/${resultId}/modify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      instruction,
+      slide_index: slideIndex,
+      current_pptx_property: currentPptxProperty,
+    }),
+  })
+}
+
 export function downloadResult(resultId) {
   return apiRequest(`/api/v1/ppt/results/${resultId}/download`, { method: 'POST' })
 }
@@ -64,6 +95,17 @@ export function downloadResult(resultId) {
 
 export function getVersions(sessionId) {
   return apiRequest(`/api/v1/ppt/sessions/${sessionId}/versions`)
+}
+
+// ========== 文件上传 ==========
+
+export async function uploadFile(sessionId, file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return authFetch(`/api/v1/ppt/sessions/${sessionId}/upload`, {
+    method: 'POST',
+    body: formData,
+  }).then(r => r.json())
 }
 
 // ========== 流式请求 (fetch + reader) ==========

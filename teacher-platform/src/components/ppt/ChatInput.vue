@@ -1,25 +1,48 @@
 <template>
-  <div class="chat-input">
-    <input
-      class="chat-input__field"
-      :value="modelValue"
-      :placeholder="placeholder"
-      :disabled="disabled || loading"
-      @input="$emit('update:modelValue', $event.target.value)"
-      @keydown.enter.exact.prevent="handleSend"
-    />
-    <button
-      class="chat-input__btn"
-      :disabled="disabled || loading || !modelValue?.trim()"
-      @click="handleSend"
-    >
-      <span v-if="loading" class="chat-input__spinner" />
-      <span v-else>发送</span>
-    </button>
+  <div class="chat-input-wrap">
+    <div class="input-wrapper" :class="{ focused }">
+      <textarea
+        ref="textareaRef"
+        class="main-input"
+        :value="modelValue"
+        :placeholder="placeholder"
+        :disabled="disabled || loading"
+        @input="$emit('update:modelValue', $event.target.value)"
+        @keydown.enter.exact.prevent="handleSend"
+        @focus="focused = true"
+        @blur="focused = false"
+      />
+      <div class="input-actions">
+        <div class="input-tools">
+          <div class="input-tool" @click="$emit('open-file-upload')">
+            <span>📎</span> 上传文件
+          </div>
+          <div class="input-tool" @click="$emit('open-image-upload')">
+            <span>🖼️</span> 上传图片
+          </div>
+          <div class="input-tool" @click="$emit('open-voice')">
+            <span>🎤</span> 语音输入
+          </div>
+          <div class="input-tool" @click="$emit('open-knowledge')">
+            <span>📚</span> 选择知识库
+          </div>
+        </div>
+        <button
+          class="send-btn"
+          :disabled="disabled || loading || !modelValue?.trim()"
+          @click="handleSend"
+        >
+          <span v-if="loading" class="send-spinner" />
+          <span v-else>发送</span>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
+import { ref } from 'vue'
+
 const props = defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '输入消息...' },
@@ -27,7 +50,13 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:modelValue', 'send'])
+const emit = defineEmits([
+  'update:modelValue', 'send',
+  'open-file-upload', 'open-image-upload', 'open-voice', 'open-knowledge',
+])
+
+const focused = ref(false)
+const textareaRef = ref(null)
 
 function handleSend() {
   if (props.disabled || props.loading || !props.modelValue?.trim()) return
@@ -36,58 +65,89 @@ function handleSend() {
 </script>
 
 <style scoped>
-.chat-input {
-  display: flex;
-  gap: 8px;
-  padding: 12px 16px;
-  border-top: 1px solid #e8e8e8;
+.chat-input-wrap {
+  padding: 20px;
   background: #fff;
+  border-top: 1px solid #e5e5e5;
+  flex-shrink: 0;
 }
-
-.chat-input__field {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #dcdfe6;
-  border-radius: 8px;
-  font-size: 14px;
-  outline: none;
+.input-wrapper {
+  background: #fff;
+  border: 2px solid #e5e5e5;
+  border-radius: 12px;
+  padding: 16px;
   transition: border-color 0.2s;
 }
-
-.chat-input__field:focus {
-  border-color: #409eff;
+.input-wrapper.focused {
+  border-color: #3a61ea;
 }
-
-.chat-input__field:disabled {
-  background: #f5f7fa;
+.main-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  font-size: 15px;
+  resize: none;
+  min-height: 60px;
+  font-family: inherit;
+  color: #1a1a1a;
+  line-height: 1.5;
+}
+.main-input::placeholder {
+  color: #999;
+}
+.main-input:disabled {
+  background: transparent;
   cursor: not-allowed;
 }
-
-.chat-input__btn {
-  padding: 8px 20px;
-  border: none;
-  border-radius: 8px;
-  background: #409eff;
-  color: #fff;
+.input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+.input-tools {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.input-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
   font-size: 14px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: color 0.2s;
+  user-select: none;
+}
+.input-tool:hover {
+  color: #3a61ea;
+}
+.send-btn {
+  padding: 8px 24px;
+  background: #3a61ea;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 500;
+  min-width: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 64px;
+  transition: background 0.2s;
 }
-
-.chat-input__btn:hover:not(:disabled) {
-  background: #337ecc;
+.send-btn:hover:not(:disabled) {
+  background: #2a4bc8;
 }
-
-.chat-input__btn:disabled {
-  background: #a0cfff;
+.send-btn:disabled {
+  background: #a0b4f0;
   cursor: not-allowed;
 }
-
-.chat-input__spinner {
+.send-spinner {
   width: 16px;
   height: 16px;
   border: 2px solid #fff;
@@ -95,7 +155,6 @@ function handleSend() {
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
-
 @keyframes spin {
   to { transform: rotate(360deg); }
 }

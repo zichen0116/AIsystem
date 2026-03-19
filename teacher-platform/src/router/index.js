@@ -6,6 +6,12 @@ const routes = [
   { path: '/', name: 'Home', component: () => import('../views/Home.vue') },
   { path: '/login', name: 'Login', component: () => import('../views/LoginView.vue') },
   {
+    path: '/ppt',
+    name: 'PptGenerate',
+    component: () => import('../views/LessonPrepPpt.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
     path: '/lesson-prep',
     name: 'LessonPrep',
     component: () => import('../views/LessonPrep.vue'),
