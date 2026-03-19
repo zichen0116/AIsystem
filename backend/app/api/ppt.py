@@ -37,6 +37,7 @@ from app.services.ppt.nodes import (
 from app.services.ppt.image_search import auto_assign_images
 from app.services.ppt.outline_payload import (
     markdown_to_outline_payload,
+    normalize_outline_payload,
     outline_payload_has_renderable_content,
     payload_to_docmee_markdown,
 )
@@ -341,8 +342,8 @@ async def approve_outline(
         outline.image_urls = body.image_urls
     if body.outline_payload is not None:
         if outline_payload_has_renderable_content(body.outline_payload):
-            outline.outline_payload = body.outline_payload
-            outline.content = payload_to_docmee_markdown(body.outline_payload)
+            outline.outline_payload = normalize_outline_payload(body.outline_payload)
+            outline.content = payload_to_docmee_markdown(outline.outline_payload)
         else:
             outline.outline_payload = markdown_to_outline_payload(
                 body.content or outline.content,
@@ -678,6 +679,14 @@ async def download_result(
         await db.flush()
         return {"file_url": file_url}
     except Exception as e:
+        if ppt_result.file_url:
+            logger.warning(
+                "Falling back to stored PPT file_url result=%s docmee_ppt_id=%s error=%s",
+                result_id,
+                ppt_result.docmee_ppt_id,
+                describe_exception(e),
+            )
+            return {"file_url": ppt_result.file_url}
         raise HTTPException(status_code=502, detail=f"获取下载地址失败: {e}")
 
 

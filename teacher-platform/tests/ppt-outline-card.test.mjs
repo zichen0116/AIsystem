@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  cloneOutlinePayload,
   hasRenderableOutlinePayload,
   markdownToOutlinePayload,
   payloadToMarkdown,
@@ -29,6 +30,8 @@ test('markdownToOutlinePayload parses flat page outlines into page cards with im
   assert.equal(payload.sections.length, 1)
   assert.equal(payload.sections[0].pages.length, 2)
   assert.equal(payload.sections[0].pages[0].image_candidates.length, 2)
+  assert.equal(typeof payload.sections[0].pages[0].speaker_notes, 'string')
+  assert.equal(payload.sections[0].pages[0].speaker_notes.length > 0, true)
 })
 
 test('payloadToMarkdown keeps selected image and page content', () => {
@@ -55,6 +58,34 @@ test('payloadToMarkdown keeps selected image and page content', () => {
   assert.match(markdown, /### 第 1 页：封面与课程信息/)
   assert.match(markdown, /- 主标题：中国传统文化/)
   assert.match(markdown, /!\[配图2\]\(https:\/\/img\.example\.com\/b\.png\)/)
+  assert.doesNotMatch(markdown, /先介绍主题，再快速点出本页课堂目标/)
+})
+
+test('cloneOutlinePayload keeps speaker notes when editing payload', () => {
+  const source = {
+    title: '中国传统文化',
+    sections: [
+      {
+        title: '内容大纲',
+        pages: [
+          {
+            title: '第 1 页：课程封面与导入',
+            subtitle: '',
+            blocks: [{ title: '', content: ['主题：中国传统文化'] }],
+            speaker_notes: '先介绍主题，再快速点出本页课堂目标。',
+            image_candidates: [],
+            selected_image_id: null,
+          },
+        ],
+      },
+    ],
+  }
+
+  const payload = cloneOutlinePayload(source)
+  payload.sections[0].pages[0].speaker_notes = '修改后的备注'
+
+  assert.equal(source.sections[0].pages[0].speaker_notes, '先介绍主题，再快速点出本页课堂目标。')
+  assert.equal(payload.sections[0].pages[0].speaker_notes, '修改后的备注')
 })
 
 test('markdownToOutlinePayload realigns legacy shifted image indexes', () => {

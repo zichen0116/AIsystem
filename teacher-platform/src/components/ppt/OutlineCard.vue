@@ -45,6 +45,17 @@
           </div>
           <div v-else-if="page.subtitle" class="page-subtitle">{{ page.subtitle }}</div>
 
+          <div v-if="editing" class="field">
+            <label>演讲备注</label>
+            <textarea
+              v-model="page.speaker_notes"
+              class="field-textarea notes-textarea"
+              rows="3"
+              placeholder="这一页建议怎么讲、强调什么、如何过渡"
+            />
+          </div>
+          <div v-else-if="page.speaker_notes" class="page-notes">{{ page.speaker_notes }}</div>
+
           <div
             v-for="(block, blockIndex) in page.blocks || []"
             :key="block.id || `block-${blockIndex}`"
@@ -144,7 +155,7 @@ function createFallbackPayload() {
 
 function resolveOutlinePayload() {
   if (hasRenderableOutlinePayload(props.outline.outline_payload)) {
-    return props.outline.outline_payload
+    return cloneOutlinePayload(props.outline.outline_payload)
   }
   return createFallbackPayload()
 }
@@ -324,6 +335,16 @@ function buildImagePayload(payload) {
   color: #667085;
 }
 
+.page-notes {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #475467;
+  background: #fff;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -344,6 +365,10 @@ function buildImagePayload(payload) {
 .field-textarea {
   resize: vertical;
   font-family: inherit;
+}
+
+.notes-textarea {
+  min-height: 96px;
 }
 
 .block-list {

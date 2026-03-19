@@ -8,6 +8,27 @@ from app.services.ppt.outline_payload import (
 
 
 class OutlinePayloadTests(unittest.TestCase):
+    def test_markdown_to_outline_payload_adds_speaker_notes_per_page(self):
+        markdown = """# 中国传统文化
+
+## 第 1 页：课程封面与导入
+- 主题：中国传统文化——以建筑文化为例
+- 授课对象：本科生通识课程
+
+## 第 2 页：中国传统文化概览
+- 文化的定义与构成：物质文化、制度文化、精神文化
+- 本次课程切入点：为何选择“建筑”作为理解传统文化的钥匙
+"""
+
+        payload = markdown_to_outline_payload(markdown, image_urls={})
+
+        pages = payload["sections"][0]["pages"]
+        self.assertEqual(len(pages), 2)
+        self.assertTrue(pages[0]["speaker_notes"])
+        self.assertIn("第 1 页：课程封面与导入", pages[0]["speaker_notes"])
+        self.assertTrue(pages[1]["speaker_notes"])
+        self.assertIn("中国传统文化概览", pages[1]["speaker_notes"])
+
     def test_payload_to_docmee_markdown_includes_selected_image_with_docmee_syntax(self):
         payload = {
             "title": "中国传统文化",
@@ -26,6 +47,7 @@ class OutlinePayloadTests(unittest.TestCase):
                                 {"id": "img-b", "url": "https://img.example.com/b.png"},
                             ],
                             "selected_image_id": "img-b",
+                            "speaker_notes": "这一页重点讲图片与内容之间的对应关系。",
                         }
                     ],
                 }
@@ -40,6 +62,8 @@ class OutlinePayloadTests(unittest.TestCase):
         self.assertIn("#### 段落标题一", markdown)
         self.assertIn("- 段落文本内容", markdown)
         self.assertIn("![配图2](https://img.example.com/b.png)", markdown)
+        self.assertNotIn("演讲备注", markdown)
+        self.assertNotIn("这一页重点讲图片与内容之间的对应关系。", markdown)
 
     def test_payload_to_docmee_markdown_omits_image_when_user_does_not_select_one(self):
         payload = {
@@ -123,6 +147,7 @@ class OutlinePayloadTests(unittest.TestCase):
                                 {"id": "img-b", "url": "https://img.example.com/b.png"},
                             ],
                             "selected_image_id": "img-a",
+                            "speaker_notes": "先介绍主题，再快速点出本页课堂目标。",
                         }
                     ],
                 }
@@ -135,6 +160,34 @@ class OutlinePayloadTests(unittest.TestCase):
         self.assertIn("### 第 1 页：封面与课程信息", markdown)
         self.assertIn("- 主标题：中国传统文化", markdown)
         self.assertIn("![配图1](https://img.example.com/a.png)", markdown)
+        self.assertNotIn("先介绍主题，再快速点出本页课堂目标。", markdown)
+
+    def test_payload_to_docmee_markdown_does_not_mutate_existing_speaker_notes(self):
+        payload = {
+            "title": "中国传统文化",
+            "sections": [
+                {
+                    "title": "内容大纲",
+                    "pages": [
+                        {
+                            "title": "第 1 页：课程封面与课程信息",
+                            "subtitle": "",
+                            "blocks": [{"title": "", "content": ["主标题：中国传统文化"]}],
+                            "speaker_notes": "先打招呼，再抛出为什么要从建筑理解文化。",
+                            "image_candidates": [],
+                            "selected_image_id": None,
+                        }
+                    ],
+                }
+            ],
+        }
+
+        _ = payload_to_docmee_markdown(payload)
+
+        self.assertEqual(
+            payload["sections"][0]["pages"][0]["speaker_notes"],
+            "先打招呼，再抛出为什么要从建筑理解文化。",
+        )
 
     def test_markdown_to_outline_payload_handles_legacy_shifted_image_indexes(self):
         markdown = """# 中国传统文化

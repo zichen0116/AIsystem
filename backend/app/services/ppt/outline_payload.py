@@ -12,11 +12,44 @@ def build_outline_payload(
     clarification: dict[str, Any] | None,
     sections: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "title": title.strip() if title else "",
         "clarification": deepcopy(clarification or {}),
         "sections": deepcopy(sections or []),
     }
+    return normalize_outline_payload(payload)
+
+
+def normalize_outline_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    safe_payload = deepcopy(payload or {})
+    safe_payload["title"] = (safe_payload.get("title") or "").strip()
+    safe_payload["clarification"] = deepcopy(safe_payload.get("clarification") or {})
+    normalized_sections: list[dict[str, Any]] = []
+
+    for section_index, section in enumerate(safe_payload.get("sections") or [], start=1):
+        safe_section = deepcopy(section or {})
+        normalized_pages: list[dict[str, Any]] = []
+        for page_index, page in enumerate(safe_section.get("pages") or [], start=1):
+            safe_page = deepcopy(page or {})
+            safe_page["id"] = safe_page.get("id") or f"page-{page_index}"
+            safe_page["title"] = safe_page.get("title") or ""
+            safe_page["subtitle"] = safe_page.get("subtitle") or ""
+            safe_page["blocks"] = deepcopy(safe_page.get("blocks") or [])
+            safe_page["image_candidates"] = deepcopy(safe_page.get("image_candidates") or [])
+            safe_page["selected_image_id"] = safe_page.get("selected_image_id")
+            safe_page["speaker_notes"] = _normalize_speaker_notes(safe_page)
+            normalized_pages.append(safe_page)
+
+        normalized_sections.append(
+            {
+                "id": safe_section.get("id") or f"section-{section_index}",
+                "title": safe_section.get("title") or "",
+                "pages": normalized_pages,
+            }
+        )
+
+    safe_payload["sections"] = normalized_sections
+    return safe_payload
 
 
 def markdown_to_outline_payload(markdown: str, image_urls: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -97,10 +130,11 @@ def markdown_to_outline_payload(markdown: str, image_urls: dict[str, Any] | None
 
 
 def payload_to_docmee_markdown(payload: dict[str, Any]) -> str:
-    title = (payload or {}).get("title", "").strip() or "未命名PPT"
+    normalized_payload = normalize_outline_payload(payload)
+    title = normalized_payload.get("title", "").strip() or "未命名PPT"
     lines: list[str] = [f"# {title}", ""]
 
-    sections = (payload or {}).get("sections") or []
+    sections = normalized_payload.get("sections") or []
     for section in sections:
         section_title = (section or {}).get("title", "").strip()
         if section_title:
@@ -222,6 +256,7 @@ def _create_page(
         "title": title,
         "subtitle": "",
         "blocks": [],
+        "speaker_notes": "",
         "image_candidates": _build_page_candidates(page_index, image_urls, page_count, legacy_image_offset),
         "selected_image_id": None,
     }
@@ -233,3 +268,46 @@ def _ensure_default_section(sections: list[dict[str, Any]]) -> dict[str, Any]:
     section = {"id": "section-1", "title": "内容大纲", "pages": []}
     sections.append(section)
     return section
+
+
+def build_speaker_notes_for_page(page_title: str, subtitle: str, blocks: list[dict[str, Any]]) -> str:
+    topic = (page_title or "").strip() or "本页内容"
+    details: list[str] = []
+
+    if (subtitle or "").strip():
+        details.append(subtitle.strip())
+
+    for block in blocks or []:
+        block_title = (block.get("title") or "").strip()
+        if block_title:
+            details.append(block_title)
+        for item in _normalize_block_content(block.get("content"))[:3]:
+            details.append(item)
+        if len(details) >= 3:
+            break
+
+    unique_details: list[str] = []
+    for detail in details:
+        if detail and detail not in unique_details:
+            unique_details.append(detail)
+
+    if not unique_details:
+        return f"这一页主要讲{topic}，可以先说明核心主题，再自然过渡到下一页。"
+
+    first_detail = unique_details[0]
+    if len(unique_details) == 1:
+        return f"这一页主要讲{topic}，可以先点出{first_detail}，再补充课堂里的关键含义。"
+
+    second_detail = unique_details[1]
+    return f"这一页主要讲{topic}，先说明{first_detail}，再结合{second_detail}展开，最后用一句话做好过渡。"
+
+
+def _normalize_speaker_notes(page: dict[str, Any]) -> str:
+    current_notes = (page.get("speaker_notes") or "").strip()
+    if current_notes:
+        return current_notes
+    return build_speaker_notes_for_page(
+        page.get("title") or "",
+        page.get("subtitle") or "",
+        page.get("blocks") or [],
+    )

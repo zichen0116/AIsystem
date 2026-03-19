@@ -1,5 +1,5 @@
 export function cloneOutlinePayload(payload) {
-  return JSON.parse(JSON.stringify(payload || { title: '', clarification: {}, sections: [] }))
+  return JSON.parse(JSON.stringify(normalizeOutlinePayload(payload || { title: '', clarification: {}, sections: [] })))
 }
 
 export function hasRenderableOutlinePayload(payload) {
@@ -92,15 +92,15 @@ export function markdownToOutlinePayload(markdown, imageUrls = {}) {
     currentBlock.content.push(normalizedLine)
   }
 
-  return {
+  return normalizeOutlinePayload({
     title,
     clarification: {},
     sections,
-  }
+  })
 }
 
 export function payloadToMarkdown(payload) {
-  const safePayload = payload || { title: '未命名PPT', sections: [] }
+  const safePayload = normalizeOutlinePayload(payload || { title: '未命名PPT', sections: [] })
   const lines = [`# ${safePayload.title || '未命名PPT'}`, '']
 
   for (const section of safePayload.sections || []) {
@@ -171,6 +171,7 @@ function createPage(pageIndex, title, imageUrls, pageCount, legacyImageOffset) {
     title,
     subtitle: '',
     blocks: [],
+    speaker_notes: '',
     image_candidates: buildPageCandidates(pageIndex, imageUrls, pageCount, legacyImageOffset),
     selected_image_id: null,
   }
@@ -199,4 +200,83 @@ function buildPageCandidates(pageIndex, imageUrls, pageCount, legacyImageOffset)
       url: String(candidate || ''),
     }
   }).filter(item => item.url)
+}
+
+export function resolveSpeakerNotes(payload, slideIndex) {
+  if (!payload || typeof payload !== 'object' || !Number.isInteger(slideIndex) || slideIndex < 0) {
+    return ''
+  }
+  let pageCursor = 0
+  for (const section of payload.sections || []) {
+    for (const page of section?.pages || []) {
+      if (pageCursor === slideIndex) {
+        return String(page?.speaker_notes || '').trim()
+      }
+      pageCursor += 1
+    }
+  }
+  return ''
+}
+
+function normalizeOutlinePayload(payload) {
+  const safePayload = payload || { title: '', clarification: {}, sections: [] }
+  return {
+    title: String(safePayload.title || '').trim(),
+    clarification: safePayload.clarification && typeof safePayload.clarification === 'object'
+      ? JSON.parse(JSON.stringify(safePayload.clarification))
+      : {},
+    sections: (safePayload.sections || []).map((section, sectionIndex) => {
+      const fallbackPageBase = `section-${sectionIndex + 1}`
+      return {
+        id: section?.id || `section-${sectionIndex + 1}`,
+        title: String(section?.title || ''),
+        pages: (section?.pages || []).map((page, pageIndex) => {
+          const pageId = page?.id || `${fallbackPageBase}-page-${pageIndex + 1}`
+          return {
+            id: pageId,
+            title: String(page?.title || ''),
+            subtitle: String(page?.subtitle || ''),
+            blocks: (page?.blocks || []).map((block, blockIndex) => ({
+              id: block?.id || `${pageId}-block-${blockIndex + 1}`,
+              title: String(block?.title || ''),
+              content: normalizeBlockContent(block?.content),
+            })),
+            speaker_notes: normalizeSpeakerNotes(page),
+            image_candidates: (page?.image_candidates || []).map((image, imageIndex) => ({
+              id: image?.id || `${pageId}-img-${imageIndex + 1}`,
+              url: String(image?.url || ''),
+            })).filter(image => image.url),
+            selected_image_id: page?.selected_image_id ?? null,
+          }
+        }),
+      }
+    }),
+  }
+}
+
+function normalizeSpeakerNotes(page) {
+  const current = String(page?.speaker_notes || '').trim()
+  if (current) return current
+
+  const topic = String(page?.title || '').trim() || '本页内容'
+  const subtitle = String(page?.subtitle || '').trim()
+  const details = []
+  if (subtitle) details.push(subtitle)
+
+  for (const block of page?.blocks || []) {
+    if (block?.title) details.push(String(block.title).trim())
+    for (const item of normalizeBlockContent(block?.content).slice(0, 3)) {
+      details.push(item)
+    }
+    if (details.length >= 3) break
+  }
+
+  const uniqueDetails = details.filter((detail, index) => detail && details.indexOf(detail) === index)
+  if (!uniqueDetails.length) {
+    return `这一页主要讲${topic}，可以先说明核心主题，再自然过渡到下一页。`
+  }
+  if (uniqueDetails.length === 1) {
+    return `这一页主要讲${topic}，可以先点出${uniqueDetails[0]}，再补充课堂里的关键含义。`
+  }
+  return `这一页主要讲${topic}，先说明${uniqueDetails[0]}，再结合${uniqueDetails[1]}展开，最后用一句话做好过渡。`
 }

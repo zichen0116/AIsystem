@@ -5,7 +5,7 @@
  * 阶段：欢迎页 -> 对话+大纲 -> 预览+编辑
  * Stage 3 布局对齐原型：左=对话面板(40%) | resize-handle | 右=预览面板(60%)
  */
-import { nextTick, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, nextTick, ref, onMounted, onBeforeUnmount } from 'vue'
 import WelcomePanel from '../components/ppt/WelcomePanel.vue'
 import ChatPanel from '../components/ppt/ChatPanel.vue'
 import ChatInput from '../components/ppt/ChatInput.vue'
@@ -21,9 +21,10 @@ import {
 } from '../api/ppt.js'
 import { decodePptxProperty } from '../utils/docmee/decodePptxProperty.js'
 import { encodePptxProperty } from '../utils/docmee/encodePptxProperty.js'
-import { Ppt2Svg } from '../utils/docmee/ppt2svg.js'
+import { Ppt2Canvas } from '../utils/docmee/ppt2canvas.js'
 import { CLARIFICATION_STEPS, buildClarificationRequest, getClarificationQuestion } from '../utils/pptOutlineFlow.js'
-import { hasRenderableOutlinePayload, markdownToOutlinePayload } from '../utils/pptOutlineCard.js'
+import { cloneOutlinePayload, hasRenderableOutlinePayload, markdownToOutlinePayload, resolveSpeakerNotes } from '../utils/pptOutlineCard.js'
+import { getPdfExportLayerPosition, triggerPptDownload } from '../utils/pptPreview.js'
 
 // ========== 状态 ==========
 const stage = ref('welcome') // welcome | chat | preview
@@ -75,7 +76,7 @@ const thumbnailRenderNonce = ref(0)
 const isPreviewFullscreen = ref(false)
 const isExportingPdf = ref(false)
 const exportContainerRef = ref(null)
-const exportSlideRefs = []
+const exportCanvasRefs = []
 const exportPainters = new Map()
 
 // Stage 3 拖拽
@@ -111,7 +112,7 @@ function normalizeOutlineRecord(outline) {
   if (!outline) return null
   const imageUrls = normalizeImageUrls(outline.image_urls)
   const outlinePayload = hasRenderableOutlinePayload(outline.outline_payload)
-    ? outline.outline_payload
+    ? cloneOutlinePayload(outline.outline_payload)
     : markdownToOutlinePayload(outline.content || '', imageUrls)
   return {
     ...outline,
@@ -130,6 +131,12 @@ function normalizeResultRecord(result) {
   }
 }
 
+const currentSpeakerNotes = computed(() => {
+  return resolveSpeakerNotes(currentOutline.value?.outline_payload, activeSlideIndex.value)
+})
+
+const pdfExportLayerStyle = computed(() => getPdfExportLayerPosition(isExportingPdf.value))
+
 function bumpThumbnailRefresh(dirtySlideIndex = null) {
   thumbnailDirtySlideIndex.value = Number.isInteger(dirtySlideIndex) ? dirtySlideIndex : null
   thumbnailRenderNonce.value += 1
@@ -146,9 +153,9 @@ function handleFullscreenKeydown(event) {
   }
 }
 
-function setExportSlideRef(el, index) {
+function setExportCanvasRef(el, index) {
   if (el) {
-    exportSlideRefs[index] = el
+    exportCanvasRefs[index] = el
   }
 }
 
@@ -719,13 +726,22 @@ async function streamModifyPpt(text) {
 // ========== 下载 ==========
 async function handleDownload() {
   if (!currentResult.value?.result_id) return
+  const pendingWindow = window.open('', '_blank', 'noopener,noreferrer')
   try {
     const data = await downloadResult(currentResult.value.result_id)
     if (data.file_url) {
-      window.open(data.file_url, '_blank')
+      triggerPptDownload(data.file_url, { presetWindow: pendingWindow })
+    } else {
+      pendingWindow?.close?.()
     }
   } catch (e) {
+    pendingWindow?.close?.()
     console.error('下载失败:', e)
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'error',
+      content: e?.message || '下载 PPT 失败，请稍后重试',
+    })
   }
 }
 
@@ -858,18 +874,24 @@ async function renderExportSlides() {
   await nextTick()
 
   for (let index = 0; index < slides.value.length; index += 1) {
-    const svgEl = exportSlideRefs[index]
-    if (!svgEl) continue
+    const canvasEl = exportCanvasRefs[index]
+    if (!canvasEl) continue
 
     let painter = exportPainters.get(index)
     if (!painter) {
-      painter = new Ppt2Svg(svgEl)
+      painter = new Ppt2Canvas(canvasEl, 'anonymous')
       exportPainters.set(index, painter)
     }
 
-    painter.resetSize(pptxDoc.value.width, pptxDoc.value.height)
-    painter.drawPptx(pptxDoc.value, index)
+    canvasEl.width = pptxDoc.value.width * 2
+    canvasEl.height = pptxDoc.value.height * 2
+    canvasEl.style.width = `${pptxDoc.value.width}px`
+    canvasEl.style.height = `${pptxDoc.value.height}px`
+
+    await painter.drawPptx(pptxDoc.value, index)
   }
+
+  await waitForPdfRender()
 }
 
 function handleFullscreen() {
@@ -904,6 +926,13 @@ async function handleExportPdf() {
   } finally {
     isExportingPdf.value = false
   }
+}
+
+async function waitForPdfRender() {
+  await nextTick()
+  await new Promise(resolve => requestAnimationFrame(() => resolve()))
+  await new Promise(resolve => requestAnimationFrame(() => resolve()))
+  await new Promise(resolve => setTimeout(resolve, 180))
 }
 </script>
 
@@ -1061,7 +1090,7 @@ async function handleExportPdf() {
                 <div class="preview-footer">
                   <div class="footer-section">
                     <div class="footer-label">演讲备注</div>
-                    <div class="footer-content">{{ currentResult?.speaker_notes || '暂无演讲备注' }}</div>
+                    <div class="footer-content">{{ currentSpeakerNotes || '暂无演讲备注' }}</div>
                   </div>
                   <div class="footer-section">
                     <div class="footer-label">知识来源</div>
@@ -1086,14 +1115,14 @@ async function handleExportPdf() {
       @close="showKnowledgeModal = false"
     />
 
-    <div ref="exportContainerRef" class="pdf-export-layer">
+    <div ref="exportContainerRef" class="pdf-export-layer" :style="pdfExportLayerStyle">
       <div
         v-for="(_, index) in slides"
         :key="`pdf-slide-${index}`"
         class="pdf-export-slide"
       >
         <div class="pdf-export-slide-inner">
-          <svg :ref="(el) => setExportSlideRef(el, index)" class="pdf-export-svg" />
+          <canvas :ref="(el) => setExportCanvasRef(el, index)" class="pdf-export-canvas" />
         </div>
       </div>
     </div>
@@ -1335,7 +1364,7 @@ async function handleExportPdf() {
   background: #fff;
   box-sizing: border-box;
 }
-.pdf-export-svg {
+.pdf-export-canvas {
   width: 100%;
   height: auto;
   display: block;
