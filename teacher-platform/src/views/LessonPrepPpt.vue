@@ -1,333 +1,1198 @@
 <script setup>
-import { ref, watch, computed, nextTick } from 'vue'
-import arrowGreenImg from '../assets/arrow-green.png'
-import voiceImg from '../assets/语音.png'
-import { useVoiceInput } from '../composables/useVoiceInput'
+/**
+ * LessonPrepPpt.vue - PPT生成主页面
+ *
+ * 阶段：欢迎页 -> 对话+大纲 -> 预览+编辑
+ * Stage 3 布局对齐原型：左=对话面板(40%) | resize-handle | 右=预览面板(60%)
+ */
+import { computed, nextTick, ref, onMounted, onBeforeUnmount } from 'vue'
+import WelcomePanel from '../components/ppt/WelcomePanel.vue'
+import ChatPanel from '../components/ppt/ChatPanel.vue'
+import ChatInput from '../components/ppt/ChatInput.vue'
+import TemplateSelector from '../components/ppt/TemplateSelector.vue'
+import KnowledgeLibraryModal from '../components/ppt/KnowledgeLibraryModal.vue'
+import PptSidebar from '../components/ppt/PptSidebar.vue'
+import PptThumbnailList from '../components/ppt/PptThumbnailList.vue'
+import PptCanvas from '../components/ppt/PptCanvas.vue'
+import {
+  createSession, listSessions, getSessionDetail,
+  approveOutline, getResultDetail, downloadResult, saveEditSnapshot, modifyPptResult,
+  streamPptSSE, deleteSession,
+} from '../api/ppt.js'
+import { decodePptxProperty } from '../utils/docmee/decodePptxProperty.js'
+import { encodePptxProperty } from '../utils/docmee/encodePptxProperty.js'
+import { Ppt2Canvas } from '../utils/docmee/ppt2canvas.js'
+import { CLARIFICATION_STEPS, buildClarificationRequest, getClarificationQuestion } from '../utils/pptOutlineFlow.js'
+import { cloneOutlinePayload, hasRenderableOutlinePayload, markdownToOutlinePayload, resolveSpeakerNotes } from '../utils/pptOutlineCard.js'
+import {
+  getPdfExportLayerPosition,
+  getPptDownloadUrl,
+  openPendingPptDownloadWindow,
+  triggerPptDownload,
+} from '../utils/pptPreview.js'
 
-const pptTopic = ref('')
-const { isRecording, isSupported, toggleRecording } = useVoiceInput(pptTopic)
-const pptStyleTab = ref('style')
-const selectedStyle = ref('free')
+// ========== 状态 ==========
+const stage = ref('welcome') // welcome | chat | preview
+const sidebarCollapsed = ref(false)
 
-const pptStyles = [
-  { id: 'free', name: '自由风格' },
-  { id: 'business', name: '商务简约' },
-  { id: 'tech', name: '科技质感' },
-  { id: 'fresh', name: '清新文艺' },
-  { id: 'academic', name: '学术汇报' },
-  { id: 'guofeng', name: '国风国潮' },
-  { id: 'minimal', name: '极简高级' },
-  { id: 'creative', name: '创意插画' }
+// 会话
+const sessions = ref([])
+const currentSessionId = ref(null)
+const currentSession = ref(null)
+
+// 消息
+const messages = ref([])
+const userInput = ref('')
+const isStreaming = ref(false)
+const streamingText = ref('')
+let abortController = null
+const clarificationStage = ref('idle')
+const pendingTopic = ref('')
+const clarificationAnswers = ref({
+  audience: '',
+  goal: '',
+  duration: '',
+  focus: '',
+  style: '',
+})
+const clarificationStepIndex = ref(0)
+
+// 大纲
+const currentOutline = ref(null)
+
+// 模板 & 知识库
+const selectedTemplateId = ref(null)
+const selectedKnowledgeIds = ref([])
+const showTemplateSelector = ref(false)
+const showKnowledgeModal = ref(false)
+const knowledgeTriggerEl = ref(null)
+
+// PPT结果
+const currentResult = ref(null)
+const pptxProperty = ref('')
+const pptxDoc = ref(null)
+const slides = ref([])
+const activeSlideIndex = ref(0)
+const isGeneratingPpt = ref(false)
+const genCurrentPage = ref(0)
+const genTotalPages = ref(0)
+const thumbnailDirtySlideIndex = ref(null)
+const thumbnailRenderNonce = ref(0)
+const isPreviewFullscreen = ref(false)
+const isExportingPdf = ref(false)
+const exportContainerRef = ref(null)
+const exportCanvasRefs = []
+const exportPainters = new Map()
+
+// Stage 3 拖拽
+const chatPanelWidth = ref(40) // percentage
+const thumbWidth = ref(150) // px
+const isResizingMain = ref(false)
+const isResizingThumb = ref(false)
+let resizeStartX = 0
+let resizeStartVal = 0
+let saveSnapshotTimer = null
+
+// 文件上传
+const fileInputRef = ref(null)
+const imageInputRef = ref(null)
+
+// 语音
+const isRecording = ref(false)
+
+function normalizeImageUrls(imageUrls) {
+  if (!imageUrls) return {}
+  if (Array.isArray(imageUrls)) {
+    return Object.fromEntries(
+      imageUrls
+        .filter(Boolean)
+        .map((value, index) => [String(index), Array.isArray(value) ? value : [value]]),
+    )
+  }
+  if (typeof imageUrls === 'object') return imageUrls
+  return {}
+}
+
+function normalizeOutlineRecord(outline) {
+  if (!outline) return null
+  const imageUrls = normalizeImageUrls(outline.image_urls)
+  const outlinePayload = hasRenderableOutlinePayload(outline.outline_payload)
+    ? cloneOutlinePayload(outline.outline_payload)
+    : markdownToOutlinePayload(outline.content || '', imageUrls)
+  return {
+    ...outline,
+    image_urls: imageUrls,
+    outline_payload: outlinePayload,
+  }
+}
+
+function normalizeResultRecord(result) {
+  if (!result) return null
+  const resultId = result.result_id || result.id || null
+  return {
+    ...result,
+    id: resultId,
+    result_id: resultId,
+  }
+}
+
+const currentSpeakerNotes = computed(() => {
+  return resolveSpeakerNotes(currentOutline.value?.outline_payload, activeSlideIndex.value)
+})
+
+const pdfExportLayerStyle = computed(() => getPdfExportLayerPosition(isExportingPdf.value))
+
+function bumpThumbnailRefresh(dirtySlideIndex = null) {
+  thumbnailDirtySlideIndex.value = Number.isInteger(dirtySlideIndex) ? dirtySlideIndex : null
+  thumbnailRenderNonce.value += 1
+}
+
+function syncFullscreenBodyState() {
+  document.body.style.overflow = isPreviewFullscreen.value ? 'hidden' : ''
+}
+
+function handleFullscreenKeydown(event) {
+  if (event.key === 'Escape' && isPreviewFullscreen.value) {
+    isPreviewFullscreen.value = false
+    syncFullscreenBodyState()
+  }
+}
+
+function setExportCanvasRef(el, index) {
+  if (el) {
+    exportCanvasRefs[index] = el
+  }
+}
+
+function appendOutlineMessage(outlineId, content, imageUrls, outlinePayload = null) {
+  messages.value.push({
+    role: 'assistant',
+    message_type: 'outline',
+    content,
+    metadata_: {
+      outline_id: outlineId,
+      image_urls: imageUrls,
+      outline_payload: outlinePayload,
+    },
+    created_at: new Date().toISOString(),
+  })
+}
+
+async function handleOutlineEdit(message, editedOutline) {
+  const outlineId = message?.metadata_?.outline_id
+  if (!outlineId || !currentOutline.value || currentOutline.value.id !== outlineId) return
+  const nextContent = typeof editedOutline === 'string' ? editedOutline : editedOutline?.content
+  const nextPayload = typeof editedOutline === 'object' ? editedOutline?.outline_payload : null
+  const nextImageUrls = typeof editedOutline === 'object' ? editedOutline?.image_urls : null
+  currentOutline.value = {
+    ...currentOutline.value,
+    content: nextContent || currentOutline.value.content,
+    outline_payload: nextPayload || currentOutline.value.outline_payload,
+    image_urls: nextImageUrls || currentOutline.value.image_urls,
+  }
+  const target = messages.value.find(msg => msg === message)
+  if (target) {
+    target.content = nextContent || target.content
+    target.metadata_ = {
+      ...(target.metadata_ || {}),
+      outline_payload: nextPayload || target.metadata_?.outline_payload || null,
+      image_urls: nextImageUrls || target.metadata_?.image_urls || null,
+    }
+  }
+  try {
+    await approveOutline(
+      outlineId,
+      nextContent || currentOutline.value.content,
+      nextImageUrls || currentOutline.value.image_urls || null,
+      nextPayload || currentOutline.value.outline_payload || null,
+    )
+  } catch (error) {
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'error',
+      content: error?.message || '保存大纲修改失败，请稍后重试',
+    })
+  }
+}
+
+async function applyPptxProperty(encoded, options = {}) {
+  const {
+    keepActiveSlide = false,
+    dirtySlideIndex = null,
+    forceThumbnailRefresh = true,
+  } = options
+
+  pptxProperty.value = encoded || ''
+
+  if (!encoded) {
+    activeSlideIndex.value = 0
+    pptxDoc.value = null
+    slides.value = []
+    bumpThumbnailRefresh(null)
+    return
+  }
+
+  try {
+    const doc = await decodePptxProperty(encoded)
+    pptxDoc.value = doc
+    slides.value = Array.isArray(doc?.pages) ? doc.pages : []
+    if (keepActiveSlide) {
+      const maxIndex = Math.max(slides.value.length - 1, 0)
+      activeSlideIndex.value = Math.min(activeSlideIndex.value, maxIndex)
+    } else {
+      activeSlideIndex.value = 0
+    }
+    if (forceThumbnailRefresh || Number.isInteger(dirtySlideIndex)) {
+      bumpThumbnailRefresh(dirtySlideIndex)
+    }
+  } catch (error) {
+    console.error('解析 PPT 预览数据失败:', error)
+    pptxDoc.value = null
+    slides.value = []
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'error',
+      content: error?.message || 'PPT 预览数据解析失败',
+    })
+  }
+}
+
+async function persistEditedPpt(doc) {
+  if (!currentResult.value?.result_id || !doc) return
+
+  pptxDoc.value = doc
+  slides.value = Array.isArray(doc?.pages) ? doc.pages : []
+  bumpThumbnailRefresh(activeSlideIndex.value)
+
+  if (saveSnapshotTimer) {
+    clearTimeout(saveSnapshotTimer)
+  }
+
+  saveSnapshotTimer = setTimeout(async () => {
+    try {
+      const encoded = await encodePptxProperty(doc)
+      pptxProperty.value = encoded
+      await saveEditSnapshot(currentResult.value.result_id, encoded)
+    } catch (error) {
+      console.error('保存 PPT 编辑快照失败:', error)
+      messages.value.push({
+        role: 'assistant',
+        message_type: 'error',
+        content: error?.message || '保存 PPT 编辑结果失败',
+      })
+    }
+  }, 300)
+}
+
+const clarificationQuestions = CLARIFICATION_STEPS || [
+  {
+    key: 'audience',
+    ask: (topic) => `好呀，我们先慢慢来。\n\n这份《${topic}》PPT，你主要想讲给谁听呢？比如高中生、本科生，或者家长、老师都可以。`,
+  },
+  {
+    key: 'goal',
+    ask: () => '明白了。\n\n那你希望这份 PPT 最终帮你达到什么教学目标呀？比如让大家建立整体认识、理解重点概念，或者用于课堂汇报。',
+  },
+  {
+    key: 'duration',
+    ask: () => '好的，我记下来了。\n\n这次大概准备讲多久呢？如果你心里有预期页数，也可以一起告诉我。',
+  },
+  {
+    key: 'focus',
+    ask: () => '收到。\n\n那内容上你最想重点展开哪几部分呢？我可以把篇幅和层次更贴近你的想法。',
+  },
+  {
+    key: 'style',
+    ask: () => '最后再帮你确认一个小细节。\n\n你对风格、案例、知识库素材，或者配图方向有没有特别偏好的要求？没有的话我也可以按主题帮你自然处理。',
+  },
 ]
 
-const styleButtonGradients = {
-  free: 'linear-gradient(135deg, #FFE0D5 0%,rgb(255, 223, 179) 100%)',
-  business: 'linear-gradient(135deg,rgb(206, 225, 246) 0%, #E2E8F0 100%)',
-  tech: 'linear-gradient(135deg,rgb(186, 223, 255) 0%,rgb(201, 224, 255) 100%)',
-  fresh: 'linear-gradient(135deg,rgb(209, 249, 223) 0%,rgb(207, 255, 233) 100%)',
-  academic: 'linear-gradient(135deg,rgb(239, 232, 255) 0%, #D3E2F0 100%)',
-  guofeng: 'linear-gradient(135deg, #F9CCD3 0%,rgb(255, 194, 177) 100%)',
-  minimal: 'linear-gradient(135deg, #E5E7EB 0%, #F3F4F6 100%)',
-  creative: 'linear-gradient(135deg,rgb(253, 214, 255) 0%,rgb(255, 254, 222) 100%)'
-}
-
-const currentStyle = computed(() => pptStyles.find(s => s.id === selectedStyle.value) || pptStyles[0])
-const styleButtonBackground = computed(() => styleButtonGradients[selectedStyle.value] || styleButtonGradients.free)
-
-// 发送后布局
-const hasSentMessages = ref(false)
-const messages = ref([])
-const isSending = ref(false)
-
-// PPT 展示区：幻灯片缩略图（占位）
-const pptSlides = ref([{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }])
-const activeSlideIndex = ref(0)
-const pptThumbnailsCollapsed = ref(false)
-const pptZoom = ref(71)
-const pptTitle = ref('中国传统文化PPT')
-const speakerNotes = ref('大家好，欢迎来到今天的分享。今天，我们将一同走进华夏文明的长河，探寻中国传统文化的璀璨瑰宝。这份PPT将带您领略从古老的思想哲学到绚丽的传统艺术，从庄重的节日习俗到精致的饮食文化……')
-
-// 文件选择
-const fileInput = ref(null)
-const uploadResult = ref(null)
-
-function getApiBase() {
-  const base = (import.meta.env?.VITE_API_BASE || '').trim()
-  return (base || 'http://127.0.0.1:8000').replace(/\/+$/, '')
-}
-
-async function uploadFileToBackend(file, timeoutMs = 180000) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const form = new FormData()
-    form.append('file', file)
-    const res = await fetch(`${getApiBase()}/api/v1/html/upload`, {
-      method: 'POST',
-      body: form,
-      signal: controller.signal
-    })
-    const data = await res.json().catch(() => null)
-    if (!res.ok) {
-      const detail = data?.detail || res.statusText
-      throw new Error(detail)
-    }
-    return data
-  } finally {
-    clearTimeout(timer)
+function resetClarification() {
+  clarificationStage.value = 'idle'
+  pendingTopic.value = ''
+  clarificationStepIndex.value = 0
+  clarificationAnswers.value = {
+    audience: '',
+    goal: '',
+    duration: '',
+    focus: '',
+    style: '',
   }
 }
 
-function triggerUpload() {
-  fileInput.value?.click()
+function getCurrentClarificationQuestion() {
+  const step = clarificationQuestions[clarificationStepIndex.value]
+  if (!step) return ''
+  return step.ask(pendingTopic.value)
 }
 
-function clearUpload() {
-  uploadResult.value = null
-  if (fileInput.value) fileInput.value.value = ''
+function buildOutlineRequest() {
+  return [
+    `PPT主题：${pendingTopic.value}`,
+    '',
+    '下面是已经和用户逐轮确认过的真实意图，请严格基于这些信息生成 PPT 大纲：',
+    `受众：${clarificationAnswers.value.audience || '未明确'}`,
+    `教学目标：${clarificationAnswers.value.goal || '未明确'}`,
+    `演讲时长/页数：${clarificationAnswers.value.duration || '未明确'}`,
+    `重点展开内容：${clarificationAnswers.value.focus || '未明确'}`,
+    `风格/案例/素材偏好：${clarificationAnswers.value.style || '未特别指定'}`,
+    '',
+    '要求：',
+    '1. 直接输出 PPT 大纲内容，不要重复提问，不要输出寒暄。',
+    '2. 明确体现受众、教学目标、演讲时长或页数、重点内容和呈现重点。',
+    '3. 如果用户没有写全，可以做最小必要补全，但不要偏离用户意图。',
+  ].join('\n')
 }
 
-async function onFileSelect(e) {
+function getCurrentClarificationQuestionText() {
+  return getClarificationQuestion(pendingTopic.value, clarificationStepIndex.value)
+}
+
+function buildOutlineRequestText() {
+  return buildClarificationRequest(pendingTopic.value, clarificationAnswers.value)
+}
+
+// ========== 生命周期 ==========
+onMounted(async () => {
+  document.addEventListener('keydown', handleFullscreenKeydown)
+  try {
+    sessions.value = await listSessions()
+  } catch { /* ignore */ }
+})
+
+onBeforeUnmount(() => {
+  isPreviewFullscreen.value = false
+  syncFullscreenBodyState()
+  if (saveSnapshotTimer) clearTimeout(saveSnapshotTimer)
+  exportPainters.clear()
+  document.removeEventListener('keydown', handleFullscreenKeydown)
+  document.removeEventListener('mousemove', onResizeMain)
+  document.removeEventListener('mouseup', stopResizeMain)
+  document.removeEventListener('mousemove', onResizeThumb)
+  document.removeEventListener('mouseup', stopResizeThumb)
+})
+
+// ========== 会话管理 ==========
+async function handleNewSession() {
+  try {
+    const s = await createSession()
+    sessions.value.unshift(s)
+    currentSessionId.value = s.id
+    currentSession.value = s
+    resetState()
+    stage.value = 'welcome'
+  } catch (e) {
+    console.error('创建会话失败:', e)
+  }
+}
+
+async function handleSelectSession(id) {
+  currentSessionId.value = id
+  try {
+    const detail = await getSessionDetail(id)
+    currentSession.value = detail
+    messages.value = detail.messages || []
+
+    const currentOl = detail.outlines?.find(o => o.is_current)
+    currentOutline.value = normalizeOutlineRecord(currentOl)
+    resetClarification()
+    if (currentOl) clarificationStage.value = 'done'
+
+    const currentRes = detail.results?.find(r => r.is_current)
+    currentResult.value = normalizeResultRecord(currentRes)
+
+    if (currentRes && currentRes.status === 'completed') {
+      stage.value = 'preview'
+      sidebarCollapsed.value = true
+      await loadResultDetail(currentRes.id)
+    } else if (currentOl) {
+      stage.value = 'chat'
+    } else {
+      stage.value = 'welcome'
+    }
+  } catch (e) {
+    console.error('加载会话失败:', e)
+  }
+}
+
+async function handleDeleteSession(id) {
+  if (!confirm('确定删除该会话？')) return
+  try {
+    await deleteSession(id)
+    sessions.value = sessions.value.filter(s => s.id !== id)
+    if (currentSessionId.value === id) {
+      currentSessionId.value = null
+      currentSession.value = null
+      resetState()
+      stage.value = 'welcome'
+    }
+  } catch (e) {
+    console.error('删除会话失败:', e)
+  }
+}
+
+function resetState() {
+  isPreviewFullscreen.value = false
+  syncFullscreenBodyState()
+  messages.value = []
+  userInput.value = ''
+  streamingText.value = ''
+  resetClarification()
+  currentOutline.value = null
+  currentResult.value = null
+  pptxProperty.value = ''
+  pptxDoc.value = null
+  slides.value = []
+  activeSlideIndex.value = 0
+  bumpThumbnailRefresh(null)
+}
+
+// ========== 发送消息 ==========
+async function handleSend() {
+  const text = userInput.value.trim()
+  if (!text || isStreaming.value) return
+
+  if (!currentSessionId.value) {
+    await handleNewSession()
+  }
+
+  stage.value = 'chat'
+  messages.value.push({ role: 'user', message_type: 'text', content: text })
+  userInput.value = ''
+
+  if (currentOutline.value) {
+    await streamModifyOutline(text)
+    return
+  }
+
+  if (clarificationStage.value === 'idle') {
+    pendingTopic.value = text
+    clarificationStage.value = 'awaiting_reply'
+    clarificationStepIndex.value = 0
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'text',
+      content: getCurrentClarificationQuestionText(),
+    })
+    return
+  }
+
+  if (clarificationStage.value === 'awaiting_reply') {
+    const step = clarificationQuestions[clarificationStepIndex.value]
+    if (step) {
+      clarificationAnswers.value[step.key] = text
+    }
+
+    clarificationStepIndex.value += 1
+
+    if (clarificationStepIndex.value < clarificationQuestions.length) {
+      messages.value.push({
+        role: 'assistant',
+        message_type: 'text',
+        content: getCurrentClarificationQuestionText(),
+      })
+      return
+    }
+
+    clarificationStage.value = 'generating_outline'
+    await streamGenerateOutline(buildOutlineRequestText())
+    clarificationStage.value = 'done'
+  }
+}
+
+// ========== 流式生成大纲 ==========
+async function streamGenerateOutline(text) {
+  isStreaming.value = true
+  streamingText.value = ''
+  abortController = new AbortController()
+
+  try {
+    await streamPptSSE(
+      '/api/v1/ppt/stream/outline',
+      {
+        session_id: currentSessionId.value,
+        user_input: text,
+        knowledge_library_ids: selectedKnowledgeIds.value,
+        template_id: selectedTemplateId.value,
+      },
+      {
+        onChunk(content) { streamingText.value += content },
+        onOutlineReady(data) {
+          const imageUrls = normalizeImageUrls(data.image_urls)
+          const outlinePayload = data.outline_payload || null
+          messages.value.push({
+            role: 'assistant',
+            message_type: 'text',
+            content: '明白了！我已经为你生成了大纲，请查看：',
+            created_at: new Date().toISOString(),
+          })
+          currentOutline.value = {
+            id: data.outline_id,
+            content: data.content,
+            image_urls: imageUrls,
+            outline_payload: outlinePayload,
+            is_current: true,
+          }
+          appendOutlineMessage(data.outline_id, data.content, imageUrls, outlinePayload)
+          streamingText.value = ''
+        },
+        onDone() {},
+        onError(msg) {
+          messages.value.push({ role: 'assistant', message_type: 'error', content: msg })
+        },
+      },
+      abortController.signal,
+    )
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      messages.value.push({ role: 'assistant', message_type: 'error', content: e.message })
+    }
+  } finally {
+    isStreaming.value = false
+    abortController = null
+  }
+}
+
+// ========== 流式修改大纲 ==========
+async function streamModifyOutline(text) {
+  if (!currentResult.value) {
+    isStreaming.value = true
+    streamingText.value = ''
+    abortController = new AbortController()
+
+    try {
+      await streamPptSSE(
+        '/api/v1/ppt/stream/outline',
+        {
+          session_id: currentSessionId.value,
+          user_input: text,
+          knowledge_library_ids: selectedKnowledgeIds.value,
+          template_id: selectedTemplateId.value,
+        },
+        {
+          onChunk(content) { streamingText.value += content },
+          onOutlineReady(data) {
+            const imageUrls = normalizeImageUrls(data.image_urls)
+            const outlinePayload = data.outline_payload || null
+            currentOutline.value = {
+              id: data.outline_id,
+              content: data.content,
+              image_urls: imageUrls,
+              outline_payload: outlinePayload,
+              is_current: true,
+            }
+            appendOutlineMessage(data.outline_id, data.content, imageUrls, outlinePayload)
+            streamingText.value = ''
+          },
+          onDone() {},
+          onError(msg) {
+            messages.value.push({ role: 'assistant', message_type: 'error', content: msg })
+          },
+        },
+        abortController.signal,
+      )
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        messages.value.push({ role: 'assistant', message_type: 'error', content: e.message })
+      }
+    } finally {
+      isStreaming.value = false
+      abortController = null
+    }
+    return
+  }
+
+  await streamModifyPpt(text)
+}
+
+// ========== 审批大纲 -> 生成PPT ==========
+async function handleApproveOutline(payload) {
+  if (!currentOutline.value) return
+
+  try {
+    await approveOutline(
+      currentOutline.value.id,
+      payload?.content || null,
+      payload?.image_urls || null,
+      payload?.outline_payload || currentOutline.value.outline_payload || null,
+    )
+
+    if (!selectedTemplateId.value) {
+      showTemplateSelector.value = true
+      return
+    }
+
+    await streamGeneratePpt()
+  } catch (e) {
+    console.error('审批失败:', e)
+  }
+}
+
+function handleTemplateSelected(t) {
+  selectedTemplateId.value = t.id
+  showTemplateSelector.value = false
+  if (currentOutline.value) {
+    streamGeneratePpt()
+  }
+}
+
+// ========== 流式生成PPT ==========
+async function streamGeneratePpt() {
+  isGeneratingPpt.value = true
+  stage.value = 'preview'
+  sidebarCollapsed.value = true
+  abortController = new AbortController()
+
+  try {
+    await streamPptSSE(
+      '/api/v1/ppt/stream/generate',
+      {
+        session_id: currentSessionId.value,
+        outline_id: currentOutline.value.id,
+        template_id: selectedTemplateId.value,
+      },
+      {
+        onProgress(data) {
+          genCurrentPage.value = data.current || 0
+          genTotalPages.value = data.total || 0
+        },
+        onResultReady(data) {
+          currentResult.value = normalizeResultRecord(data)
+          genTotalPages.value = data.total_pages || 0
+          genCurrentPage.value = data.total_pages || 0
+          isGeneratingPpt.value = false
+          void applyPptxProperty(data.pptx_property || '')
+          messages.value.push({
+            role: 'assistant', message_type: 'ppt_result',
+            content: `PPT已生成完成，共${data.total_pages}页`,
+            pptTitle: currentSession.value?.title || 'PPT文件',
+            created_at: new Date().toISOString(),
+          })
+        },
+        onDone() { isGeneratingPpt.value = false },
+        onError(msg) {
+          isGeneratingPpt.value = false
+          messages.value.push({ role: 'assistant', message_type: 'error', content: msg })
+        },
+      },
+      abortController.signal,
+    )
+  } catch (e) {
+    isGeneratingPpt.value = false
+    if (e.name !== 'AbortError') {
+      messages.value.push({ role: 'assistant', message_type: 'error', content: e.message })
+    }
+  } finally {
+    abortController = null
+  }
+}
+
+// ========== 继续修改 ==========
+async function handleModifySend() {
+  const text = userInput.value.trim()
+  if (!text || isStreaming.value) return
+  messages.value.push({ role: 'user', message_type: 'text', content: text })
+  userInput.value = ''
+  await streamModifyPpt(text)
+}
+
+async function streamModifyPpt(text) {
+  if (!currentResult.value?.result_id) return
+  isStreaming.value = true
+
+  try {
+    const dirtySlideIndex = activeSlideIndex.value
+    const data = await modifyPptResult(
+      currentResult.value.result_id,
+      text,
+      activeSlideIndex.value,
+      pptxProperty.value,
+    )
+    await applyPptxProperty(data.pptx_property || '', {
+      keepActiveSlide: true,
+      dirtySlideIndex,
+      forceThumbnailRefresh: false,
+    })
+    genTotalPages.value = data.total_pages || slides.value.length
+    genCurrentPage.value = Math.min(activeSlideIndex.value + 1, genTotalPages.value)
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'text',
+      content: data.message || `已更新第 ${activeSlideIndex.value + 1} 页。`,
+      created_at: new Date().toISOString(),
+    })
+  } catch (e) {
+    messages.value.push({ role: 'assistant', message_type: 'error', content: e.message })
+  } finally {
+    isStreaming.value = false
+  }
+}
+
+// ========== 下载 ==========
+async function handleDownload() {
+  let resultId = currentResult.value?.result_id
+  if (currentSessionId.value) {
+    try {
+      const latestSessionDetail = await getSessionDetail(currentSessionId.value)
+      const latestResult = latestSessionDetail.results?.find(r => r.is_current)
+      if (latestResult?.id && latestResult.id !== currentResult.value?.result_id) {
+        currentResult.value = normalizeResultRecord(latestResult)
+        await loadResultDetail(latestResult.id)
+      }
+      resultId = latestResult?.id || resultId
+    } catch (error) {
+      console.warn('刷新当前PPT结果失败，继续使用页面已有结果:', error)
+    }
+  }
+  if (!resultId) return
+  const pendingWindow = openPendingPptDownloadWindow()
+  try {
+    const data = await downloadResult(resultId)
+    const fileUrl = getPptDownloadUrl(data?.file_url, currentResult.value?.file_url)
+    if (fileUrl) {
+      currentResult.value = {
+        ...currentResult.value,
+        result_id: resultId,
+        id: resultId,
+        file_url: fileUrl,
+      }
+      triggerPptDownload(fileUrl, { presetWindow: pendingWindow })
+    } else {
+      pendingWindow?.close?.()
+    }
+  } catch (e) {
+    const fallbackUrl = getPptDownloadUrl('', currentResult.value?.file_url)
+    if (fallbackUrl) {
+      triggerPptDownload(fallbackUrl, { presetWindow: pendingWindow })
+      return
+    }
+    pendingWindow?.close?.()
+    console.error('下载失败:', e)
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'error',
+      content: e?.message || '下载 PPT 失败，请稍后重试',
+    })
+  }
+}
+
+// ========== 加载结果详情 ==========
+async function loadResultDetail(resultId) {
+  try {
+    const detail = await getResultDetail(resultId)
+    currentResult.value = normalizeResultRecord(detail)
+    await applyPptxProperty(detail.edited_pptx_property || detail.source_pptx_property || '')
+    genTotalPages.value = detail.total_pages || 0
+    genCurrentPage.value = detail.total_pages || 0
+  } catch (e) {
+    console.error('加载结果失败:', e)
+  }
+}
+
+// ========== 进入预览 ==========
+function enterPreview() {
+  stage.value = 'preview'
+  sidebarCollapsed.value = true
+}
+
+// ========== Stage 3 拖拽：对话/预览分割 ==========
+function startResizeMain(e) {
+  isResizingMain.value = true
+  resizeStartX = e.clientX
+  resizeStartVal = chatPanelWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onResizeMain)
+  document.addEventListener('mouseup', stopResizeMain)
+}
+
+function onResizeMain(e) {
+  const container = document.querySelector('.preview-layout')
+  if (!container) return
+  const cw = container.offsetWidth
+  const delta = e.clientX - resizeStartX
+  const pct = resizeStartVal + (delta / cw) * 100
+  chatPanelWidth.value = Math.max(25, Math.min(65, pct))
+}
+
+function stopResizeMain() {
+  isResizingMain.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', onResizeMain)
+  document.removeEventListener('mouseup', stopResizeMain)
+}
+
+// ========== Stage 3 拖拽：缩略图宽度 ==========
+function startResizeThumb(e) {
+  isResizingThumb.value = true
+  resizeStartX = e.clientX
+  resizeStartVal = thumbWidth.value
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onResizeThumb)
+  document.addEventListener('mouseup', stopResizeThumb)
+}
+
+function onResizeThumb(e) {
+  const delta = e.clientX - resizeStartX
+  thumbWidth.value = Math.max(100, Math.min(280, resizeStartVal + delta))
+}
+
+function stopResizeThumb() {
+  isResizingThumb.value = false
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', onResizeThumb)
+  document.removeEventListener('mouseup', stopResizeThumb)
+}
+
+// ========== 工具按钮 ==========
+function handleOpenFileUpload() {
+  fileInputRef.value?.click()
+}
+
+function handleOpenImageUpload() {
+  imageInputRef.value?.click()
+}
+
+function handleFileSelected(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  try {
-    const res = await uploadFileToBackend(file)
-    uploadResult.value = res
-    if (hasSentMessages.value) {
-      messages.value.push({
-        role: 'assistant',
-        content: `已上传「${res.filename}」，已提取 ${res.extracted_length} 字。后续生成会结合该文件内容。`
-      })
-    }
-    await nextTick()
-  } catch (err) {
-    if (hasSentMessages.value) {
-      messages.value.push({
-        role: 'assistant',
-        content: '上传失败：' + (err?.message || String(err))
-      })
-    }
-  }
+  // TODO: upload to backend
+  userInput.value += `[已上传文件: ${file.name}] `
   e.target.value = ''
 }
 
-function handleSend() {
-  const text = pptTopic.value?.trim()
-  if (!text || isSending.value) return
-
-  isSending.value = true
-  messages.value.push({ role: 'user', content: text })
-  pptTopic.value = ''
-  hasSentMessages.value = true
-
-  messages.value.push({
-    role: 'assistant',
-    content: '已收到您的需求，PPT 生成功能正在开发中，请期待后续更新。'
-  })
-  isSending.value = false
+function handleImageSelected(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  userInput.value += `[已上传图片: ${file.name}] `
+  e.target.value = ''
 }
 
-const props = defineProps({
-  resetKey: {
-    type: Number,
-    default: 0
+function handleOpenVoice() {
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    alert('当前浏览器不支持语音识别')
+    return
   }
-})
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+  const recognition = new SpeechRecognition()
+  recognition.lang = 'zh-CN'
+  recognition.continuous = false
+  recognition.interimResults = false
 
-function resetState() {
-  pptTopic.value = ''
-  pptStyleTab.value = 'style'
-  selectedStyle.value = 'free'
-  hasSentMessages.value = false
-  messages.value = []
-  uploadResult.value = null
-  activeSlideIndex.value = 0
-  pptTitle.value = '中国传统文化PPT'
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript
+    userInput.value += transcript
+    isRecording.value = false
+  }
+  recognition.onerror = () => { isRecording.value = false }
+  recognition.onend = () => { isRecording.value = false }
+
+  isRecording.value = true
+  recognition.start()
 }
 
-watch(
-  () => props.resetKey,
-  () => {
-    resetState()
+function handleOpenKnowledge(e) {
+  knowledgeTriggerEl.value = e?.target || null
+  showKnowledgeModal.value = true
+}
+
+async function renderExportSlides() {
+  if (!pptxDoc.value?.pages?.length) return
+
+  await nextTick()
+
+  for (let index = 0; index < slides.value.length; index += 1) {
+    const canvasEl = exportCanvasRefs[index]
+    if (!canvasEl) continue
+
+    let painter = exportPainters.get(index)
+    if (!painter) {
+      painter = new Ppt2Canvas(canvasEl, 'anonymous')
+      exportPainters.set(index, painter)
+    }
+
+    canvasEl.width = pptxDoc.value.width * 2
+    canvasEl.height = pptxDoc.value.height * 2
+    canvasEl.style.width = `${pptxDoc.value.width}px`
+    canvasEl.style.height = `${pptxDoc.value.height}px`
+
+    await painter.drawPptx(pptxDoc.value, index)
   }
-)
+
+  await waitForPdfRender()
+}
+
+function handleFullscreen() {
+  isPreviewFullscreen.value = !isPreviewFullscreen.value
+  syncFullscreenBodyState()
+}
+
+async function handleExportPdf() {
+  return handleExportPdfDirect()
+}
+
+async function handleExportPdfDirect() {
+  if (!pptxDoc.value?.pages?.length || isExportingPdf.value) return
+
+  try {
+    isExportingPdf.value = true
+    await renderExportSlides()
+
+    const { jsPDF } = await import('jspdf')
+    const filename = `${currentSession.value?.title || 'PPT棰勮'}.pdf`
+    const canvases = exportCanvasRefs
+      .slice(0, slides.value.length)
+      .filter(canvas => canvas && canvas.width > 0 && canvas.height > 0)
+
+    if (!canvases.length) {
+      throw new Error('PDF 瀵煎嚭鐢荤布鏈噯澶囧畬鎴?')
+    }
+
+    const pdf = new jsPDF({
+      unit: 'pt',
+      format: 'a4',
+      orientation: 'landscape',
+      compress: true,
+    })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const margin = 24
+    const contentWidth = pageWidth - margin * 2
+    const contentHeight = pageHeight - margin * 2
+
+    canvases.forEach((canvas, index) => {
+      if (index > 0) {
+        pdf.addPage('a4', 'landscape')
+      }
+
+      const canvasRatio = canvas.width / canvas.height
+      let renderWidth = contentWidth
+      let renderHeight = renderWidth / canvasRatio
+
+      if (renderHeight > contentHeight) {
+        renderHeight = contentHeight
+        renderWidth = renderHeight * canvasRatio
+      }
+
+      const x = (pageWidth - renderWidth) / 2
+      const y = (pageHeight - renderHeight) / 2
+
+      pdf.setFillColor(255, 255, 255)
+      pdf.rect(0, 0, pageWidth, pageHeight, 'F')
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', x, y, renderWidth, renderHeight, undefined, 'FAST')
+    })
+
+    pdf.save(filename)
+  } catch (error) {
+    console.error('PDF export failed:', error)
+    messages.value.push({
+      role: 'assistant',
+      message_type: 'error',
+      content: error?.message || '瀵煎嚭 PDF 澶辫触锛岃绋嶅悗閲嶈瘯',
+    })
+  } finally {
+    isExportingPdf.value = false
+  }
+}
+
+async function waitForPdfRender() {
+  await nextTick()
+  await new Promise(resolve => requestAnimationFrame(() => resolve()))
+  await new Promise(resolve => requestAnimationFrame(() => resolve()))
+  await new Promise(resolve => setTimeout(resolve, 180))
+}
 </script>
 
 <template>
-  <div class="content-panel ppt-panel" :class="{ 'ppt-panel-two-col': hasSentMessages }">
-    <input
-      ref="fileInput"
-      type="file"
-      class="hidden-file-input"
-      accept=".pdf,.doc,.docx,.ppt,.pptx,.txt"
-      @change="onFileSelect"
+  <div class="ppt-page">
+    <!-- 隐藏的文件输入 -->
+    <input ref="fileInputRef" type="file" style="display:none" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt" @change="handleFileSelected" />
+    <input ref="imageInputRef" type="file" style="display:none" accept="image/*" @change="handleImageSelected" />
+
+    <!-- 侧边栏 -->
+    <PptSidebar
+      :sessions="sessions"
+      :active-id="currentSessionId"
+      :collapsed="sidebarCollapsed"
+      @new-session="handleNewSession"
+      @select="handleSelectSession"
+      @delete="handleDeleteSession"
+      @toggle="sidebarCollapsed = !sidebarCollapsed"
     />
 
-    <!-- 初始布局：居中输入区 + 风格选择 -->
-    <template v-if="!hasSentMessages">
-      <div class="ppt-hero">
-        <h1 class="ppt-hero-title">智能PPT生成</h1>
-        <p class="ppt-hero-sub">输入主题，AI自动生成专业PPT内容。支持多种风格模板，智能内容填充，让备课更高效</p>
-      </div>
-      <div class="ppt-chatbox">
-        <div class="ppt-chatbox-top">
-          <button
-            class="style-btn-inline active"
-            :style="{ background: styleButtonBackground, color: '#ffffff' }"
-          >
-            {{ currentStyle.name }}
-          </button>
-          <input v-model="pptTopic" type="text" class="ppt-topic-input" placeholder="输入你想创作的PPT 主题" />
-        </div>
-        <div v-if="uploadResult" class="ppt-upload-banner">
-          <span class="ppt-upload-title">已选择文件</span>
-          <span class="ppt-upload-name">{{ uploadResult.filename }}</span>
-          <span class="ppt-upload-meta">提取 {{ uploadResult.extracted_length }} 字</span>
-          <button type="button" class="ppt-upload-remove" title="移除附件" @click="clearUpload">×</button>
-        </div>
-        <div class="ppt-chatbox-bottom">
-          <div class="ppt-control-bar">
-            <button class="ctrl-btn" type="button" title="选择本地文件" @click="triggerUpload">+</button>
-            <button class="ctrl-btn">自动页数 ▼</button>
-            <button v-if="isSupported" class="voice-btn" :class="{ recording: isRecording }" title="语音输入" @click="toggleRecording">
-              <img :src="voiceImg" class="voice-icon-img" alt="语音" />
-            </button>
-          </div>
-          <button class="ppt-submit-btn" type="button" @click="handleSend"><img :src="arrowGreenImg" class="ppt-submit-btn-icon" alt="发送" /></button>
-        </div>
-      </div>
-      <div class="ppt-tabs">
-        <button class="ppt-tab" :class="{ active: pptStyleTab === 'template' }" @click="pptStyleTab = 'template'">选择模版</button>
-      </div>
-      <div class="ppt-style-grid">
-        <div v-for="s in pptStyles" :key="s.id" class="style-card" :class="{ selected: selectedStyle === s.id }" @click="selectedStyle = s.id">
-          <div class="style-preview style-free" v-if="s.id === 'free'">
-            <span v-if="selectedStyle === 'free'" class="check-mark">✓</span>
-            <span v-if="selectedStyle === 'free'" class="selected-tag">已选择</span>
-          </div>
-          <div class="style-preview style-business" v-else-if="s.id === 'business'">
-            <span class="preview-text">季度业绩总结 · 商务路演</span>
-          </div>
-          <div class="style-preview style-tech" v-else-if="s.id === 'tech'">
-            <span class="preview-text">AI 与智能教育 平台方案介绍</span>
-          </div>
-          <div class="style-preview style-fresh" v-else-if="s.id === 'fresh'">
-            <span class="preview-text">阅读分享会 青春校园主题</span>
-          </div>
-          <div class="style-preview style-academic" v-else-if="s.id === 'academic'">
-            <span class="preview-text">教育数据分析 教学效果评估</span>
-          </div>
-          <div class="style-preview style-guofeng" v-else-if="s.id === 'guofeng'">
-            <span class="preview-text">中华传统文化主题 课堂展示</span>
-          </div>
-          <div class="style-preview style-minimal" v-else-if="s.id === 'minimal'">
-            <span class="preview-text">课堂重点梳理 极简信息图表</span>
-          </div>
-          <div class="style-preview style-creative" v-else>
-            <span class="preview-text">科普故事 创意插画课堂</span>
-          </div>
-          <span class="style-name">{{ s.name }}</span>
-        </div>
-      </div>
-    </template>
+    <!-- 主区域 -->
+    <div class="ppt-main">
+      <!-- Stage 1: 欢迎页 -->
+      <template v-if="stage === 'welcome'">
+        <WelcomePanel
+          v-model="userInput"
+          :selected-template-id="selectedTemplateId"
+          @send="handleSend"
+          @update:template-id="selectedTemplateId = $event"
+          @select-template="handleTemplateSelected"
+          @open-file-upload="handleOpenFileUpload"
+          @open-image-upload="handleOpenImageUpload"
+          @open-voice="handleOpenVoice"
+          @open-knowledge="handleOpenKnowledge"
+        />
+      </template>
 
-    <!-- 发送后：左对话区 + 右展示区（与动游制作一致） -->
-    <div v-else class="ppt-two-column">
-      <div class="ppt-left">
-        <div class="ppt-chat-messages">
-          <div v-for="(msg, i) in messages" :key="i" class="ppt-chat-msg" :class="msg.role">
-            <span class="ppt-chat-label">{{ msg.role === 'user' ? '我' : '小助手' }}</span>
-            <div class="ppt-chat-content">{{ msg.content }}</div>
+      <!-- Stage 2: 对话+大纲 -->
+      <template v-else-if="stage === 'chat'">
+        <div class="chat-layout">
+          <div class="chat-left">
+            <ChatPanel
+              :messages="messages"
+              :streaming-text="streamingText"
+              :is-streaming="isStreaming"
+              :active-outline-id="currentOutline?.id || null"
+              :can-approve-outline="!currentResult"
+              @preview="enterPreview"
+              @outline-approve="handleApproveOutline"
+              @outline-edit="handleOutlineEdit"
+              @outline-regenerate="streamGenerateOutline(currentOutline.content)"
+            />
+
+            <ChatInput
+              v-model="userInput"
+              :disabled="isStreaming"
+              :loading="isStreaming"
+              :placeholder="currentOutline ? '继续对话或修改大纲...' : '描述你的PPT主题...'"
+              @send="handleSend"
+              @open-file-upload="handleOpenFileUpload"
+              @open-image-upload="handleOpenImageUpload"
+              @open-voice="handleOpenVoice"
+              @open-knowledge="handleOpenKnowledge"
+            />
+          </div>
+
+          <div v-if="showTemplateSelector" class="chat-right">
+            <TemplateSelector
+              v-model="selectedTemplateId"
+              @select="handleTemplateSelected"
+              @close="showTemplateSelector = false"
+            />
           </div>
         </div>
-        <div class="ppt-chatbox-compact">
-          <div v-if="uploadResult" class="ppt-upload-banner ppt-upload-banner-compact">
-            <span class="ppt-upload-title">已选择文件</span>
-            <span class="ppt-upload-name">{{ uploadResult.filename }}</span>
-            <span class="ppt-upload-meta">提取 {{ uploadResult.extracted_length }} 字</span>
-            <button type="button" class="ppt-upload-remove" title="移除附件" @click="clearUpload">×</button>
+      </template>
+
+      <!-- Stage 3: 预览+编辑 (原型布局: 左=对话 | 右=预览) -->
+      <template v-else-if="stage === 'preview'">
+        <div class="preview-layout" :class="{ 'preview-layout-fullscreen': isPreviewFullscreen }">
+          <!-- 左侧对话面板 -->
+          <div class="chat-panel-wrap" :style="{ width: chatPanelWidth + '%' }">
+            <ChatPanel
+              :messages="messages"
+              :streaming-text="streamingText"
+              :is-streaming="isStreaming"
+              :active-outline-id="currentOutline?.id || null"
+              :can-approve-outline="!currentResult"
+              @outline-approve="handleApproveOutline"
+              @outline-edit="handleOutlineEdit"
+              @outline-regenerate="streamGenerateOutline(currentOutline.content)"
+            />
+
+            <ChatInput
+              v-model="userInput"
+              :disabled="isStreaming"
+              :loading="isStreaming"
+              placeholder="告诉我你想修改什么..."
+              @send="handleModifySend"
+              @open-file-upload="handleOpenFileUpload"
+              @open-image-upload="handleOpenImageUpload"
+              @open-voice="handleOpenVoice"
+              @open-knowledge="handleOpenKnowledge"
+            />
           </div>
-          <div class="ppt-compact-top">
-            <button
-              class="style-btn-inline active"
-              :style="{ background: styleButtonBackground, color: '#ffffff' }"
-            >
-              {{ currentStyle.name }}
-            </button>
-          </div>
-          <input v-model="pptTopic" type="text" class="ppt-topic-input-compact" placeholder="输入消息发送..." />
-          <div class="ppt-compact-bottom">
-            <div class="ppt-control-bar">
-              <button class="ctrl-btn" type="button" title="选择本地文件" @click="triggerUpload">+</button>
-              <button class="ctrl-btn">自动页数 ▼</button>
-              <button v-if="isSupported" class="voice-btn" :class="{ recording: isRecording }" title="语音输入" @click="toggleRecording">
-                <img :src="voiceImg" class="voice-icon-img" alt="语音" />
-              </button>
+
+          <!-- 拖拽分割线 -->
+          <div
+            class="resize-handle"
+            :class="{ dragging: isResizingMain }"
+            @mousedown.prevent="startResizeMain"
+          />
+
+          <!-- 右侧预览面板 -->
+          <div class="preview-panel" :style="{ width: isPreviewFullscreen ? '100%' : (100 - chatPanelWidth) + '%' }">
+            <div class="preview-toolbar">
+              <div class="toolbar-title">{{ currentSession?.title || 'PPT预览' }}.pptx</div>
+              <div class="toolbar-actions">
+                <button class="toolbar-btn" @click="handleFullscreen">{{ isPreviewFullscreen ? '退出全屏' : '全屏预览' }}</button>
+                <button class="toolbar-btn" @click="handleDownload">下载PPT</button>
+                <button class="toolbar-btn" :disabled="isExportingPdf" @click="handleExportPdf">
+                  {{ isExportingPdf ? '导出中...' : '导出PDF' }}
+                </button>
+              </div>
             </div>
-            <button class="ppt-submit-btn" type="button" :disabled="isSending" @click="handleSend"><img :src="arrowGreenImg" class="ppt-submit-btn-icon" alt="发送" /></button>
-          </div>
-        </div>
-      </div>
-      <div class="ppt-right">
-        <!-- 左侧：幻灯片缩略图 -->
-        <aside class="ppt-thumbnails" :class="{ collapsed: pptThumbnailsCollapsed }">
-          <button type="button" class="ppt-new-slide-btn">+ 新建幻灯片</button>
-          <button type="button" class="ppt-collapse-btn" :title="pptThumbnailsCollapsed ? '展开' : '收起'" @click="pptThumbnailsCollapsed = !pptThumbnailsCollapsed">
-            {{ pptThumbnailsCollapsed ? '→' : '←' }}
-          </button>
-          <div class="ppt-thumb-list">
-            <div
-              v-for="(slide, i) in pptSlides"
-              :key="slide.id"
-              class="ppt-thumb-item"
-              :class="{ active: activeSlideIndex === i }"
-              @click="activeSlideIndex = i"
-            >
-              <span class="ppt-thumb-num">{{ i + 1 }}</span>
-              <div class="ppt-thumb-preview" />
-            </div>
-          </div>
-        </aside>
-        <!-- 右侧主内容区 -->
-        <div class="ppt-main">
-          <header class="ppt-main-header">
-            <h3 class="ppt-main-title">{{ pptTitle }}</h3>
-            <div class="ppt-main-actions">
-              <button type="button" class="ppt-action-btn">▷ 放映</button>
-              <button type="button" class="ppt-action-btn">分享</button>
-              <button type="button" class="ppt-action-btn">下载</button>
-              <span class="ppt-action-ellipsis">…</span>
-            </div>
-          </header>
-          <div class="ppt-toolbar">
-            <div class="ppt-toolbar-left">
-              <span class="ppt-tool-item">文本</span>
-              <span class="ppt-tool-item">图形</span>
-              <span class="ppt-tool-item">图片</span>
-              <span class="ppt-tool-item">表格</span>
-              <span class="ppt-tool-item">格式</span>
-              <span class="ppt-tool-item">动画</span>
-            </div>
-            <div class="ppt-toolbar-right">
-              <button type="button" class="ppt-zoom-btn">−</button>
-              <span class="ppt-zoom-value">{{ pptZoom }}%</span>
-              <button type="button" class="ppt-zoom-btn">+</button>
-            </div>
-          </div>
-          <div class="ppt-slide-preview">
-            <div class="ppt-slide-canvas">
-              <div class="ppt-slide-placeholder">
-                <p class="ppt-slide-title">华夏之光：中国传统文化概览</p>
-                <p class="ppt-slide-subtitle">探寻千年文明的璀璨瑰宝</p>
-                <div class="ppt-slide-btn">传承</div>
-                <p class="ppt-slide-credit">由 AI 生成</p>
+
+            <div class="preview-content">
+              <div class="preview-thumbnails" :style="{ width: thumbWidth + 'px' }">
+                <PptThumbnailList
+                  :slides="slides"
+                  :active-index="activeSlideIndex"
+                  :pptx-doc="pptxDoc"
+                  :dirty-slide-index="thumbnailDirtySlideIndex"
+                  :render-nonce="thumbnailRenderNonce"
+                  @select="activeSlideIndex = $event"
+                />
+              </div>
+              <div
+                class="thumb-resize-handle"
+                :class="{ dragging: isResizingThumb }"
+                @mousedown.prevent="startResizeThumb"
+              />
+
+              <div class="preview-workspace">
+                <div class="preview-canvas-area">
+                  <PptCanvas
+                    :pptx-doc="pptxDoc"
+                    :slide-index="activeSlideIndex"
+                    :generating="isGeneratingPpt"
+                    :current-page="genCurrentPage"
+                    :total-pages="genTotalPages"
+                    @change="persistEditedPpt"
+                  />
+                </div>
+
+                <div class="preview-footer">
+                  <div class="footer-section">
+                    <div class="footer-label">演讲备注</div>
+                    <div class="footer-content">{{ currentSpeakerNotes || '暂无演讲备注' }}</div>
+                  </div>
+                  <div class="footer-section">
+                    <div class="footer-label">知识来源</div>
+                    <div class="footer-content">
+                      <span v-if="!currentResult?.sources?.length" class="source-item">暂无来源</span>
+                      <span v-for="(src, i) in (currentResult?.sources || [])" :key="i" class="source-item">{{ src }}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <div class="ppt-speaker-notes">
-            <div class="ppt-notes-handle">⋮⋮⋮</div>
-            <textarea v-model="speakerNotes" class="ppt-notes-input" placeholder="添加演讲者备注…" rows="3"></textarea>
-          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 知识库弹窗 -->
+    <KnowledgeLibraryModal
+      v-if="showKnowledgeModal"
+      v-model="selectedKnowledgeIds"
+      :trigger-el="knowledgeTriggerEl"
+      @close="showKnowledgeModal = false"
+    />
+
+    <div ref="exportContainerRef" class="pdf-export-layer" :style="pdfExportLayerStyle">
+      <div
+        v-for="(_, index) in slides"
+        :key="`pdf-slide-${index}`"
+        class="pdf-export-slide"
+      >
+        <div class="pdf-export-slide-inner">
+          <canvas :ref="(el) => setExportCanvasRef(el, index)" class="pdf-export-canvas" />
         </div>
       </div>
     </div>
@@ -335,675 +1200,13 @@ watch(
 </template>
 
 <style scoped>
-.content-panel {
-  flex: 1;
+.ppt-page {
   display: flex;
-  flex-direction: column;
-  background: transparent;
-  margin: 0;
-  overflow: hidden;
-}
-
-.hidden-file-input {
-  position: absolute;
-  width: 0;
-  height: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.ppt-panel {
-  padding: 55px 32px 32px;
-  overflow-y: auto;
-}
-
-.ppt-panel.ppt-panel-two-col {
-  padding: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.ppt-upload-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #f0f9ff;
-  border-radius: 8px;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-
-.ppt-upload-title {
-  color: #64748b;
-}
-
-.ppt-upload-name {
-  color: #0f172a;
-  font-weight: 500;
-}
-
-.ppt-upload-meta {
-  color: #94a3b8;
-  font-size: 12px;
-}
-
-.ppt-upload-remove {
-  margin-left: auto;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  color: #64748b;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.ppt-upload-remove:hover {
-  background: #fee2e2;
-  color: #b91c1c;
-  border-color: #fecaca;
-}
-
-.ppt-hero {
-  max-width: 960px;
-  margin: 12px auto 8px auto;
-  text-align: center;
-  padding: 24px 12px 8px 12px;
-}
-
-.ppt-hero-title {
-  font-size: 43px;
-  background: linear-gradient(90deg, #1f3d7a 0%, #2563eb 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-fill-color: transparent;
-  margin: -28px 0 12px 0;
-  font-weight: 700;
-}
-
-.ppt-hero-sub {
-  color: #4b5f7a;
-  font-size: 17px;
-  margin: -5px;
-}
-
-.ppt-chatbox {
-  width: 78%;
-  aspect-ratio: 7 / 1;
-  min-height: 150px;
-  border: 1px solid #cbd5e1;
-  border-radius: 14px;
-  background: #fdfefe;
-  margin: 15px auto 24px auto;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  box-sizing: border-box;
-}
-
-.ppt-chatbox:focus-within {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
-.ppt-chatbox-top {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.style-btn-inline {
-  padding: 11px 22px;
-  border: none;
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  color: #fff;
-  font-size: 15px;
-  cursor: pointer;
-  flex-shrink: 0;
-  border-radius: 8px;
-}
-
-.style-btn-inline:not(.active) {
-  background: #e2e8f0;
-  color: #64748b;
-}
-
-.ppt-topic-input {
-  flex: 1;
-  padding: 8px 0;
-  border: none;
-  border-radius: 0;
-  font-size: 16px;
-  outline: none;
-  background: transparent;
-}
-
-.ppt-topic-input::placeholder {
-  color: #94a3b8;
-}
-
-.ppt-chatbox-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ppt-control-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.ppt-submit-btn {
-  width: 40px;
-  height: 40px;
-  border: none;
-  background: #e2e8f0;
-  color: #64748b;
-  border-radius: 50%;
-  font-size: 1.25rem;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.ppt-submit-btn:hover {
-  background: #cbd5e1;
-}
-
-.ppt-submit-btn-icon {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-}
-
-.ctrl-btn {
-  padding: 8px 16px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  border-radius: 8px;
-  font-size: 13px;
-  color: #475569;
-  cursor: pointer;
-}
-
-.ctrl-btn.agent {
-  border-color: #3b82f6;
-  color: #3b82f6;
-}
-
-.voice-btn {
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  border-radius: 8px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.voice-btn:hover {
-  background: #f8fafc;
-}
-
-.voice-btn.recording {
-  background: #fecaca;
-  border-color: #fecaca;
-  animation: ppt-voice-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes ppt-voice-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.voice-icon-img {
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-}
-
-.ppt-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 15px;
-  max-width: 960px;
-  margin-left: auto;
-  margin-right: auto;
-  width: 100%;
-}
-
-.ppt-tab {
-  padding: 10px 20px;
-  border: none;
-  background: transparent;
-  font-size: 14px;
-  color: #64748b;
-  cursor: pointer;
-  border-radius: 0;
-  border-bottom: 2px solid transparent;
-}
-
-.ppt-tab.active {
-  color: #3b82f6;
-  font-weight: 500;
-  border-bottom-color: #3b82f6;
-}
-
-.ppt-style-grid {
-  display: grid;
-  justify-items: center;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  max-width: 960px;
-  margin: 0 auto;
-}
-
-.style-card {
-  width: 220px;
-  height: 130px;
-  border-radius: 16px;
-  overflow: hidden;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: radial-gradient(circle at 0 0, rgba(248, 250, 252, 0.9), transparent 55%),
-    #ffffff;
-  cursor: pointer;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-}
-
-.style-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
-  border-color: rgba(59, 130, 246, 0.28);
-}
-
-.style-card.selected {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.55), 0 18px 40px rgba(37, 99, 235, 0.25);
-}
-
-.style-preview {
-  width: 100%;
-  height: 78%;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  position: relative;
-  border-radius: 16px 16px 0 0;
-  overflow: hidden;
-}
-
-.style-free {
-  background: linear-gradient(135deg, #FFE0D5 0%,rgb(255, 223, 179) 100%);
-}
-
-.style-business {
-  background: linear-gradient(135deg,rgb(206, 225, 246) 0%, #E2E8F0 100%);
-}
-
-.style-tech {
-  background: linear-gradient(135deg,rgb(186, 223, 255) 0%,rgb(201, 224, 255) 100%);
-}
-
-.style-fresh {
-  background: linear-gradient(135deg,rgb(209, 249, 223) 0%,rgb(207, 255, 233) 100%);
-}
-
-.style-academic {
-  background: linear-gradient(135deg,rgb(239, 232, 255) 0%, #D3E2F0 100%);
-}
-
-.style-minimal {
-  background: linear-gradient(135deg, #E5E7EB 0%, #F3F4F6 100%);
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.style-guofeng {
-  background: linear-gradient(135deg, #F9CCD3 0%,rgb(255, 194, 177) 100%);
-}
-
-.style-creative {
-  background: linear-gradient(135deg,rgb(253, 214, 255) 0%,rgb(255, 254, 222) 100%);
-}
-
-.memphis-shapes {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.shape {
-  display: inline-block;
-}
-
-.shape-diamond {
-  width: 16px;
-  height: 16px;
-  background: #eab308;
-  transform: rotate(45deg);
-}
-
-.shape-rect {
-  width: 20px;
-  height: 12px;
-  background: #ec4899;
-}
-
-.shape-circle {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #3b82f6;
-}
-
-.shape-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #ef4444;
-}
-
-.style-bold {
-  background: linear-gradient(135deg, #ffffff 0%, #fee2e2 40%,rgb(220, 91, 91) 40%,rgb(206, 77, 77) 100%);
-}
-
-.style-bold .preview-text {
-  color: #1e293b;
-  font-weight: 700;
-}
-
-.three-dots {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.dot.green { background: #22c55e; }
-.dot.orange { background: #f97316; }
-.dot.red { background: #ef4444; }
-
-.check-mark {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  font-size: 1.2rem;
-  color: #22c55e;
-}
-
-.selected-tag {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  font-size: 0.75rem;
-  color: #64748b;
-}
-
-.preview-text {
-  font-size: 0.85rem;
-  color: #1e293b;
-  font-weight: 500;
-}
-
-.style-pro .preview-text {
-  color: #fff;
-}
-
-.style-name {
-  padding: 10px 16px;
-  font-size: 0.875rem;
-  color: #475569;
-  background: #fff;
-  border-top: 1px solid #f1f5f9;
-  display: block; /* 修复：span 标签添加块级显示，确保样式生效 */
-}
-
-/* 发送后：左对话区 + 右展示区（与动游制作一致） */
-.ppt-two-column {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  max-height: 100%;
-  gap: 16px;
-  overflow: hidden;
-  padding: 20px 32px;
-}
-
-.ppt-left {
-  flex: 0 0 380px;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.ppt-chat-messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 12px 0;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.ppt-chat-messages::-webkit-scrollbar {
-  display: none;
-}
-
-.ppt-chat-msg {
-  margin-bottom: 16px;
-  display: flex;
-  flex-direction: column;
-}
-
-.ppt-chat-msg.user {
-  align-items: flex-end;
-}
-
-.ppt-chat-msg.assistant {
-  align-items: flex-start;
-}
-
-.ppt-chat-label {
-  font-size: 13px;
-  margin-bottom: 4px;
-  display: block;
-  color: #64748b;
-}
-
-.ppt-chat-content {
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-
-.ppt-chat-msg.user .ppt-chat-content {
-  background: #E0EDFE;
-  color: #000;
-}
-
-.ppt-chat-msg.assistant .ppt-chat-content {
-  background: #fff;
-  color: #000;
-}
-
-.ppt-chatbox-compact {
-  flex-shrink: 0;
-  border: 1px solid #cbd5e1;
-  border-radius: 12px;
-  background: #fdfefe;
-  padding: 12px 16px;
-}
-
-.ppt-chatbox-compact:focus-within {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-
-.ppt-upload-banner-compact {
-  margin-bottom: 8px;
-}
-
-.ppt-compact-top {
-  margin-bottom: 8px;
-}
-
-.ppt-topic-input-compact {
-  width: 100%;
-  border: none;
-  outline: none;
-  font-size: 15px;
-  padding: 8px 0;
-  background: transparent;
-}
-
-.ppt-topic-input-compact::placeholder {
-  color: #94a3b8;
-}
-
-.ppt-compact-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #f1f5f9;
-}
-
-.ppt-right {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  background: #fff;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  overflow: hidden;
-}
-
-/* 左侧幻灯片缩略图栏 */
-.ppt-thumbnails {
-  width: 160px;
-  min-width: 160px;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid #e2e8f0;
-  background: #f8fafc;
-  transition: width 0.2s, min-width 0.2s;
-}
-
-.ppt-thumbnails.collapsed {
-  width: 48px;
-  min-width: 48px;
-}
-
-.ppt-thumbnails.collapsed .ppt-new-slide-btn,
-.ppt-thumbnails.collapsed .ppt-thumb-list {
-  display: none;
-}
-
-.ppt-new-slide-btn {
-  margin: 12px 10px 8px;
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  border-radius: 8px;
-  font-size: 13px;
-  color: #475569;
-  cursor: pointer;
-  text-align: left;
-}
-
-.ppt-new-slide-btn:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-}
-
-.ppt-collapse-btn {
-  align-self: flex-start;
-  margin: 4px 8px;
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  font-size: 14px;
-  color: #64748b;
-  cursor: pointer;
-}
-
-.ppt-collapse-btn:hover {
-  color: #0f172a;
-}
-
-.ppt-thumb-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 8px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.ppt-thumb-item {
-  position: relative;
-  border: 2px solid transparent;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-  aspect-ratio: 16/9;
-  background: #fff;
-}
-
-.ppt-thumb-item:hover {
-  border-color: #cbd5e1;
-}
-
-.ppt-thumb-item.active {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 1px #3b82f6;
-}
-
-.ppt-thumb-num {
-  position: absolute;
-  top: 4px;
-  left: 6px;
-  font-size: 11px;
-  color: #64748b;
-  z-index: 1;
-}
-
-.ppt-thumb-preview {
-  width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  min-height: 0;
+  background: #f5f5f5;
+  overflow: hidden;
 }
-
-.ppt-thumb-item.active .ppt-thumb-preview {
-  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-}
-
-/* 右侧主内容区 */
 .ppt-main {
   flex: 1;
   min-width: 0;
@@ -1013,227 +1216,235 @@ watch(
   overflow: hidden;
 }
 
-.ppt-main-header {
+/* ========== Stage 2: Chat layout ========== */
+.chat-layout {
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
 }
-
-.ppt-main-title {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.ppt-main-actions {
+.chat-left {
+  flex: 1;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
-
-.ppt-action-btn {
-  padding: 6px 12px;
-  border: 1px solid #e2e8f0;
+.chat-right {
+  width: 360px;
+  border-left: 1px solid #e5e5e5;
   background: #fff;
-  border-radius: 6px;
-  font-size: 13px;
-  color: #475569;
-  cursor: pointer;
+  flex-shrink: 0;
+  min-height: 0;
 }
 
-.ppt-action-btn:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
-}
-
-.ppt-action-ellipsis {
-  font-size: 16px;
-  color: #94a3b8;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.ppt-toolbar {
+/* ========== Stage 3: Preview layout ========== */
+.preview-layout {
+  flex: 1;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  border-bottom: 1px solid #e2e8f0;
+  min-height: 0;
+  overflow: hidden;
+}
+.preview-layout-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: #f5f5f5;
+}
+.preview-layout-fullscreen .chat-panel-wrap,
+.preview-layout-fullscreen .resize-handle {
+  display: none;
+}
+.preview-layout-fullscreen .preview-panel {
+  width: 100% !important;
+  height: 100%;
+}
+.chat-panel-wrap {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e5e5e5;
+  background: #fafafa;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Resize handle (chat/preview split) */
+.resize-handle {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  position: relative;
+  transition: background 0.2s;
   flex-shrink: 0;
 }
+.resize-handle:hover,
+.resize-handle.dragging {
+  background: #3a61ea;
+}
 
-.ppt-toolbar-left {
+/* Preview panel */
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.preview-toolbar {
+  padding: 16px 24px;
+  border-bottom: 1px solid #e5e5e5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+.toolbar-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: #333;
+}
+.toolbar-actions {
   display: flex;
   gap: 12px;
 }
-
-.ppt-tool-item {
-  font-size: 14px;
-  color: #475569;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-}
-
-.ppt-tool-item:hover {
-  background: #f1f5f9;
-  color: #0f172a;
-}
-
-.ppt-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.ppt-zoom-btn {
-  width: 24px;
-  height: 24px;
-  border: 1px solid #e2e8f0;
+.toolbar-btn {
+  padding: 8px 16px;
+  border: 1px solid #e5e5e5;
   background: #fff;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 14px;
-  color: #64748b;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
+  transition: all 0.2s;
 }
-
-.ppt-zoom-btn:hover {
+.toolbar-btn:hover {
+  background: #f9f9f9;
+}
+.toolbar-btn:disabled {
+  cursor: wait;
+  color: #98a2b3;
   background: #f8fafc;
-  border-color: #cbd5e1;
 }
 
-.ppt-zoom-value {
-  font-size: 13px;
-  color: #64748b;
-  min-width: 40px;
-  text-align: center;
-}
-
-.ppt-slide-preview {
+/* Preview content area */
+.preview-content {
   flex: 1;
+  display: flex;
   min-height: 0;
-  padding: 24px;
-  overflow: auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
 }
-
-.ppt-slide-canvas {
-  width: 100%;
-  max-width: 720px;
-  aspect-ratio: 16/9;
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 20%, #fef9c3 100%);
-  border: 1px solid #fcd34d;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.ppt-slide-placeholder {
-  text-align: center;
-  padding: 24px;
-}
-
-.ppt-slide-title {
-  margin: 0 0 8px;
-  font-size: 24px;
-  font-weight: 700;
-  color: #c2410c;
-}
-
-.ppt-slide-subtitle {
-  margin: 0 0 16px;
-  font-size: 14px;
-  color: #64748b;
-}
-
-.ppt-slide-btn {
-  display: inline-block;
-  padding: 10px 24px;
-  background: #dc2626;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 500;
-  border-radius: 8px;
-  margin-bottom: 20px;
-}
-
-.ppt-slide-credit {
-  margin: 0;
-  font-size: 11px;
-  color: #94a3b8;
-}
-
-.ppt-speaker-notes {
+.preview-thumbnails {
+  padding: 16px 12px;
+  background: #f9f9f9;
+  border-right: 1px solid #e5e5e5;
+  overflow-y: auto;
   flex-shrink: 0;
-  border-top: 1px solid #e2e8f0;
-  padding: 12px 16px 16px;
-  position: relative;
+  min-height: 0;
 }
 
-.ppt-notes-handle {
-  text-align: center;
-  font-size: 12px;
-  color: #cbd5e1;
-  margin-bottom: 6px;
-  letter-spacing: 2px;
+/* Thumb resize handle */
+.thumb-resize-handle {
+  width: 4px;
+  flex-shrink: 0;
+  background: #e8e8e8;
+  cursor: col-resize;
+  transition: background 0.2s;
+}
+.thumb-resize-handle:hover,
+.thumb-resize-handle.dragging {
+  background: #3a61ea;
 }
 
-.ppt-notes-input {
-  width: 100%;
-  min-height: 70px;
-  padding: 10px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+/* Preview workspace */
+.preview-workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.preview-canvas-area {
+  flex: 1;
+  padding: 24px 24px 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  background: #f5f5f5;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Preview footer */
+.preview-footer {
+  padding: 20px 24px;
+  border-top: 1px solid #e5e5e5;
+  background: #fff;
+  flex-shrink: 0;
+}
+.footer-section {
+  margin-bottom: 16px;
+}
+.footer-section:last-child {
+  margin-bottom: 0;
+}
+.footer-label {
+  font-size: 13px;
+  color: #999;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+.footer-content {
   font-size: 14px;
+  color: #333;
   line-height: 1.6;
-  color: #334155;
-  resize: vertical;
-  font-family: inherit;
 }
-
-.ppt-notes-input:focus {
-  outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+.source-item {
+  display: inline-block;
+  padding: 4px 12px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
 }
-
-.ppt-notes-input::placeholder {
-  color: #94a3b8;
+.pdf-export-layer {
+  position: fixed;
+  left: -99999px;
+  top: 0;
+  width: 1120px;
+  pointer-events: none;
+  background: #fff;
+}
+.pdf-export-slide {
+  break-after: page;
+  page-break-after: always;
+  padding: 0;
+}
+.pdf-export-slide:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+.pdf-export-slide-inner {
+  width: 1120px;
+  min-height: 630px;
+  padding: 16px;
+  background: #fff;
+  box-sizing: border-box;
+}
+.pdf-export-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #fff;
 }
 
 @media (max-width: 900px) {
-  .ppt-style-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  .ppt-two-column {
-    flex-direction: column;
-    padding: 16px;
-  }
-  .ppt-left {
-    flex: 0 0 auto;
-    max-height: 45vh;
-  }
-  .ppt-right {
-    min-height: 400px;
-  }
-  .ppt-thumbnails {
-    width: 120px;
-    min-width: 120px;
-  }
-  .ppt-slide-canvas {
-    max-width: 100%;
-  }
+  .preview-layout { flex-direction: column; }
+  .chat-panel-wrap { width: 100% !important; height: 40%; }
+  .preview-panel { width: 100% !important; }
+  .preview-thumbnails { width: 100% !important; height: 80px; flex-direction: row; overflow-x: auto; }
 }
 </style>

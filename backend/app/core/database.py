@@ -1,24 +1,25 @@
 """
-数据库连接和会话管理
+Database connection and session management.
 """
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
-from typing import AsyncGenerator
 import os
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import AsyncGenerator
 
-load_dotenv()
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=ENV_FILE)
 
 
 class Base(DeclarativeBase):
-    """SQLAlchemy 声明基类"""
-    pass
+    """SQLAlchemy declarative base."""
 
 
-# 创建异步引擎
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_teaching"
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_teaching",
 )
 
 engine = create_async_engine(
@@ -29,7 +30,6 @@ engine = create_async_engine(
     max_overflow=20,
 )
 
-# 创建异步会话工厂
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -40,7 +40,8 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """获取数据库会话的依赖函数"""
+    """Yield a database session for request handling."""
+
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -53,6 +54,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """初始化数据库，创建所有表"""
+    """Create all tables for local initialization flows."""
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

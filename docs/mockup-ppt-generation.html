@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PPT生成页面 - 三阶段布局原型</title>
+<style>
+  :root { --sidebar-width: 260px; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
+
+  /* 侧边栏 */
+  .sidebar { width: var(--sidebar-width); height: 100vh; background: white; border-right: 1px solid #e5e5e5; position: fixed; left: 0; top: 0; display: flex; flex-direction: column; transition: transform 0.3s; z-index: 100; }
+  .sidebar.collapsed { transform: translateX(calc(-1 * var(--sidebar-width))); }
+  .sidebar-header { padding: 20px; border-bottom: 1px solid #e5e5e5; display: flex; align-items: center; gap: 10px; }
+  .new-ppt-btn { flex: 1; width: 100%; padding: 12px; background: rgb(58, 97, 234); color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .new-ppt-btn:hover { background: rgb(42, 75, 200); }
+  .sidebar-toggle-btn { width: 38px; height: 38px; border: 1px solid #e5e5e5; border-radius: 8px; background: white; color: #666; font-size: 18px; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+  .sidebar-toggle-btn:hover { color: rgb(58, 97, 234); border-color: rgb(58, 97, 234); }
+  .history-list { flex: 1; overflow-y: auto; padding: 12px; }
+  .history-item { padding: 12px; margin-bottom: 8px; background: #f9f9f9; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+  .history-item:hover { background: #f0f0f0; }
+  .history-item.active { background: rgb(233, 240, 254); border-left: 3px solid rgb(58, 97, 234); }
+  .history-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; color: #333; }
+  .history-time { font-size: 12px; color: #999; }
+
+  .sidebar-resize-handle { position: fixed; left: calc(var(--sidebar-width) - 2px); top: 0; width: 4px; height: 100vh; background: #f3f4f6; cursor: col-resize; z-index: 130; transition: background 0.2s; }
+  .sidebar-resize-handle:hover { background: rgb(58, 97, 234); }
+  .sidebar-resize-handle.dragging { background: rgb(58, 97, 234); }
+  .sidebar-resize-handle.hidden { display: none; }
+
+  /* 展开按钮 */
+  .expand-btn { position: fixed; left: 12px; top: 14px; width: 36px; height: 36px; background: white; border: 1px solid #e5e5e5; border-radius: 6px; display: none; align-items: center; justify-content: center; cursor: pointer; z-index: 101; box-shadow: 0 2px 8px rgba(0,0,0,0.1); transition: all 0.2s; }
+  .expand-btn:hover { background: rgb(58, 97, 234); color: white; border-color: rgb(58, 97, 234); }
+  .expand-btn.show { display: flex; }
+
+  /* 主容器 */
+  .main-container { margin-left: var(--sidebar-width); height: 100vh; display: flex; flex-direction: column; transition: margin-left 0.3s; }
+  .main-container.full-width { margin-left: 0; }
+
+  /* ========== 阶段1：欢迎页 ========== */
+  .welcome-stage { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; height: 100%; padding: 72px 40px 40px; overflow-y: auto; }
+  .welcome-title { font-size: 48px; font-weight: 600; color: #1a1a1a; margin-bottom: 16px; }
+  .welcome-subtitle { font-size: 16px; color: #666; margin-bottom: 40px; }
+
+  /* 输入框区域 */
+  .input-section { width: 100%; max-width: 800px; margin-bottom: 40px; }
+  .input-wrapper { position: relative; background: white; border: 2px solid #e5e5e5; border-radius: 12px; padding: 16px; transition: border-color 0.2s; }
+  .input-wrapper:focus-within { border-color: rgb(58, 97, 234); }
+  .main-input { width: 100%; border: none; outline: none; font-size: 15px; resize: none; min-height: 60px; font-family: inherit; }
+  .input-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0; }
+  .input-tools { display: flex; gap: 16px; flex-wrap: wrap; }
+  .input-tool { display: flex; align-items: center; gap: 6px; color: #666; font-size: 14px; cursor: pointer; transition: color 0.2s; }
+  .input-tool:hover { color: rgb(58, 97, 234); }
+  .send-btn { padding: 8px 24px; background: rgb(58, 97, 234); color: white; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .send-btn:hover { background: rgb(42, 75, 200); }
+
+  /* 模板选择区 */
+  .template-section { width: 100%; max-width: 1000px; }
+  .section-tabs { display: flex; gap: 24px; margin-bottom: 24px; border-bottom: 2px solid #e5e5e5; }
+  .tab { padding: 12px 0; font-size: 15px; color: #666; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.2s; }
+  .tab.active { color: rgb(58, 97, 234); border-bottom-color: rgb(58, 97, 234); font-weight: 500; }
+  .template-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .template-card { background: white; border-radius: 12px; overflow: hidden; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; border: 2px solid transparent; }
+  .template-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
+  .template-card.selected { border-color: rgb(58, 97, 234); }
+  .template-preview { width: 100%; aspect-ratio: 16/9; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px; }
+  .template-name { padding: 12px; font-size: 14px; text-align: center; color: #333; }
+
+  /* 知识库弹窗 */
+  .knowledge-modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.35); display: none; z-index: 300; }
+  .knowledge-modal.show { display: block; }
+  .knowledge-dialog { position: fixed; width: min(720px, calc(100vw - 32px)); background: #fff; border-radius: 14px; border: 1px solid #dfe6f2; box-shadow: 0 18px 42px rgba(20, 26, 44, 0.2); overflow: hidden; }
+  .knowledge-dialog-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid #e8edf6; }
+  .knowledge-title { font-size: 16px; font-weight: 600; color: #1a1f35; }
+  .knowledge-close { border: none; background: none; color: #9aa4b5; font-size: 32px; line-height: 1; cursor: pointer; padding: 0 2px; }
+  .knowledge-close:hover { color: #4f5f78; }
+  .knowledge-dialog-body { padding: 16px 24px 0; }
+  .knowledge-subtitle { font-size: 14px; color: #6d7689; margin-bottom: 14px; }
+  .knowledge-groups { display: flex; flex-direction: column; gap: 18px; max-height: 420px; overflow-y: auto; padding-bottom: 18px; }
+  .knowledge-group { display: flex; flex-direction: column; gap: 10px; }
+  .group-header { display: flex; align-items: center; justify-content: space-between; }
+  .group-title-row { display: flex; align-items: center; gap: 10px; }
+  .group-title { font-size: 15px; font-weight: 600; color: #5f6f8b; }
+  .group-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: rgb(58, 97, 234); font-size: 12px; font-weight: 600; }
+  .group-create { font-size: 12px; color: rgb(58, 97, 234); cursor: pointer; }
+  .group-create:hover { text-decoration: underline; }
+  .group-count { font-size: 12px; color: #8b96aa; }
+  .group-list { display: flex; flex-direction: column; gap: 10px; }
+  .knowledge-card { position: relative; display: flex; align-items: center; gap: 14px; border: 1px solid #dbe2ef; border-radius: 12px; background: #fff; padding: 14px 16px; cursor: pointer; transition: all 0.2s; }
+  .knowledge-card:hover { border-color: #b6c7ff; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08); }
+  .knowledge-card.selected { border-color: rgb(58, 97, 234); background: #f8fbff; box-shadow: 0 0 0 1px rgba(58, 97, 234, 0.16); }
+  .knowledge-card input { position: absolute; opacity: 0; pointer-events: none; }
+  .kb-icon { width: 44px; height: 44px; border-radius: 10px; background: #eef2ff; color: rgb(58, 97, 234); display: inline-flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+  .kb-meta { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+  .kb-name { font-size: 16px; font-weight: 600; color: #23293a; line-height: 1.2; }
+  .kb-desc { font-size: 13px; color: #74809a; line-height: 1.4; }
+  .kb-check { width: 24px; height: 24px; border: 2px solid #c7d2e5; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 13px; flex-shrink: 0; transition: all 0.2s; }
+  .knowledge-card.selected .kb-check { border-color: rgb(58, 97, 234); background: rgb(58, 97, 234); }
+  .knowledge-card.selected .kb-check::before { content: "✓"; }
+  .knowledge-dialog-actions { border-top: 1px solid #e8edf6; padding: 14px 24px; display: flex; justify-content: flex-end; gap: 12px; background: #fbfcff; }
+  .modal-btn { min-width: 88px; padding: 9px 18px; border-radius: 8px; font-size: 14px; border: 1px solid #d7e0ef; background: #fff; color: #667084; cursor: pointer; transition: all 0.2s; }
+  .modal-btn:hover { border-color: rgb(58, 97, 234); color: rgb(58, 97, 234); }
+  .modal-btn.primary { background: rgb(58, 97, 234); border-color: rgb(58, 97, 234); color: white; }
+  .modal-btn.primary:hover { background: rgb(42, 75, 200); border-color: rgb(42, 75, 200); color: white; }
+
+  /* ========== 阶段2：对话交互 ========== */
+  .chat-stage { display: flex; flex-direction: column; height: 100%; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 40px; }
+  .message { margin-bottom: 24px; display: flex; }
+  .message.user { justify-content: flex-end; }
+  .message.assistant { justify-content: flex-start; }
+  .message-content { max-width: 70%; padding: 16px 20px; border-radius: 12px; font-size: 15px; line-height: 1.6; }
+  .message.user .message-content { background: rgb(58, 97, 234); color: white; }
+  .message.assistant .message-content { background: white; color: #333; border: 1px solid #e5e5e5; }
+  .ppt-result-message .message-content { max-width: 780px; }
+  .ppt-result-head { font-size: 14px; color: #7d8697; margin-bottom: 12px; }
+  .ppt-result-card { border: 1px solid #e6e9f2; border-radius: 12px; padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: all 0.2s; background: #fbfcff; }
+  .ppt-result-card:hover { border-color: rgb(58, 97, 234); box-shadow: 0 4px 12px rgba(58, 97, 234, 0.14); transform: translateY(-1px); }
+  .ppt-result-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .ppt-file-icon { width: 28px; height: 28px; border-radius: 8px; background: #ffecee; color: #ef4444; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 13px; }
+  .ppt-result-title { font-size: 15px; font-weight: 600; color: #1f2937; }
+  .ppt-result-time { font-size: 12px; color: #8a94a6; margin-top: 3px; }
+  .ppt-result-right { width: 128px; display: flex; flex-direction: column; align-items: stretch; gap: 8px; flex-shrink: 0; }
+  .ppt-result-thumb { width: 100%; height: 56px; border-radius: 8px; border: 1px solid #d6ddee; background: linear-gradient(135deg, #eff4ff 0%, #f9fbff 100%); display: flex; align-items: center; justify-content: center; color: #7e89a1; font-size: 12px; }
+  .ppt-preview-btn { width: 100%; border: none; border-radius: 8px; background: rgb(58, 97, 234); color: white; padding: 8px 10px; font-size: 13px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+  .ppt-preview-btn:hover { background: rgb(42, 75, 200); }
+  .ppt-result-desc { font-size: 14px; color: #3d4758; margin-top: 12px; }
+
+  /* 大纲卡片 */
+  .outline-card { max-width: 800px; margin: 24px 0; padding: 24px; background: white; border-radius: 12px; border: 1px solid #e5e5e5; }
+  .outline-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .outline-title { font-size: 18px; font-weight: 600; color: #333; }
+  .outline-actions { display: flex; gap: 12px; }
+  .outline-btn { padding: 8px 16px; border: 1px solid #e5e5e5; background: white; border-radius: 6px; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .outline-btn:hover { background: #f9f9f9; }
+  .outline-btn.primary { background: rgb(58, 97, 234); color: white; border-color: rgb(58, 97, 234); }
+  .outline-btn.primary:hover { background: rgb(42, 75, 200); }
+  .outline-section { margin-bottom: 16px; padding: 16px; background: #f9f9f9; border-radius: 8px; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .section-title { font-size: 15px; font-weight: 500; color: #333; }
+  .section-content { font-size: 14px; color: #666; line-height: 1.6; margin-bottom: 12px; }
+  .section-images { display: flex; gap: 12px; }
+  .image-option { width: 120px; height: 80px; background: #e5e5e5; border-radius: 6px; cursor: pointer; border: 2px solid transparent; transition: border-color 0.2s; }
+  .image-option.selected { border-color: rgb(58, 97, 234); }
+
+  /* 通用输入框 */
+  .common-input { padding: 20px 40px; border-top: 1px solid #e5e5e5; background: white; }
+
+  /* ========== 阶段3：PPT预览编辑 ========== */
+  .preview-stage { display: flex; height: 100%; }
+  .chat-panel { width: 40%; display: flex; flex-direction: column; border-right: 1px solid #e5e5e5; background: #fafafa; }
+  .preview-panel { width: 60%; display: flex; flex-direction: column; background: white; }
+
+  /* 预览工具栏 */
+  .preview-toolbar { padding: 16px 24px; border-bottom: 1px solid #e5e5e5; display: flex; justify-content: space-between; align-items: center; }
+  .toolbar-title { font-size: 16px; font-weight: 500; color: #333; }
+  .toolbar-actions { display: flex; gap: 12px; }
+  .toolbar-btn { padding: 8px 16px; border: 1px solid #e5e5e5; background: white; border-radius: 6px; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+  .toolbar-btn:hover { background: #f9f9f9; }
+
+  /* 预览主区域 */
+  .preview-content { flex: 1; display: flex; min-height: 0; }
+  .preview-main { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+  .preview-thumbnails { width: 150px; padding: 16px 12px; background: #f9f9f9; border-right: 1px solid #e5e5e5; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+  .thumbnail { width: 100%; min-height: 96px; max-height: 144px; flex: 1; aspect-ratio: 3/4; background: white; border: 2px solid #e5e5e5; border-radius: 6px; cursor: pointer; transition: border-color 0.2s; }
+  .thumbnail.active { border-color: rgb(58, 97, 234); }
+  .thumb-resize-handle { width: 4px; flex-shrink: 0; background: #e8e8e8; cursor: col-resize; transition: background 0.2s; }
+  .thumb-resize-handle:hover { background: rgb(58, 97, 234); }
+  .thumb-resize-handle.dragging { background: rgb(58, 97, 234); }
+  .preview-workspace { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .preview-canvas { flex: 1; padding: 40px; display: flex; align-items: center; justify-content: center; background: #f5f5f5; }
+  .ppt-slide { width: 100%; max-width: 800px; aspect-ratio: 16/9; background: white; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; align-items: center; justify-content: center; font-size: 24px; color: #666; }
+
+  /* 预览底部信息 */
+  .preview-footer { padding: 20px 24px; border-top: 1px solid #e5e5e5; background: white; }
+  .footer-section { margin-bottom: 16px; }
+  .footer-section:last-child { margin-bottom: 0; }
+  .footer-label { font-size: 13px; color: #999; margin-bottom: 8px; font-weight: 500; }
+  .footer-content { font-size: 14px; color: #333; line-height: 1.6; }
+  .source-item { display: inline-block; padding: 4px 12px; background: #f0f0f0; border-radius: 4px; margin-right: 8px; margin-bottom: 8px; font-size: 13px; }
+
+  /* 隐藏类 */
+  .hidden { display: none !important; }
+
+  /* 拖拽调整宽度 */
+  .resize-handle { width: 4px; background: transparent; cursor: col-resize; position: relative; transition: background 0.2s; }
+  .resize-handle:hover { background: rgb(58, 97, 234); }
+  .resize-handle.dragging { background: rgb(58, 97, 234); }
+
+  /* 阶段3底部等高布局 */
+  .preview-stage .chat-panel { display: flex; flex-direction: column; }
+  .preview-stage .chat-panel .chat-messages { flex: 1; overflow-y: auto; }
+  .main-container.full-width .preview-stage .chat-panel .chat-messages { padding-top: 92px !important; padding-left: 68px !important; }
+  .preview-stage .chat-panel .common-input { flex-shrink: 0; height: 180px; display: flex; flex-direction: column; }
+  .preview-stage .chat-panel .common-input .input-wrapper { width: 100%; flex: 1; }
+  .preview-stage .preview-footer { flex-shrink: 0; height: 180px; display: flex; flex-direction: column; justify-content: flex-start; }
+</style>
+</head>
+<body>
+
+<!-- 侧边栏 -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <button class="new-ppt-btn" onclick="resetToWelcome()">+ 新建PPT</button>
+    <button class="sidebar-toggle-btn" type="button" aria-label="收起历史会话" onclick="toggleSidebar()">☰</button>
+  </div>
+  <div class="history-list">
+    <div class="history-item active" data-session="session-1">
+      <div class="history-title">中国传统文化PPT</div>
+      <div class="history-time">今天 14:30</div>
+    </div>
+    <div class="history-item" data-session="session-2">
+      <div class="history-title">高中物理力学课件</div>
+      <div class="history-time">昨天 09:15</div>
+    </div>
+    <div class="history-item" data-session="session-3">
+      <div class="history-title">初中英语阅读课</div>
+      <div class="history-time">3月15日</div>
+    </div>
+  </div>
+</div>
+<div class="sidebar-resize-handle" id="sidebarResizeHandle"></div>
+
+<!-- 展开按钮 -->
+<div class="expand-btn" id="expandBtn" onclick="toggleSidebar()">
+  <span>☰</span>
+</div>
+
+<!-- 主容器 -->
+<div class="main-container" id="mainContainer">
+
+  <!-- ========== 阶段1：欢迎页 ========== -->
+  <div class="welcome-stage" id="welcomeStage">
+    <h1 class="welcome-title">创建你的教学PPT</h1>
+    <p class="welcome-subtitle">选择模板，输入主题，AI帮你生成专业课件</p>
+
+    <!-- 输入框 -->
+    <div class="input-section">
+      <div class="input-wrapper">
+        <textarea class="main-input" placeholder="输入你想创建的 PPT 主题，例如：中国传统文化"></textarea>
+        <div class="input-actions">
+          <div class="input-tools">
+            <div class="input-tool">📎 上传文件</div>
+            <div class="input-tool">🖼️ 上传图片</div>
+            <div class="input-tool">🎤 语音输入</div>
+            <div class="input-tool knowledge-trigger">📚 选择知识库</div>
+          </div>
+          <button class="send-btn" onclick="startChat()">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模板选择 -->
+    <div class="template-section">
+      <div class="section-tabs">
+        <div class="tab active">选择模板</div>
+      </div>
+      <div class="template-grid">
+        <div class="template-card selected">
+          <div class="template-preview" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">商务风格</div>
+          <div class="template-name">简约商务</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">教育风格</div>
+          <div class="template-name">活泼教育</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">科技风格</div>
+          <div class="template-name">科技蓝</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">中国风</div>
+          <div class="template-name">水墨中国</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">活泼教育</div>
+          <div class="template-name">法政教育</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #30cfd0 0%, #330867 100%);">科技蓝</div>
+          <div class="-name">科技蓝</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);">水墨中国</div>
+          <div class="template-name">水墨中国</div>
+        </div>
+        <div class="template-card">
+          <div class="template-preview" style="background: #f0f0f0; color: #999;">+ 更多模板</div>
+          <div class="template-name">更多模板</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ========== 阶段2：对话交互 ========== -->
+  <div class="chat-stage hidden" id="chatStage">
+    <div class="chat-messages" id="chatMessages">
+      <div class="message user">
+        <div class="message-content">中国传统文化</div>
+      </div>
+      <div class="message assistant">
+        <div class="message-content">好的，我来帮你生成一个关于中国传统文化的PPT。首先想了解一下：<br><br>1. 这个PPT的目标受众是什么年龄段？<br>2. 你希望重点讲解哪些方面？（如哲学、艺术、节日等）<br>3. 预计需要多少页？</div>
+      </div>
+      <div class="message user">
+        <div class="message-content">高中生，重点讲哲学和传统节日，20-25页</div>
+      </div>
+      <div class="message assistant">
+        <div class="message-content">明白了！我已经为你生成了大纲，请查看：</div>
+      </div>
+
+      <!-- 大纲卡片 -->
+      <div class="outline-card">
+        <div class="outline-header">
+          <div class="outline-title">📋 PPT大纲</div>
+          <div class="outline-actions">
+            <button class="outline-btn">重新生成</button>
+            <button class="outline-btn">编辑</button>
+            <button class="outline-btn primary" onclick="generatePpt()">确认生成PPT</button>
+          </div>
+        </div>
+
+        <div class="outline-section">
+          <div class="section-header">
+            <div class="section-title">01 封面：中国传统文化</div>
+          </div>
+          <div class="section-content">副标题：五千年文明的传承与创新</div>
+          <div class="section-images">
+            <div class="image-option selected"></div>
+            <div class="image-option"></div>
+          </div>
+        </div>
+
+        <div class="outline-section">
+          <div class="section-header">
+            <div class="section-title">02 哲学根基：儒释道</div>
+          </div>
+          <div class="section-content">介绍儒家五常、道家无为、佛家慈悲的核心思想，以及它们对中国文化的深远影响。</div>
+          <div class="section-images">
+            <div class="image-option selected"></div>
+            <div class="image-option"></div>
+          </div>
+        </div>
+
+        <div class="outline-section">
+          <div class="section-header">
+            <div class="section-title">03 传统节日：春节与中秋</div>
+          </div>
+          <div class="section-content">讲解春节的起源、习俗和文化内涵，以及中秋节的团圆文化和诗词传统。</div>
+          <div class="section-images">
+            <div class="image-option selected"></div>
+            <div class="image-option"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="common-input">
+      <div class="input-wrapper">
+        <textarea class="main-input" placeholder="继续对话或修改大纲..."></textarea>
+        <div class="input-actions">
+          <div class="input-tools">
+            <div class="input-tool">📎 上传文件</div>
+            <div class="input-tool">🖼️ 上传图片</div>
+            <div class="input-tool">🎤 语音输入</div>
+            <div class="input-tool knowledge-trigger">📚 选择知识库</div>
+          </div>
+          <button class="send-btn">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 阶段3：PPT预览编辑 ========== -->
+  <div class="preview-stage hidden" id="previewStage">
+    <!-- 左侧对话面板 -->
+    <div class="chat-panel">
+      <div class="chat-messages" id="previewChatMessages" style="padding: 20px;"></div>
+
+      <div class="common-input">
+        <div class="input-wrapper">
+          <textarea class="main-input" placeholder="告诉我你想修改什么..."></textarea>
+          <div class="input-actions">
+            <div class="input-tools">
+              <div class="input-tool">📎 文件</div>
+              <div class="input-tool">🖼️ 图片</div>
+              <div class="input-tool">🎤 语音输入</div>
+              <div class="input-tool knowledge-trigger">📚 选择知识库</div>
+            </div>
+            <button class="send-btn">发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 拖拽调整手柄 -->
+    <div class="resize-handle" id="resizeHandle"></div>
+
+    <!-- 右侧预览面板 -->
+    <div class="preview-panel">
+      <!-- 工具栏 -->
+      <div class="preview-toolbar">
+        <div class="toolbar-title">中国传统文化.pptx</div>
+        <div class="toolbar-actions">
+          <button class="toolbar-btn">🔍 全屏预览</button>
+          <button class="toolbar-btn">⬇️ 下载PPT</button>
+          <button class="toolbar-btn">📄 导出PDF</button>
+        </div>
+      </div>
+
+      <!-- 预览主区域 -->
+      <div class="preview-content">
+        <!-- 缩略图 -->
+        <div class="preview-thumbnails">
+          <div class="thumbnail active"></div>
+          <div class="thumbnail"></div>
+          <div class="thumbnail"></div>
+          <div class="thumbnail"></div>
+          <div class="thumbnail"></div>
+        </div>
+        <div class="thumb-resize-handle" id="thumbResizeHandle"></div>
+
+        <div class="preview-workspace">
+          <!-- 画布 -->
+          <div class="preview-main">
+            <div class="preview-canvas">
+              <div class="ppt-slide">
+                PPT预览区域<br>
+                <small style="font-size: 14px; color: #999;">（集成文多多vue3渲染组件）</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- 底部信息 -->
+          <div class="preview-footer">
+            <div class="footer-section">
+              <div class="footer-label">演讲备注</div>
+              <div class="footer-content">这一页介绍中国传统文化的哲学根基，重点讲解儒释道三家思想的核心理念和相互关系。</div>
+            </div>
+            <div class="footer-section">
+              <div class="footer-label">知识来源</div>
+              <div class="footer-content">
+                <span class="source-item">📚 中国文化概论.pdf (第15页)</span>
+                <span class="source-item">🌐 维基百科：儒家思想</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="knowledge-modal" id="knowledgeModal">
+  <div class="knowledge-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledgeTitle">
+    <div class="knowledge-dialog-head">
+      <div class="knowledge-title" id="knowledgeTitle">选择知识库</div>
+      <button class="knowledge-close" type="button" id="knowledgeCloseBtn" aria-label="关闭">×</button>
+    </div>
+    <div class="knowledge-dialog-body">
+      <div class="knowledge-subtitle">可多选知识库，AI 将优先引用已勾选来源（已选 <span id="knowledgeSelectedCount">0</span> 项）</div>
+      <div class="knowledge-groups">
+        <section class="knowledge-group">
+          <div class="group-header">
+            <div class="group-title-row">
+              <span class="group-title">系统知识库</span>
+              <span class="group-tag">官方</span>
+            </div>
+            <span class="group-count">0/0</span>
+          </div>
+          <div class="group-list">
+            <label class="knowledge-card selected">
+              <input type="checkbox" class="group-item" checked>
+              <span class="kb-icon">📘</span>
+              <span class="kb-meta">
+                <span class="kb-name">基础教学知识库</span>
+                <span class="kb-desc">覆盖教学设计、课堂组织与评价方法等通用内容。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+            <label class="knowledge-card selected">
+              <input type="checkbox" class="group-item" checked>
+              <span class="kb-icon">📗</span>
+              <span class="kb-meta">
+                <span class="kb-name">学科标准知识库</span>
+                <span class="kb-desc">包含新课标要点、学段目标与核心素养要求。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+            <label class="knowledge-card">
+              <input type="checkbox" class="group-item">
+              <span class="kb-icon">📙</span>
+              <span class="kb-meta">
+                <span class="kb-name">精品课件案例库</span>
+                <span class="kb-desc">沉淀优质课例结构、版式与课堂活动设计。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="knowledge-group">
+          <div class="group-header">
+            <div class="group-title-row">
+              <span class="group-title">用户知识库</span>
+              <span class="group-tag">我的</span>
+            </div>
+            <span class="group-create">+ 新建知识库</span>
+          </div>
+          <div class="group-list">
+            <label class="knowledge-card selected">
+              <input type="checkbox" class="group-item" checked>
+              <span class="kb-icon">📒</span>
+              <span class="kb-meta">
+                <span class="kb-name">高一语文教学资料</span>
+                <span class="kb-desc">个人整理的课堂讲义、习题与讲授提纲。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+            <label class="knowledge-card">
+              <input type="checkbox" class="group-item">
+              <span class="kb-icon">🧾</span>
+              <span class="kb-meta">
+                <span class="kb-name">传统文化素材集</span>
+                <span class="kb-desc">诗词典故、节日民俗与配图素材合集。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+            <label class="knowledge-card">
+              <input type="checkbox" class="group-item">
+              <span class="kb-icon">📂</span>
+              <span class="kb-meta">
+                <span class="kb-name">校本课程资源库</span>
+                <span class="kb-desc">校内课例、活动方案和作业模板等沉淀文档。</span>
+              </span>
+              <span class="kb-check"></span>
+            </label>
+          </div>
+        </section>
+      </div>
+      <div class="knowledge-dialog-actions">
+        <button class="modal-btn" type="button" id="knowledgeCancelBtn">取消</button>
+        <button class="modal-btn primary" type="button" id="knowledgeConfirmBtn">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const sidebar = document.getElementById('sidebar');
+  const mainContainer = document.getElementById('mainContainer');
+  const expandBtn = document.getElementById('expandBtn');
+  const sidebarResizeHandle = document.getElementById('sidebarResizeHandle');
+  const chatMessages = document.getElementById('chatMessages');
+  const previewChatMessages = document.getElementById('previewChatMessages');
+  const historyItems = Array.from(document.querySelectorAll('.history-item'));
+  let isGeneratingPpt = false;
+  let pptResultTimer = null;
+  const sessionTemplates = {};
+
+  function updateSidebarResizeVisibility() {
+    sidebarResizeHandle.classList.toggle('hidden', sidebar.classList.contains('collapsed'));
+  }
+
+  function setSidebarCollapsed(collapsed) {
+    sidebar.classList.toggle('collapsed', collapsed);
+    mainContainer.classList.toggle('full-width', collapsed);
+    expandBtn.classList.toggle('show', collapsed);
+    updateSidebarResizeVisibility();
+  }
+
+  // 切换侧边栏
+  function toggleSidebar() {
+    setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
+  }
+
+  function getResultCardMessageHtml() {
+    return `
+      <div class="message assistant ppt-result-message">
+        <div class="message-content">
+          <div class="ppt-result-head">已完成PPT生成 (9m 16s) ›</div>
+          <div class="ppt-result-card">
+            <div class="ppt-result-left">
+              <span class="ppt-file-icon">P</span>
+              <div>
+                <div class="ppt-result-title">中国传统文化PPT</div>
+                <div class="ppt-result-time">创建时间：08:26</div>
+              </div>
+            </div>
+            <div class="ppt-result-right">
+              <div class="ppt-result-thumb">预览缩略图</div>
+              <button class="ppt-preview-btn" type="button" onclick="openPreviewFromCard()">预览</button>
+            </div>
+          </div>
+          <div class="ppt-result-desc">您好，我已经为您精心制作了一份关于“中国传统文化”的 PPT。点击上方「预览」按钮即可进入预览和编辑。</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function buildSessionTemplates() {
+    const sessionOneBase = chatMessages.innerHTML;
+    sessionTemplates['session-1'] = sessionOneBase + getResultCardMessageHtml();
+    sessionTemplates['session-2'] = `
+      <div class="message user"><div class="message-content">高中物理力学：重点讲牛顿三定律和受力分析，18页左右</div></div>
+      <div class="message assistant"><div class="message-content">已加载这条历史会话记录。你可以继续补充要求，或者重新生成结构。</div></div>
+    `;
+    sessionTemplates['session-3'] = `
+      <div class="message user"><div class="message-content">初中英语阅读课件，主题为校园生活</div></div>
+      <div class="message assistant"><div class="message-content">已加载这条历史会话记录。当前是左侧会话历史 + 右侧聊天区域布局。</div></div>
+    `;
+  }
+
+  function openSession(sessionId) {
+    clearTimeout(pptResultTimer);
+    isGeneratingPpt = false;
+
+    chatMessages.innerHTML = sessionTemplates[sessionId] || sessionTemplates['session-1'];
+    document.getElementById('welcomeStage').classList.add('hidden');
+    document.getElementById('previewStage').classList.add('hidden');
+    document.getElementById('chatStage').classList.remove('hidden');
+    setSidebarCollapsed(false);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  // 开始对话
+  function startChat() {
+    document.getElementById('welcomeStage').classList.add('hidden');
+    document.getElementById('previewStage').classList.add('hidden');
+    document.getElementById('chatStage').classList.remove('hidden');
+    setSidebarCollapsed(false);
+  }
+
+  function syncPreviewChatHistory() {
+    previewChatMessages.innerHTML = chatMessages.innerHTML;
+  }
+
+  function appendPptResultCard() {
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = getResultCardMessageHtml();
+    chatMessages.appendChild(wrapper.firstElementChild);
+    syncPreviewChatHistory();
+    previewChatMessages.scrollTop = previewChatMessages.scrollHeight;
+  }
+
+  // 生成PPT
+  function generatePpt() {
+    if (isGeneratingPpt) return;
+    isGeneratingPpt = true;
+
+    // 点击确认后立即进入预览态：收起左侧历史会话，显示右侧预览区
+    syncPreviewChatHistory();
+    document.getElementById('chatStage').classList.add('hidden');
+    document.getElementById('previewStage').classList.remove('hidden');
+    setSidebarCollapsed(true);
+    previewChatMessages.scrollTop = previewChatMessages.scrollHeight;
+
+    clearTimeout(pptResultTimer);
+    pptResultTimer = setTimeout(function() {
+      appendPptResultCard();
+      isGeneratingPpt = false;
+    }, 1200);
+  }
+
+  function openPreviewFromCard() {
+    syncPreviewChatHistory();
+    document.getElementById('chatStage').classList.add('hidden');
+    document.getElementById('previewStage').classList.remove('hidden');
+
+    // 仅在点击预览按钮后进入预览，并收起历史会话
+    setSidebarCollapsed(true);
+    previewChatMessages.scrollTop = previewChatMessages.scrollHeight;
+  }
+
+  // 重置到欢迎页
+  function resetToWelcome() {
+    clearTimeout(pptResultTimer);
+    isGeneratingPpt = false;
+
+    document.getElementById('welcomeStage').classList.remove('hidden');
+    document.getElementById('chatStage').classList.add('hidden');
+    document.getElementById('previewStage').classList.add('hidden');
+    setSidebarCollapsed(false);
+  }
+
+  historyItems.forEach(item => {
+    item.addEventListener('click', function() {
+      historyItems.forEach(i => i.classList.remove('active'));
+      this.classList.add('active');
+      openSession(this.dataset.session);
+    });
+  });
+
+  buildSessionTemplates();
+  updateSidebarResizeVisibility();
+
+  // 知识库弹窗
+  const knowledgeModal = document.getElementById('knowledgeModal');
+  const knowledgeDialog = knowledgeModal.querySelector('.knowledge-dialog');
+  const knowledgeCloseBtn = document.getElementById('knowledgeCloseBtn');
+  const knowledgeTriggers = document.querySelectorAll('.knowledge-trigger');
+  const knowledgeCancelBtn = document.getElementById('knowledgeCancelBtn');
+  const knowledgeConfirmBtn = document.getElementById('knowledgeConfirmBtn');
+  const knowledgeGroups = knowledgeModal.querySelectorAll('.knowledge-group');
+  const selectedCountEl = document.getElementById('knowledgeSelectedCount');
+  let activeKnowledgeTrigger = null;
+
+  function updateKnowledgeSelectedCount() {
+    const count = knowledgeModal.querySelectorAll('.group-item:checked').length;
+    selectedCountEl.textContent = count;
+  }
+
+  function syncCardState(card) {
+    const item = card.querySelector('.group-item');
+    card.classList.toggle('selected', item.checked);
+  }
+
+  function syncGroupStatus(group) {
+    const items = Array.from(group.querySelectorAll('.group-item'));
+    const checkedCount = items.filter(item => item.checked).length;
+    const counter = group.querySelector('.group-count');
+    if (counter) {
+      counter.textContent = checkedCount + '/' + items.length;
+    }
+  }
+
+  knowledgeGroups.forEach(group => {
+    const cards = Array.from(group.querySelectorAll('.knowledge-card'));
+
+    cards.forEach(card => {
+      const item = card.querySelector('.group-item');
+      syncCardState(card);
+      item.addEventListener('change', function() {
+        syncCardState(card);
+        syncGroupStatus(group);
+        updateKnowledgeSelectedCount();
+      });
+    });
+
+    syncGroupStatus(group);
+  });
+  updateKnowledgeSelectedCount();
+
+  function placeKnowledgeDialog() {
+    const dialogWidth = knowledgeDialog.offsetWidth;
+    const dialogHeight = knowledgeDialog.offsetHeight;
+
+    if (!activeKnowledgeTrigger) {
+      const defaultLeft = Math.max(16, (window.innerWidth - dialogWidth) / 2);
+      const defaultTop = Math.max(16, (window.innerHeight - dialogHeight) / 2);
+      knowledgeDialog.style.left = defaultLeft + 'px';
+      knowledgeDialog.style.top = defaultTop + 'px';
+      return;
+    }
+
+    const triggerRect = activeKnowledgeTrigger.getBoundingClientRect();
+    let left = triggerRect.left + (triggerRect.width / 2) - (dialogWidth / 2);
+    left = Math.max(16, Math.min(left, window.innerWidth - dialogWidth - 16));
+
+    let top = triggerRect.bottom + 10;
+    const maxTop = window.innerHeight - dialogHeight - 16;
+    if (top > maxTop) {
+      top = Math.max(16, triggerRect.top - dialogHeight - 10);
+    }
+
+    knowledgeDialog.style.left = left + 'px';
+    knowledgeDialog.style.top = top + 'px';
+  }
+
+  function openKnowledgeModal(trigger) {
+    activeKnowledgeTrigger = trigger || null;
+    knowledgeModal.classList.add('show');
+    requestAnimationFrame(placeKnowledgeDialog);
+  }
+
+  function closeKnowledgeModal() {
+    knowledgeModal.classList.remove('show');
+  }
+
+  knowledgeTriggers.forEach(trigger => {
+    trigger.addEventListener('click', function() {
+      openKnowledgeModal(trigger);
+    });
+  });
+
+  knowledgeCancelBtn.addEventListener('click', closeKnowledgeModal);
+  knowledgeConfirmBtn.addEventListener('click', closeKnowledgeModal);
+  knowledgeCloseBtn.addEventListener('click', closeKnowledgeModal);
+
+  knowledgeModal.addEventListener('click', function(e) {
+    if (e.target === knowledgeModal) {
+      closeKnowledgeModal();
+    }
+  });
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && knowledgeModal.classList.contains('show')) {
+      closeKnowledgeModal();
+    }
+  });
+
+  window.addEventListener('resize', function() {
+    if (knowledgeModal.classList.contains('show')) {
+      placeKnowledgeDialog();
+    }
+  });
+
+  // 模板选择
+  document.querySelectorAll('.template-card').forEach(card => {
+    card.addEventListener('click', function() {
+      document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+      this.classList.add('selected');
+    });
+  });
+
+  // 图片选择
+  document.querySelectorAll('.image-option').forEach(img => {
+    img.addEventListener('click', function() {
+      const parent = this.parentElement;
+      parent.querySelectorAll('.image-option').forEach(i => i.classList.remove('selected'));
+      this.classList.add('selected');
+    });
+  });
+
+  // 缩略图切换
+  document.querySelectorAll('.thumbnail').forEach(thumb => {
+    thumb.addEventListener('click', function() {
+      document.querySelectorAll('.thumbnail').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+    });
+  });
+
+  // 左侧历史会话区宽度拖拽
+  if (sidebarResizeHandle) {
+    let isSidebarResizing = false;
+
+    sidebarResizeHandle.addEventListener('mousedown', function() {
+      if (sidebar.classList.contains('collapsed')) return;
+      isSidebarResizing = true;
+      sidebarResizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!isSidebarResizing) return;
+      const minWidth = 220;
+      const maxWidth = 420;
+      const nextWidth = Math.max(minWidth, Math.min(maxWidth, e.clientX));
+      document.documentElement.style.setProperty('--sidebar-width', nextWidth + 'px');
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (!isSidebarResizing) return;
+      isSidebarResizing = false;
+      sidebarResizeHandle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+  }
+
+  // 拖拽调整宽度功能
+  const resizeHandle = document.getElementById('resizeHandle');
+  if (resizeHandle) {
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    resizeHandle.addEventListener('mousedown', function(e) {
+      isResizing = true;
+      startX = e.clientX;
+      const chatPanel = document.querySelector('.preview-stage .chat-panel');
+      startWidth = chatPanel.offsetWidth;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!isResizing) return;
+
+      const chatPanel = document.querySelector('.preview-stage .chat-panel');
+      const previewPanel = document.querySelector('.preview-stage .preview-panel');
+      const container = document.getElementById('mainContainer');
+
+      const deltaX = e.clientX - startX;
+      const newWidth = startWidth + deltaX;
+      const containerWidth = container.offsetWidth;
+      const minWidth = 300;
+      const maxWidth = containerWidth - 400;
+
+      if (newWidth >= minWidth && newWidth <= maxWidth) {
+        const widthPercent = (newWidth / containerWidth) * 100;
+        chatPanel.style.width = widthPercent + '%';
+        previewPanel.style.width = (100 - widthPercent) + '%';
+      }
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
+
+  // 缩略图区宽度拖拽
+  const thumbResizeHandle = document.getElementById('thumbResizeHandle');
+  if (thumbResizeHandle) {
+    let isThumbResizing = false;
+    let thumbStartX = 0;
+    let thumbStartWidth = 0;
+
+    thumbResizeHandle.addEventListener('mousedown', function(e) {
+      isThumbResizing = true;
+      thumbStartX = e.clientX;
+      const thumbnails = document.querySelector('.preview-thumbnails');
+      thumbStartWidth = thumbnails.offsetWidth;
+      thumbResizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!isThumbResizing) return;
+
+      const thumbnails = document.querySelector('.preview-thumbnails');
+      const previewPanel = document.querySelector('.preview-stage .preview-panel');
+      const deltaX = e.clientX - thumbStartX;
+      const nextWidth = thumbStartWidth + deltaX;
+      const panelWidth = previewPanel.offsetWidth;
+      const minWidth = 100;
+      const maxWidth = Math.min(280, Math.max(180, panelWidth * 0.35));
+
+      if (nextWidth >= minWidth && nextWidth <= maxWidth) {
+        thumbnails.style.width = nextWidth + 'px';
+      }
+    });
+
+    document.addEventListener('mouseup', function() {
+      if (isThumbResizing) {
+        isThumbResizing = false;
+        thumbResizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
+</script>
+
+</body>
+</html>
