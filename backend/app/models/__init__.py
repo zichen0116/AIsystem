@@ -9,6 +9,7 @@ from app.models.knowledge_asset import KnowledgeAsset
 from app.models.token_blacklist import TokenBlacklist
 from app.models.lesson_plan import LessonPlan
 from app.models.lesson_plan_reference import LessonPlanReference
+from app.models.question_paper import QuestionPaper
 from app.models.enums import (
     CoursewareType,
     CoursewareStatus,
@@ -26,6 +27,7 @@ __all__ = [
     "TokenBlacklist",
     "LessonPlan",
     "LessonPlanReference",
+    "QuestionPaper",
     "CoursewareType",
     "CoursewareStatus",
     "ChatRole",
