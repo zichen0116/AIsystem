@@ -2,9 +2,9 @@
 
 ## 概述
 
-在备课页面的"知识图谱"子页面（`LessonPrepKnowledge.vue`）中，完全替换现有 2D 静态布局，实现一个 3D 力导向星空知识图谱。使用 `3d-force-graph` 库，配合 Three.js UnrealBloomPass 后处理实现恒星弥散发光效果。
+在备课页面的"知识图谱"子页面（`LessonPrepKnowledge.vue`）中，完全替换现有 2D 静态布局（包括左侧聊天面板和右侧静态画布），实现一个 3D 力导向星空知识图谱。使用 `3d-force-graph` 库，配合 Three.js UnrealBloomPass 后处理实现恒星弥散发光效果。
 
-当前阶段只实现前端部分，后端提供 mock API 返回模拟数据。
+当前阶段只实现前端部分，后端提供 mock API 返回模拟数据。Mock API 需要 JWT 认证（与现有 `/api/v1/knowledge` 端点一致）。
 
 ## 页面布局
 
@@ -25,10 +25,11 @@
 ### 安装依赖
 
 ```bash
-npm install 3d-force-graph three
+npm install 3d-force-graph three three-spritetext
 ```
 
-`three` 需要显式安装以使用 `UnrealBloomPass` 等扩展模块。
+- `three` 需要显式安装以使用 `UnrealBloomPass` 等扩展模块
+- `three-spritetext` 用于节点名字标签（Sprite billboard 文字）
 
 ## 节点视觉设计
 
