@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     # ========== Tavily 网络搜索 ==========
     TAVILY_API_KEY: str = ""
 
+    # ========== Dify 工作流（资源推荐等）==========
+    # 云端默认 https://api.dify.ai/v1 ；自建请改为你的部署地址（不要末尾多余斜杠）
+    DIFY_API_BASE_URL: str = "https://api.dify.ai/v1"
+    # Dify 应用「访问 API」中的 API Key（勿提交到公开仓库）
+    DIFY_RESOURCE_WORKFLOW_API_KEY: str = ""
+
     # ========== Neo4j 图数据库 ==========
     NEO4J_URI: str = ""
     NEO4J_USERNAME: str = "neo4j"
