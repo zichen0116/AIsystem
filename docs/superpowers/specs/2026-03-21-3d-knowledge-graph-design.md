@@ -31,6 +31,20 @@ npm install 3d-force-graph three three-spritetext
 - `three` 需要显式安装以使用 `UnrealBloomPass` 等扩展模块
 - `three-spritetext` 用于节点名字标签（Sprite billboard 文字）
 
+## Vue 3 集成注意事项
+
+- **禁止将 Three.js/3d-force-graph 实例放入 `ref()` 或 `reactive()`**。Vue 的 Proxy 会深度递归遍历 Three.js 场景树和 WebGL 上下文，导致 `Maximum Call Stack Size Exceeded` 并卡死浏览器。
+- 存放 graph 实例使用 `shallowRef()` 或 setup 顶层的普通变量 `let graph = null`。
+- graphData 同理，使用 `shallowRef` 或普通对象，不需要 Vue 追踪其内部响应式。
+
+### keep-alive 生命周期管理
+
+当前 `LessonPrep.vue` 使用 `<keep-alive>` 包裹子组件。必须处理：
+
+- **`onActivated`**：恢复 3D 渲染（`graph.resumeAnimation()`），重新绑定 resize 监听
+- **`onDeactivated`**：暂停 3D 渲染（`graph.pauseAnimation()`），移除 resize 监听，停止自动旋转定时器
+- **`onUnmounted`**：完全销毁 graph 实例（`graph._destructor()`），释放 WebGL 资源
+
 ## 节点视觉设计
 
 ### 渲染方式
@@ -57,13 +71,21 @@ npm install 3d-force-graph three three-spritetext
 - 分类数量不固定，颜色可复用
 - 同一分类始终映射到同一颜色
 
-### Bloom 后处理参数
+### Bloom 后处理参数（选择性发光策略）
+
+Bloom 会让所有亮度超过 threshold 的像素发光。为避免白色文字被 bloom 糊掉变得不可读，采用选择性发光：
+
+- **threshold 调高至 `0.8`**，仅高亮度像素才会触发 bloom
+- **节点 Sprite 材质颜色设为超亮值**（如 `color.multiplyScalar(1.5)`），确保超过 threshold 触发发光
+- **文字标签颜色设为 `#cccccc`（偏暗灰白）**，低于 threshold 不会被 bloom 影响，保持清晰可读
 
 ```js
 bloomPass.strength = 2
 bloomPass.radius = 0.5
-bloomPass.threshold = 0.1
+bloomPass.threshold = 0.8
 ```
+
+效果：**星星发光，文字不发光（清晰）**。
 
 ## 边（关系）视觉设计
 
@@ -126,7 +148,8 @@ bloomPass.threshold = 0.1
 ### 布局
 
 - 固定在页面最底部，水平居中
-- 宽度占内容区域的 50%，两侧各留 25%
+- **桌面端**：宽度占内容区域的 50%，两侧各留 25%
+- **小屏适配**（≤768px）：宽度扩展至 90%，节点网格改为 2 列布局（只展示 Top 10），功能按钮改为图标形式减少空间占用
 - 半透明暗色背景（`rgba(10, 15, 30, 0.85)`），极细浅色边框
 - `backdrop-filter: blur(8px)` 毛玻璃效果
 
@@ -157,7 +180,10 @@ bloomPass.threshold = 0.1
 
 ### 后端 Mock API
 
-- 路径：`GET /api/v1/knowledge/graph`
+- 路径：`GET /api/v1/knowledge/graph?library_id=xxx&limit=50`
+- `library_id`：可选，指定知识库 ID（mock 阶段忽略，但参数预留）
+- `limit`：可选，限制返回节点数（默认 50）
+- **路由注册顺序**：此静态路由必须注册在 `/{asset_id}` 动态路由之前，避免被动态路由吃掉导致 422
 - 返回格式：
 
 ```json
@@ -176,7 +202,7 @@ bloomPass.threshold = 0.1
 
 ### 前端默认行为
 
-- 页面加载时调用 mock API 获取数据
+- 页面加载时通过现有 `http.js` 封装（已配置 JWT Bearer Token）调用 mock API，禁止裸 fetch
 - 一次加载全部 50 个节点
 
 ## 性能优化
@@ -186,13 +212,21 @@ bloomPass.threshold = 0.1
 - **hover/筛选防抖**：`requestAnimationFrame` 节流
 - **力模拟 cooldown**：5 秒后停止力计算（`cooldownTime: 5000`）
 - **缩放标签隐藏**：相机过远时不渲染标签文字
+- **keep-alive 暂停恢复**：切 tab 后暂停渲染释放 GPU/CPU（见上方生命周期管理）
+
+### 基础验收指标
+
+- 50 节点场景稳定 ≥30 FPS
+- 切 tab 后 GPU/CPU 占用明显下降（pauseAnimation 生效）
+- 点击空白区域恢复所有节点正常状态
+- 401 时不白屏，跳转登录页
 
 ## 文件变更范围
 
 | 文件 | 变更 |
 |------|------|
 | `teacher-platform/src/views/LessonPrepKnowledge.vue` | 完全重写 |
-| `teacher-platform/package.json` | 新增 `3d-force-graph`、`three` 依赖 |
+| `teacher-platform/package.json` | 新增 `3d-force-graph`、`three`、`three-spritetext` 依赖 |
 | `backend/app/api/knowledge.py`（或类似） | 新增 mock API 端点 |
 
 ## 不在本次范围
