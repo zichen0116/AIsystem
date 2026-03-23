@@ -259,16 +259,21 @@ async function runSearch() {
 
 <style scoped>
 .page-wrap {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   padding: 32px 40px 40px;
   background: #f4f7fb;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  box-sizing: border-box;
 }
 
 .hero {
-  max-width: 1040px;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   text-align: center;
 }
@@ -330,15 +335,22 @@ async function runSearch() {
 }
 
 .results {
-  max-width: 1100px;
-  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .loading-animation-wrap {
+  flex: 1;
+  min-height: 0;
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 360px;
 }
 
 .loading-animation-canvas {
@@ -347,6 +359,7 @@ async function runSearch() {
 }
 
 .results-tip {
+  flex-shrink: 0;
   text-align: center;
   margin: 4px 0 18px;
   font-size: 14px;
@@ -361,9 +374,14 @@ async function runSearch() {
 }
 
 .card-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 20px;
+  align-content: start;
+  padding-right: 4px;
 }
 
 .resource-card {

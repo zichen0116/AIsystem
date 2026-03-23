@@ -875,7 +875,8 @@ async function handleExportPdf() {
 <style scoped>
 .question-page {
   display: flex;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
   align-items: stretch;
   background: linear-gradient(180deg, #f3f8ff 0%, #f9fbff 100%);
 }
@@ -884,6 +885,10 @@ async function handleExportPdf() {
   position: relative;
   flex-shrink: 0;
   z-index: 2;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .saved-sidebar {
@@ -894,7 +899,8 @@ async function handleExportPdf() {
   display: flex;
   flex-direction: column;
   padding: 16px 12px;
-  min-height: 100vh;
+  flex: 1;
+  min-height: 0;
   box-sizing: border-box;
 }
 
@@ -1074,11 +1080,11 @@ async function handleExportPdf() {
 .page-wrap {
   flex: 1;
   min-width: 0;
-  min-height: 100vh;
+  min-height: 0;
   padding: 24px 32px 32px;
   display: flex;
   gap: 20px;
-  align-items: flex-start;
+  align-items: stretch;
   justify-content: center;
   box-sizing: border-box;
 }
@@ -1108,14 +1114,15 @@ async function handleExportPdf() {
   border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
-  /* 由内容自然撑开高度，避免按钮被挤出卡片外 */
-  min-height: 520px;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .page-wrap.with-preview .config-card {
   width: auto;
   flex: 0 0 420px;
   max-width: 460px;
+  align-self: stretch;
 }
 
 .header {
@@ -1321,6 +1328,7 @@ async function handleExportPdf() {
 
 .preview-card {
   flex: 1;
+  min-height: 0;
   background: #ffffff;
   border-radius: 18px;
   padding: 20px 22px 24px;
@@ -1329,8 +1337,7 @@ async function handleExportPdf() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* 右侧内部自己滚动，不影响左侧 */
-  max-height: calc(100vh - 48px);
+  align-self: stretch;
 }
 
 .preview-header {

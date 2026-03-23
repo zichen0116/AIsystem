@@ -503,22 +503,34 @@ function on2FACodeKeydown(index, e) {
 
 <style scoped>
 .personal-page {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   background: linear-gradient(180deg, #f3f8ff 0%, #f7fbff 100%);
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
 }
 
 .personal-layout {
   flex: 1;
-  padding: 28px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px 28px;
+  box-sizing: border-box;
 }
 
 .main-layout {
   display: flex;
   gap: 24px;
-  max-width: 1200px;
-  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  align-items: stretch;
+  box-sizing: border-box;
 }
 
 .sidebar {
@@ -527,6 +539,8 @@ function on2FACodeKeydown(index, e) {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  align-self: stretch;
   transition: width 0.2s, min-width 0.2s;
 }
 
@@ -716,9 +730,16 @@ function on2FACodeKeydown(index, e) {
 .main-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .content-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   background: #fff;
   padding: 36px;
 }
@@ -1498,10 +1519,20 @@ function on2FACodeKeydown(index, e) {
 @media (max-width: 900px) {
   .main-layout {
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
 
   .sidebar {
     width: 100%;
+    min-width: 0;
+    flex: none;
+    align-self: stretch;
+  }
+
+  .main-content {
+    flex: 1;
+    min-height: 0;
   }
 
   .form-grid {
