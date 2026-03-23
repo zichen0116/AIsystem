@@ -73,7 +73,7 @@ git commit -m "build: add 3d-force-graph, three, three-spritetext dependencies"
 async def get_knowledge_graph(
     library_id: str | None = None,
     limit: int = 50,
-    current_user: CurrentUser = None,
+    current_user: CurrentUser,
 ):
     """返回知识图谱 mock 数据（宋代词人关系网络）"""
     poets = [
@@ -215,18 +215,26 @@ async def get_knowledge_graph(
         {"source": "49", "target": "11", "relation": "赏识"},
     ]
 
+    # 截断节点并同步过滤边（避免边引用不存在的节点）
+    selected_poets = poets[:limit]
+    node_ids = {p["id"] for p in selected_poets}
+    filtered_links = [
+        link for link in links
+        if link["source"] in node_ids and link["target"] in node_ids
+    ]
+
     # 计算每个节点的关联数作为 val
     link_count: dict[str, int] = {}
-    for link in links:
+    for link in filtered_links:
         link_count[link["source"]] = link_count.get(link["source"], 0) + 1
         link_count[link["target"]] = link_count.get(link["target"], 0) + 1
 
     nodes = [
         {**p, "val": link_count.get(p["id"], 1)}
-        for p in poets[:limit]
+        for p in selected_poets
     ]
 
-    return {"nodes": nodes, "links": links}
+    return {"nodes": nodes, "links": filtered_links}
 ```
 
 - [ ] **Step 2: 验证路由顺序**
@@ -701,7 +709,14 @@ export function useKnowledgeGraph(containerRef) {
       containerRef.value.removeEventListener('wheel', resetIdleTimer)
     }
     if (graph) {
-      graph._destructor()
+      // _destructor 是 3d-force-graph 的清理方法（非公开 API，加兜底）
+      if (typeof graph._destructor === 'function') {
+        graph._destructor()
+      } else {
+        // fallback: 手动暂停 + 清空容器
+        graph.pauseAnimation()
+        if (containerRef.value) containerRef.value.innerHTML = ''
+      }
       graph = null
     }
   }
@@ -778,9 +793,9 @@ git commit -m "feat(knowledge-graph): add core composable with 3D rendering, blo
 
 <script setup>
 import { ref, computed, provide, onMounted, onActivated, onDeactivated, onUnmounted } from 'vue'
-import { apiRequest } from '@/api/http.js'
-import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph.js'
-import GraphConsole from '@/components/knowledge-graph/GraphConsole.vue'
+import { apiRequest } from '../api/http.js'
+import { useKnowledgeGraph } from '../composables/useKnowledgeGraph.js'
+import GraphConsole from '../components/knowledge-graph/GraphConsole.vue'
 
 const graphContainer = ref(null)
 const kg = useKnowledgeGraph(graphContainer)
@@ -1092,13 +1107,14 @@ git commit -m "feat(knowledge-graph): add bottom console component with responsi
 
 ```vue
 <template>
-  <div class="filter-backdrop" @click.self="$emit('close')">
-    <div class="filter-popover">
-      <div class="filter-title">按分类筛选</div>
-      <div class="filter-list">
-        <label
-          v-for="cat in categories"
-          :key="cat.name"
+  <Teleport to="body">
+    <div class="filter-backdrop" @click.self="$emit('close')">
+      <div class="filter-popover">
+        <div class="filter-title">按分类筛选</div>
+        <div class="filter-list">
+          <label
+            v-for="cat in categories"
+            :key="cat.name"
           class="filter-item"
         >
           <input
@@ -1112,6 +1128,7 @@ git commit -m "feat(knowledge-graph): add bottom console component with responsi
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -1125,14 +1142,14 @@ defineEmits(['toggle', 'close'])
 
 <style scoped>
 .filter-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 1000;
 }
 
 .filter-popover {
-  position: absolute;
-  bottom: calc(100% + 8px);
+  position: fixed;
+  bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
   background: rgba(10, 15, 30, 0.92);
@@ -1193,8 +1210,9 @@ defineEmits(['toggle', 'close'])
 
 ```vue
 <template>
-  <div class="search-backdrop" @click.self="$emit('close')">
-    <div class="search-popover">
+  <Teleport to="body">
+    <div class="search-backdrop" @click.self="$emit('close')">
+      <div class="search-popover">
       <input
         ref="searchInput"
         v-model="query"
@@ -1218,6 +1236,7 @@ defineEmits(['toggle', 'close'])
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -1262,15 +1281,15 @@ onMounted(() => {
 
 <style scoped>
 .search-backdrop {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 1000;
 }
 
 .search-popover {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  right: 0;
+  position: fixed;
+  bottom: 80px;
+  right: 26%;
   background: rgba(10, 15, 30, 0.92);
   border: 1px solid rgba(100, 116, 139, 0.3);
   border-radius: 10px;
