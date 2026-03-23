@@ -106,17 +106,16 @@ function sendMessage() {
 .knowledge-page {
   flex: 1;
   min-height: 0;
-  padding: 24px 32px 28px;
+  padding: 1.6% 2.2% 1.8%;
   background: #f5f7fb;
   display: flex;
 }
 
 .knowledge-layout {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(280px, 30%) minmax(0, 1fr);
+  gap: 1.4%;
   width: 100%;
-  max-width: 1200px;
   margin: 0 auto;
 }
 
@@ -218,7 +217,7 @@ function sendMessage() {
 }
 
 .bubble {
-  max-width: 210px;
+  max-width: min(88%, 340px);
   padding: 8px 10px;
   border-radius: 12px;
   font-size: 13px;
@@ -296,6 +295,7 @@ function sendMessage() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 68vh;
 }
 
 .breadcrumb-row {
@@ -315,7 +315,7 @@ function sendMessage() {
 .canvas {
   position: relative;
   flex: 1;
-  min-height: 340px;
+  min-height: 62vh;
   background: radial-gradient(circle at top, #f4f7ff 0, #ffffff 55%);
   border-radius: 14px;
   overflow: hidden;
@@ -388,16 +388,22 @@ function sendMessage() {
 @media (max-width: 960px) {
   .knowledge-layout {
     grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    gap: 12px;
   }
 
   .panel-right {
-    min-height: 320px;
+    min-height: 52vh;
+  }
+
+  .canvas {
+    min-height: 50vh;
   }
 }
 
 @media (max-width: 720px) {
   .knowledge-page {
-    padding: 18px 16px 22px;
+    padding: 12px;
   }
 
   .panel-left {
@@ -406,6 +412,7 @@ function sendMessage() {
 
   .canvas {
     padding: 20px 16px 16px;
+    min-height: 46vh;
   }
 }
 </style>
