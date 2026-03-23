@@ -1,4 +1,6 @@
-现在我已经基于Langchain和LangGraph完成了基础的知识库部分，具备了vector RAG和Graph RAG功能，连接了Neo4j，前端技术栈为Vue，后端为FastAPI，现在我想要在前端加一个知识图谱展示的子页面，要求如下：
+现在我已经基于Langchain和LangGraph完成了基础的知识库部分，具备了vector RAG和Graph RAG功能，连接了Neo4j，前端技术栈为Vue，后端为FastAPI，现在我想要在前端加一个知识图谱展示的子页面，
+
+注意页面就放在备课-知识图谱页面，清空现有的知识图谱页面布局和前端代码，要求如下：
 
 ## **可视化层（3D图）**：
 
