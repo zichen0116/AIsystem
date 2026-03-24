@@ -84,35 +84,46 @@ export function useKnowledgeGraph(containerRef) {
   const hiddenCategories = shallowRef(new Set())
   const isRotating = shallowRef(true)
 
-  // ── 星空背景粒子 ───────────────────────────────────────────────
-  function addStarField() {
-    const count = 2000
+  // ── 多层星空背景 ──────────────────────────────────────────────────
+  function addStarLayer(scene, { count, spread, size, opacity }) {
     const positions = new Float32Array(count * 3)
     for (let i = 0; i < count * 3; i += 3) {
-      positions[i] = (Math.random() - 0.5) * 4000
-      positions[i + 1] = (Math.random() - 0.5) * 4000
-      positions[i + 2] = (Math.random() - 0.5) * 4000
+      positions[i] = (Math.random() - 0.5) * spread
+      positions[i + 1] = (Math.random() - 0.5) * spread
+      positions[i + 2] = (Math.random() - 0.5) * spread
     }
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
     const material = new PointsMaterial({
-      color: 0xffffff,
-      size: 1.5,
+      color: 0xccddff,
+      size,
       transparent: true,
-      opacity: 0.6,
+      opacity,
       blending: AdditiveBlending,
+      depthWrite: false,
+      sizeAttenuation: true,
     })
-    const stars = new Points(geometry, material)
-    graph.scene().add(stars)
+    scene.add(new Points(geometry, material))
+  }
+
+  function addStarField() {
+    const scene = graph.scene()
+    addStarLayer(scene, { count: 3000, spread: 6000, size: 0.8, opacity: 0.3 })
+    addStarLayer(scene, { count: 800, spread: 3000, size: 2.0, opacity: 0.5 })
+    addStarLayer(scene, { count: 150, spread: 1500, size: 4.0, opacity: 0.8 })
   }
 
   // ── Bloom 后处理 ────────────────────────────────────────────────
   function setupBloom() {
-    const bloomPass = new UnrealBloomPass()
-    bloomPass.strength = 2
-    bloomPass.radius = 0.5
-    bloomPass.threshold = 0.8
-    graph.postProcessingComposer().addPass(bloomPass)
+    try {
+      const bloomPass = new UnrealBloomPass()
+      bloomPass.strength = 1.5
+      bloomPass.radius = 0.75
+      bloomPass.threshold = 0.65
+      graph.postProcessingComposer().addPass(bloomPass)
+    } catch (e) {
+      console.warn('Bloom post-processing unavailable, falling back to sprite glow only')
+    }
   }
 
   // ── 节点自定义渲染（恒星发光体）──────────────────────────────────
@@ -431,6 +442,9 @@ export function useKnowledgeGraph(containerRef) {
 
     // Bloom
     setupBloom()
+
+    // 深度雾：远处物体自然淡出
+    graph.scene().fog = new FogExp2(0x050510, 0.0015)
 
     // 星空粒子
     addStarField()
