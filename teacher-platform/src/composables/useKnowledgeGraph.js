@@ -380,6 +380,96 @@ export function useKnowledgeGraph(containerRef) {
     }
   }
 
+  // ── 聚类质心边捆绑（阶段二）──────────────────────────────────────
+  function computeClusterCentroids() {
+    const clusters = {}
+    graphData.value.nodes.forEach(node => {
+      const cat = node.category || '__uncategorized'
+      if (!clusters[cat]) clusters[cat] = { sum: new Vector3(), count: 0 }
+      clusters[cat].sum.add(new Vector3(node.x, node.y, node.z))
+      clusters[cat].count++
+    })
+    const centroids = {}
+    for (const [cat, { sum, count }] of Object.entries(clusters)) {
+      centroids[cat] = sum.divideScalar(count)
+    }
+    return centroids
+  }
+
+  function computeLinkBundling() {
+    const centroids = computeClusterCentroids()
+
+    graphData.value.links.forEach(link => {
+      const src = typeof link.source === 'object' ? link.source : null
+      const tgt = typeof link.target === 'object' ? link.target : null
+      if (!src || !tgt) {
+        link.__bundleCurvature = 0.15
+        link.__bundleRotation = 0
+        return
+      }
+
+      const A = new Vector3(src.x, src.y, src.z)
+      const B = new Vector3(tgt.x, tgt.y, tgt.z)
+      const D = new Vector3().subVectors(B, A)
+      const linkLen = D.length()
+      if (linkLen < 1e-6) {
+        link.__bundleCurvature = 0.05
+        link.__bundleRotation = 0
+        return
+      }
+      D.normalize()
+
+      const M = new Vector3().addVectors(A, B).multiplyScalar(0.5)
+
+      // 取相关质心（同簇取簇心，跨簇取两簇心中点）
+      const srcCat = src.category || '__uncategorized'
+      const tgtCat = tgt.category || '__uncategorized'
+      let C
+      if (srcCat === tgtCat) {
+        C = centroids[srcCat] || M.clone()
+      } else {
+        const c1 = centroids[srcCat] || M.clone()
+        const c2 = centroids[tgtCat] || M.clone()
+        C = new Vector3().addVectors(c1, c2).multiplyScalar(0.5)
+      }
+
+      // M→C 投影到 AB 的垂直平面
+      const MC = new Vector3().subVectors(C, M)
+      const projOnD = D.clone().multiplyScalar(MC.dot(D))
+      const perpComponent = new Vector3().subVectors(MC, projOnD)
+      const perpLen = perpComponent.length()
+
+      // curvature = |垂直分量| / |AB|，clamp 到 [0.05, 0.6]
+      link.__bundleCurvature = Math.max(0.05, Math.min(0.6, perpLen / linkLen))
+
+      // curveRotation 相对于 XY 平面交线方向
+      if (perpLen < 1e-6) {
+        link.__bundleRotation = 0
+        return
+      }
+
+      const bundleDir = perpComponent.normalize()
+      const zAxis = new Vector3(0, 0, 1)
+      const crossDZ = new Vector3().crossVectors(D, zAxis)
+
+      if (crossDZ.length() < 1e-6) {
+        // link 平行于 Z 轴，用 X 做参考
+        link.__bundleRotation = Math.atan2(bundleDir.y, bundleDir.x)
+        return
+      }
+
+      // refDir = normalize(D × Z × D)
+      const refDir = new Vector3().crossVectors(crossDZ, D).normalize()
+      const perpRef = new Vector3().crossVectors(D, refDir)
+      link.__bundleRotation = Math.atan2(bundleDir.dot(perpRef), bundleDir.dot(refDir))
+    })
+
+    // 应用计算后的 per-link 曲率
+    graph
+      .linkCurvature(link => link.__bundleCurvature || 0.15)
+      .linkCurveRotation(link => link.__bundleRotation || 0)
+  }
+
   // ── resize 处理 ──────────────────────────────────────────────────
   function handleResize() {
     if (!graph || !containerRef.value) return
@@ -474,6 +564,11 @@ export function useKnowledgeGraph(containerRef) {
       .radius(node => getNodeCoreSize(node) * 1.5 + 3)
       .strength(0.7)
     )
+
+    // 力模拟稳定后，计算精确的聚类质心边捆绑
+    graph.onEngineStop(() => {
+      computeLinkBundling()
+    })
 
     // Bloom
     setupBloom()
