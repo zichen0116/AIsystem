@@ -1,6 +1,7 @@
 import { shallowRef } from 'vue'
 import ForceGraph3D from '3d-force-graph'
 import SpriteText from 'three-spritetext'
+import { forceCollide } from 'd3-force-3d'
 import {
   BufferGeometry,
   Float32BufferAttribute,
@@ -11,21 +12,32 @@ import {
   CanvasTexture,
   Color,
   AdditiveBlending,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  SphereGeometry,
+  FogExp2,
+  Vector3,
 } from 'three'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 
-// ── 颜色池 ────────────────────────────────────────────────────────
-const COLOR_POOL = [
-  '#60a5fa', '#a78bfa', '#34d399', '#f472b6',
-  '#fb923c', '#22d3ee', '#facc15', '#f87171',
+// ── 宇宙色系 ──────────────────────────────────────────────────────
+const COSMIC_PALETTE = [
+  '#6ea8fe', '#b490f0', '#50c8b0', '#7888cc',
+  '#c07090', '#60b880', '#8899aa', '#5c8abf',
 ]
 
-function hashCategory(category) {
+const CATEGORY_OVERRIDE = {
+  '文学领袖': '#f0c060',
+}
+
+function getCategoryColor(category) {
+  if (!category) return COSMIC_PALETTE[0]
+  if (CATEGORY_OVERRIDE[category]) return CATEGORY_OVERRIDE[category]
   let hash = 0
-  for (let i = 0; i < category.length; i++) {
+  for (let i = 0; i < category.length; i++)
     hash = category.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return COLOR_POOL[Math.abs(hash) % COLOR_POOL.length]
+  return COSMIC_PALETTE[Math.abs(hash) % COSMIC_PALETTE.length]
 }
 
 // ── 生成发光点 Sprite 纹理 ─────────────────────────────────────────
@@ -45,9 +57,18 @@ function createGlowTexture(size = 128) {
   return new CanvasTexture(canvas)
 }
 
+// ── 节点尺寸常量 ──────────────────────────────────────────────────
+const MAX_VAL = 12
+const LABEL_VAL_THRESHOLD = 5
+
+function getNodeCoreSize(node) {
+  return 1.0 + Math.pow((node.val || 1) / MAX_VAL, 0.6) * 5.0
+}
+
 // ── 主 Composable ──────────────────────────────────────────────────
 export function useKnowledgeGraph(containerRef) {
   let graph = null
+  let nodeMap = {}
   let autoRotateTimer = null
   let autoRotating = false
   let mouseIdleTimeout = null
@@ -62,16 +83,6 @@ export function useKnowledgeGraph(containerRef) {
   const categories = shallowRef([])
   const hiddenCategories = shallowRef(new Set())
   const isRotating = shallowRef(true)
-
-  // ── 类别颜色映射缓存 ───────────────────────────────────────────
-  const categoryColorMap = {}
-  function getCategoryColor(category) {
-    if (!category) return COLOR_POOL[0]
-    if (!categoryColorMap[category]) {
-      categoryColorMap[category] = hashCategory(category)
-    }
-    return categoryColorMap[category]
-  }
 
   // ── 星空背景粒子 ───────────────────────────────────────────────
   function addStarField() {
