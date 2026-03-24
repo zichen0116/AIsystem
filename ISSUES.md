@@ -1,27 +1,30 @@
-High emit 会未定义，按计划做会直接报错
-在 selectConversation 里用了 emit(...)，但后面还是 defineEmits([...]) 没接收返回值。
-参考：plan.md:357、plan.md:424
-应改成：const emit = defineEmits([...])。
+[High] 计划里的前端导入路径会直接构建失败（@/... 别名未配置）
+实现文档使用了 http.js、useKnowledgeGraph.js、@/components/...（plan）。
+但当前 Vite 配置没有 resolve.alias（vite.config.js），项目内也未使用 @ 别名。按文档实现会报 Failed to resolve import '@/...'。
 
-High startNewConversation 的示例会把现有清理逻辑“抹掉”
-示例只清状态，没保留当前代码里的 abortController?.abort()、clearTimeout(saveTimer)、destroyEditor() 等清理，容易出现流式请求未中断/定时器残留。
-参考：plan.md:539
-建议写成“在现有函数上增量修改”，不要整段替换。
+[High] Mock API 的 limit 语义不完整：节点被截断，但边未截断，数据会不一致
+文档代码里 nodes = poets[:limit]（plan），但 links 全量返回（plan）。
+当 limit < 50 时会出现“边引用了不存在节点”的情况，3D 图会生成无名称/无分类的隐式节点，影响 tooltip、搜索和筛选逻辑。
 
-Medium 生命周期计划还不够干净
-你已经要求去掉 onActivated 的 loadLatest，但计划里保留了一个空 onActivated，同时还保留 isFirstMount 语义，容易让实现者困惑。
-参考：plan.md:470
-建议：直接删 onActivated 相关自动恢复逻辑与 isFirstMount 变量，保持“每次进入默认新会话”。
+[Medium] 鉴权参数写法不规范，存在实现歧义
+文档示例把 current_user 写成 current_user: CurrentUser = None（plan）。
+当前项目里同类接口都用 current_user: CurrentUser（knowledge.py）。建议统一写法，避免被误改成“可选用户”。
 
-Medium 侧边栏历史只在 onMounted 拉一次，后续可能不刷新
-计划只写了 onMounted -> loadHistory()。新生成会话后，侧边栏可能不立即出现新记录。
-参考：plan.md:390
-建议加一个最小机制：生成完成后触发一次 loadHistory（比如父组件事件或 defineExpose 调用）。
+[Medium] 验证命令是 Unix 风格，和当前 PowerShell 环境不兼容
+文档多处用了 cat | grep、head、/dev/null（plan plan plan）。
+在你这个 Windows + PowerShell/CMD 环境下，这些步骤会直接卡住执行。
+[Medium] “点击浮层外关闭”在当前结构下可能无法满足
+FilterPopover/SearchPopover 的 backdrop 是 position: absolute; inset: 0，但它们是渲染在 GraphConsole 内（plan plan plan）。
+这意味着“外部点击区域”通常只覆盖控制台局部，不是全屏区域，和预期交互有偏差。
+两种常见方案：
+Teleport to="body" + position: fixed; inset: 0（推荐）
+把浮层放到页面根容器（不是控制台子元素）再做全屏遮罩
 
-Low 计划写了新增 schema，但路由示例没用 response_model
-会导致 schema 形同虚设、接口契约容易漂移。
-参考：plan.md:109、plan.md:183、plan.md:237
-
-Low 文件清单写了要新增测试文件，但任务里主要是手工测试
-参考：plan.md:21
-建议二选一：要么补最小 API 自动化测试，要么把“新增测试文件”从范围里去掉。
+[Medium] 使用私有 API _destructor()，后续版本升级风险高
+销毁逻辑调用 graph._destructor()（plan）。
+这是私有方法，不是稳定契约；升级 3d-force-graph 后很容易出现不可预期行为。
+优先用官方公开 API 做清理（暂停动画、移除事件监听、清空容器等）
+如果暂时只能用 _destructor，至少要：
+明确写“依赖某版本”
+加兜底判断（比如方法不存在时走 fallback）
+升级时做专项回归测试
