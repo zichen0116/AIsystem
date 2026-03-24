@@ -423,12 +423,21 @@ export function useKnowledgeGraph(containerRef) {
         </div>
       `)
       .nodeOpacity(1)
-      // 边
-      .linkWidth(0)
-      .linkOpacity(0.12)
+      // 边：曲线 + 低透明度 + 流动粒子（阶段一，力模拟期间）
+      .linkCurvature(0.15)
+      .linkWidth(0.3)
+      .linkOpacity(0.08)
       .linkColor(link => {
         const src = typeof link.source === 'object' ? link.source : null
-        return src ? getCategoryColor(src.category) : '#ffffff'
+        const color = src ? getCategoryColor(src.category) : '#4466aa'
+        return new Color(color).lerp(new Color('#1a1a3e'), 0.6).getStyle()
+      })
+      .linkDirectionalParticles(2)
+      .linkDirectionalParticleSpeed(0.004)
+      .linkDirectionalParticleWidth(1.2)
+      .linkDirectionalParticleColor(link => {
+        const src = typeof link.source === 'object' ? link.source : null
+        return src ? getCategoryColor(src.category) : '#4466aa'
       })
       // 交互
       .onNodeClick(handleNodeClick)
