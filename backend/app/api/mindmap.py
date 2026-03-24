@@ -40,6 +40,15 @@ class MindmapGenerateMarkdownResponse(BaseModel):
     markdown: str = Field(..., description="用于 markmap 渲染的 Markdown")
 
 
+def _normalize_markdown(md: str) -> str:
+    text = (md or "").strip()
+    if "```" in text:
+        text = text.replace("```markdown", "```").replace("```md", "```")
+        parts = [p.strip() for p in text.split("```") if p.strip()]
+        text = max(parts, key=len) if parts else (md or "").strip()
+    return text
+
+
 def _extract_first_json_object(text: str) -> Optional[str]:
     if not text:
         return None
@@ -197,13 +206,8 @@ async def generate_mindmap_markdown(payload: MindmapGenerateRequest) -> Any:
     if not llm_text:
         raise HTTPException(status_code=500, detail="调用大模型失败或未返回内容")
 
-    md = llm_text.strip()
-    # 容错：去掉可能的 ``` 包裹
-    if "```" in md:
-        md = md.replace("```markdown", "```").replace("```md", "```")
-        parts = [p.strip() for p in md.split("```") if p.strip()]
-        # 优先取最长的片段当正文
-        md = max(parts, key=len) if parts else llm_text.strip()
+    md = _normalize_markdown(llm_text)
 
     return MindmapGenerateMarkdownResponse(markdown=md)
+
 

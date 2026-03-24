@@ -22,9 +22,39 @@ const uploadPreview = ref('')
 const chatMessagesRef = ref(null)
 
 const chatMessages = ref([])
-const hasChat = computed(() => chatMessages.value.length > 0)
 const fullscreenMessageId = ref(null)
 const markmapRefs = ref({})
+const previewFlowRef = ref(null)
+
+/** 左侧预览区始终展示「最后一条」思维导图助手消息 */
+const activeMindmapMessage = computed(() => {
+  for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+    const m = chatMessages.value[i]
+    if (m.role === 'assistant' && m.type === 'mindmap') return m
+  }
+  return null
+})
+
+const isEditingMindmap = ref(false)
+const dirtyMindmap = ref(false)
+const inlineEditor = ref({
+  visible: false,
+  oldText: '',
+  value: '',
+  top: 0,
+  left: 0,
+  width: 160
+})
+
+function newConversation() {
+  if (
+    chatMessages.value.length &&
+    !confirm('确定开始新对话？当前对话与左侧预览将被清空。')
+  ) {
+    return
+  }
+  resetState()
+}
 
 let resvgInitPromise = null
 async function ensureResvgReady() {
@@ -104,6 +134,9 @@ function resetState() {
   uploadedFilename.value = ''
   uploadPreview.value = ''
   chatMessages.value = []
+  isEditingMindmap.value = false
+  dirtyMindmap.value = false
+  inlineEditor.value = { visible: false, oldText: '', value: '', top: 0, left: 0, width: 160 }
 }
 
 watch(
@@ -113,9 +146,167 @@ watch(
   }
 )
 
+watch(
+  () => activeMindmapMessage.value?.id,
+  () => {
+    // 切换到另一张导图（或清空）时退出编辑态
+    isEditingMindmap.value = false
+    dirtyMindmap.value = false
+    inlineEditor.value.visible = false
+  }
+)
+
 const finalSource = computed(() => {
   return uploadPreview.value ? `【上传材料提取文本】\n${uploadPreview.value}` : ''
 })
+
+function startEditMindmap() {
+  const m = activeMindmapMessage.value
+  if (!m || m.loading) return
+  isEditingMindmap.value = true
+  dirtyMindmap.value = false
+}
+
+function cancelEditMindmap() {
+  isEditingMindmap.value = false
+  dirtyMindmap.value = false
+  inlineEditor.value.visible = false
+}
+
+async function saveEditMindmap() {
+  const m = activeMindmapMessage.value
+  if (!m || m.loading) return
+  isEditingMindmap.value = false
+  inlineEditor.value.visible = false
+  await nextTick()
+  try {
+    handleFitFor(m.id)
+  } catch {
+    // ignore
+  }
+}
+
+function getLabelElementFromEventTarget(t) {
+  if (!t || !t.closest) return null
+
+  // 1) 常见 SVG 文字：<text>/<tspan>
+  const textEl = t.closest('text')
+  if (textEl) return textEl
+
+  // 2) 部分 markmap 渲染会落在 foreignObject 的 HTML 容器里
+  const htmlLabelEl = t.closest('foreignObject, .markmap-foreign, .markmap-node')
+  if (htmlLabelEl) {
+    const candidate =
+      htmlLabelEl.querySelector?.('text') ||
+      htmlLabelEl.querySelector?.('div, span, p') ||
+      htmlLabelEl
+    return candidate
+  }
+
+  return null
+}
+
+function getLabelText(el) {
+  return (el?.textContent || '').replace(/\s+/g, ' ').trim()
+}
+
+function getLabelRectOrFallback(el, flowRect, event) {
+  const rect = el?.getBoundingClientRect?.()
+  if (rect && rect.width >= 1 && rect.height >= 1) return rect
+
+  // 兜底：若拿不到有效 rect，就按点击坐标放置输入框
+  const x = Number(event?.clientX || 0)
+  const y = Number(event?.clientY || 0)
+  return {
+    left: x || flowRect.left + 24,
+    top: y || flowRect.top + 24,
+    width: 140,
+    height: 24
+  }
+}
+
+function applyLabelChangeInMarkdown(markdown, oldText, newText) {
+  const md = markdown || ''
+  const oldT = (oldText || '').trim()
+  const newT = (newText || '').trim()
+  if (!oldT || !newT || oldT === newT) return md
+
+  // 优先替换“列表项行”里的节点文本（- oldText / * oldText / + oldText）
+  const escaped = oldT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const listItemRe = new RegExp(`^(\\s*[-*+]\\s+)${escaped}(\\s*)$`, 'm')
+  if (listItemRe.test(md)) {
+    return md.replace(listItemRe, `$1${newT}$2`)
+  }
+
+  // 其次替换“标题行”里的文本（# oldText）
+  const headingRe = new RegExp(`^(\\s*#{1,6}\\s+)${escaped}(\\s*)$`, 'm')
+  if (headingRe.test(md)) {
+    return md.replace(headingRe, `$1${newT}$2`)
+  }
+
+  // 兜底：只替换第一次出现，避免误伤过大
+  const idx = md.indexOf(oldT)
+  if (idx >= 0) {
+    return md.slice(0, idx) + newT + md.slice(idx + oldT.length)
+  }
+  return md
+}
+
+function handleMindmapClick(e) {
+  if (!isEditingMindmap.value) return
+  const m = activeMindmapMessage.value
+  if (!m || m.loading) return
+
+  const labelEl = getLabelElementFromEventTarget(e?.target)
+  if (!labelEl) return
+
+  const oldText = getLabelText(labelEl)
+  if (!oldText) return
+
+  const flowEl = previewFlowRef.value
+  if (!flowEl) return
+
+  const flowRect = flowEl.getBoundingClientRect?.()
+  if (!flowRect) return
+  const textRect = getLabelRectOrFallback(labelEl, flowRect, e)
+
+  const top = Math.max(8, textRect.top - flowRect.top - 30)
+  const left = Math.max(8, Math.min(textRect.left - flowRect.left, flowRect.width - 180))
+  const width = Math.max(140, Math.min(320, (textRect.width || 140) + 56))
+
+  inlineEditor.value = {
+    visible: true,
+    oldText,
+    value: oldText,
+    top,
+    left,
+    width
+  }
+
+  nextTick(() => {
+    try {
+      const input = flowEl.querySelector?.('.mindmap-inline-input')
+      input?.focus?.()
+      input?.select?.()
+    } catch {
+      // ignore
+    }
+  })
+}
+
+function commitInlineEdit() {
+  const m = activeMindmapMessage.value
+  if (!m || m.loading) return
+  if (!inlineEditor.value.visible) return
+  const oldText = inlineEditor.value.oldText
+  const newText = inlineEditor.value.value
+  const updated = applyLabelChangeInMarkdown(m.markdown || '', oldText, newText)
+  if (updated !== (m.markdown || '')) {
+    m.markdown = updated
+    dirtyMindmap.value = true
+  }
+  inlineEditor.value.visible = false
+}
 
 function selectFile() {
   const input = document.createElement('input')
@@ -159,8 +350,9 @@ async function handleGenerate() {
   }
   // 点击生成后清空输入框（避免内容残留）
   promptText.value = ''
-  generating.value = true
   errorMsg.value = ''
+
+  generating.value = true
   chatMessages.value.push({
     id: `m_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     role: 'user',
@@ -203,7 +395,6 @@ async function handleGenerate() {
     const data = await resp.json()
     const md = typeof data?.markdown === 'string' ? data.markdown : ''
     if (!md.trim()) throw new Error('未生成 Markdown 内容')
-
     assistantMsg.title = '思维导图'
     assistantMsg.description = '已为你生成思维导图，支持导出图片、缩放与适配视图。'
     assistantMsg.loading = false
@@ -398,119 +589,246 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="content-panel knowledge-panel" :class="{ 'has-chat': hasChat }">
-    <div v-if="!hasChat" class="knowledge-header">
-      <div class="knowledge-lottie">
-        <LottiePlayer :animation-data="aiAnimationFlow" />
-      </div>
-      <p class="knowledge-subtitle">
-        借助 AI 驱动的思维导图生成器，只需输入主题与关键要点，就能快速构建清晰直观的知识结构图。
-      </p>
-    </div>
-
-    <!-- Markmap-only：不提供布局切换按钮 -->
-
-    <section v-if="hasChat" class="chat-section">
-      <div ref="chatMessagesRef" class="chat-messages">
-        <div v-for="m in chatMessages" :key="m.id" class="chat-row" :class="m.role">
-          <div class="chat-bubble" :class="m.role">
-            <template v-if="m.type === 'text'">
-              <div class="chat-text">{{ m.content }}</div>
-            </template>
-
-            <template v-else>
-              <div class="mindmap-container" :data-mindmap-container="m.id">
-                <div class="mindmap-bubble">
-                <div class="mindmap-bubble-header">
-                  <div class="mindmap-bubble-meta">
-                    <div class="mindmap-bubble-title">{{ m.title || '思维导图' }}</div>
-                    <div v-if="m.description" class="mindmap-bubble-desc">{{ m.description }}</div>
-                  </div>
-                  <div class="mindmap-toolbar">
-                    <button
-                      type="button"
-                      class="tool-btn"
-                      title="导出图片"
-                      :disabled="exporting"
-                      @click="handleExportPng(m.id)"
-                    >
-                      {{ exporting ? '导出中' : '导出' }}
-                    </button>
-                    <button type="button" class="tool-btn" title="全屏" @click="handleFullscreen(m.id)">
-                      全屏
-                    </button>
-                    <button
-                      v-if="fullscreenMessageId === m.id"
-                      type="button"
-                      class="tool-btn"
-                      title="退出全屏"
-                      @click="handleExitFullscreen"
-                    >
-                      退出全屏
-                    </button>
-                    <button type="button" class="tool-btn" title="放大" @click="handleZoomInFor(m.id)">
-                      +
-                    </button>
-                    <button type="button" class="tool-btn" title="缩小" @click="handleZoomOutFor(m.id)">
-                      -
-                    </button>
-                    <button type="button" class="tool-btn" title="适配视图" @click="handleFitFor(m.id)">
-                      适配
-                    </button>
-                  </div>
-                </div>
-
-                <div v-if="m.loading" class="mindmap-loading">生成中...</div>
-
-                <div v-else class="flow-wrap flow-wrap-in-chat" :data-mindmap-export="m.id">
-                  <MarkmapRenderer
-                    :ref="(el) => setMarkmapRef(m.id, el)"
-                    :markdown="m.markdown"
-                  />
-                </div>
-              </div>
-              </div>
-            </template>
+  <div class="content-panel knowledge-panel mindmap-split-root">
+    <div class="mindmap-workbench">
+      <!-- 左侧：思维导图预览区 -->
+      <div class="preview-column">
+        <div class="preview-toolbar">
+          <div class="toolbar-group">
+            <span class="toolbar-label">预览</span>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <div class="knowledge-input-wrap">
-      <div class="knowledge-input-box">
-        <textarea
-          v-model="promptText"
-          class="knowledge-textarea"
-          placeholder="请描述您想创建的内容..."
-          rows="4"
-        ></textarea>
-        <div class="knowledge-input-footer">
-          <div class="knowledge-footer-left">
-            <button class="upload-btn" title="上传文件" :disabled="uploading" @click="selectFile">
-              <img :src="linkFileImg" class="upload-icon" alt="" />
+          <div class="toolbar-group toolbar-actions">
+            <button
+              v-if="!isEditingMindmap"
+              type="button"
+              class="tool-icon-btn"
+              title="编辑"
+              :disabled="!activeMindmapMessage || activeMindmapMessage.loading"
+              @click="startEditMindmap"
+            >
+              ✎
             </button>
             <button
-              v-if="isSupported"
-              class="voice-btn"
-              :class="{ recording: isRecording }"
-              title="语音输入"
-              @click="toggleRecording"
+              v-else
+              type="button"
+              class="tool-icon-btn tool-icon-btn-primary"
+              title="保存"
+              @click="saveEditMindmap"
             >
-              <img :src="voiceImg" class="voice-icon-img" alt="语音" />
+              ✓
+            </button>
+            <button
+              v-if="isEditingMindmap"
+              type="button"
+              class="tool-icon-btn"
+              title="取消编辑"
+              @click="cancelEditMindmap"
+            >
+              ↩
+            </button>
+            <span class="toolbar-divider" />
+            <button
+              type="button"
+              class="tool-icon-btn"
+              title="导出 PNG"
+              :disabled="exporting || !activeMindmapMessage || activeMindmapMessage.loading"
+              @click="activeMindmapMessage && handleExportPng(activeMindmapMessage.id)"
+            >
+              ⬇
+            </button>
+            <button
+              type="button"
+              class="tool-icon-btn"
+              title="全屏"
+              :disabled="!activeMindmapMessage || activeMindmapMessage.loading"
+              @click="activeMindmapMessage && handleFullscreen(activeMindmapMessage.id)"
+            >
+              ⛶
+            </button>
+            <button
+              v-if="activeMindmapMessage && fullscreenMessageId === activeMindmapMessage.id"
+              type="button"
+              class="tool-icon-btn"
+              title="退出全屏"
+              @click="handleExitFullscreen"
+            >
+              ✕
+            </button>
+            <span class="toolbar-divider" />
+            <button
+              type="button"
+              class="tool-icon-btn"
+              title="适配画布"
+              :disabled="!activeMindmapMessage || activeMindmapMessage.loading"
+              @click="activeMindmapMessage && handleFitFor(activeMindmapMessage.id)"
+            >
+              ⊡
+            </button>
+            <button
+              type="button"
+              class="tool-icon-btn"
+              title="缩小"
+              :disabled="!activeMindmapMessage || activeMindmapMessage.loading"
+              @click="activeMindmapMessage && handleZoomOutFor(activeMindmapMessage.id)"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              class="tool-icon-btn"
+              title="放大"
+              :disabled="!activeMindmapMessage || activeMindmapMessage.loading"
+              @click="activeMindmapMessage && handleZoomInFor(activeMindmapMessage.id)"
+            >
+              +
             </button>
           </div>
-          <button class="generate-btn" :disabled="generating" @click="handleGenerate">
-            <span class="generate-icon">✨</span>
-            <span>{{ generating ? '生成中...' : 'AI生成' }}</span>
+        </div>
+
+        <div class="preview-canvas-wrap">
+          <div v-if="!activeMindmapMessage" class="preview-empty preview-empty-minimal">
+            <p class="preview-empty-hint">发送后将在此展示思维导图</p>
+          </div>
+
+          <div
+            v-else
+            class="mindmap-container preview-mindmap-root"
+            :data-mindmap-container="activeMindmapMessage.id"
+          >
+            <div v-if="activeMindmapMessage.loading" class="mindmap-loading preview-loading">
+              正在生成思维导图，请稍候…
+            </div>
+            <div
+              v-else
+              class="flow-wrap flow-wrap-preview"
+              ref="previewFlowRef"
+              :data-mindmap-export="activeMindmapMessage.id"
+              :class="{ editing: isEditingMindmap }"
+              @click="handleMindmapClick"
+            >
+              <MarkmapRenderer
+                :key="activeMindmapMessage.id"
+                :ref="(el) => setMarkmapRef(activeMindmapMessage.id, el)"
+                :markdown="activeMindmapMessage.markdown"
+              />
+              <div v-if="isEditingMindmap" class="mindmap-edit-hint">编辑中：点击节点文字进行修改</div>
+              <div
+                v-if="isEditingMindmap && inlineEditor.visible"
+                class="mindmap-inline-editor"
+                :style="{
+                  top: inlineEditor.top + 'px',
+                  left: inlineEditor.left + 'px',
+                  width: inlineEditor.width + 'px'
+                }"
+                @click.stop
+              >
+                <input
+                  v-model="inlineEditor.value"
+                  class="mindmap-inline-input"
+                  type="text"
+                  @keydown.enter.prevent="commitInlineEdit"
+                  @keydown.esc.prevent="inlineEditor.visible = false"
+                  @blur="commitInlineEdit"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-status-bar">
+          <span class="status-left">思维导图</span>
+          <span class="status-center">第 1 页</span>
+          <span class="status-right">100%</span>
+        </div>
+      </div>
+
+      <!-- 右侧：对话区 -->
+      <div class="chat-column">
+        <div class="chat-column-header">
+          <div class="chat-column-title-block">
+            <div class="chat-column-title">思维导图助手</div>
+            <div class="chat-column-sub">用自然语言描述，AI 生成知识结构图</div>
+          </div>
+          <button type="button" class="new-chat-btn" title="新对话" @click="newConversation">
+            ＋ 新对话
           </button>
+        </div>
+
+        <div ref="chatMessagesRef" class="chat-messages-split">
+          <div v-if="!chatMessages.length" class="chat-welcome">
+            <div class="chat-welcome-lottie">
+              <LottiePlayer :animation-data="aiAnimationFlow" />
+            </div>
+            <p class="chat-welcome-title">开始创作</p>
+            <p class="chat-welcome-desc">
+              输入课程主题、章节要点或问题链，也可上传材料作为补充上下文。
+            </p>
+          </div>
+          <div
+            v-for="m in chatMessages"
+            :key="m.id"
+            class="chat-row-split"
+            :class="m.role"
+          >
+            <template v-if="m.role === 'user'">
+              <div class="chat-bubble-split user">
+                <div class="chat-text">{{ m.content }}</div>
+              </div>
+            </template>
+            <template v-else-if="m.type === 'mindmap'">
+              <div class="chat-bubble-split assistant mindmap-hint">
+                <template v-if="m.loading">
+                  <span class="hint-dot" />正在生成思维导图…
+                </template>
+                <template v-else>
+                  ✓ 已生成，请在<strong>左侧预览区</strong>查看、缩放与导出。
+                </template>
+              </div>
+            </template>
+            <template v-else>
+              <div class="chat-bubble-split assistant error-bubble">
+                <div class="chat-text">{{ m.content }}</div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="chat-input-stack">
+          <div class="knowledge-input-box chat-input-box">
+            <textarea
+              v-model="promptText"
+              class="knowledge-textarea"
+              placeholder="请描述您想创建的内容..."
+              rows="3"
+            />
+            <div class="knowledge-input-footer">
+              <div class="knowledge-footer-left">
+                <button class="upload-btn" title="上传文件" :disabled="uploading" @click="selectFile">
+                  <img :src="linkFileImg" class="upload-icon" alt="" />
+                </button>
+                <button
+                  v-if="isSupported"
+                  class="voice-btn"
+                  :class="{ recording: isRecording }"
+                  title="语音输入"
+                  @click="toggleRecording"
+                >
+                  <img :src="voiceImg" class="voice-icon-img" alt="语音" />
+                </button>
+              </div>
+              <button class="generate-btn primary-send" :disabled="generating" @click="handleGenerate">
+                <span class="generate-icon">✨</span>
+                <span>{{ generating ? '生成中...' : '发送' }}</span>
+              </button>
+            </div>
+          </div>
+          <p v-if="uploadedFilename" class="upload-hint-split">
+            已上传：{{ uploadedFilename }}；提取文本长度：{{ uploadPreview.length }} 字
+          </p>
+          <p v-if="errorMsg" class="error-text-split">{{ errorMsg }}</p>
         </div>
       </div>
     </div>
-
-    <p v-if="uploadedFilename" class="upload-hint">
-      已上传：{{ uploadedFilename }}；提取文本长度：{{ uploadPreview.length }} 字
-    </p>
-    <p v-if="errorMsg" class="error-text">{{ errorMsg }}</p>
   </div>
 </template>
 
@@ -532,89 +850,448 @@ onBeforeUnmount(() => {
   height: 0;
 }
 
-.knowledge-panel {
-  padding: 72px 40px 24px;
+.knowledge-panel.mindmap-split-root {
+  padding: 16px 20px 20px;
   background: transparent;
   height: 100%;
-}
-
-.knowledge-panel.has-chat {
-  /* 进入对话模式后减少顶部留白，让聊天区更靠上 */
-  padding-top: 18px;
-}
-
-.chat-section {
-  max-width: 1060px;
-  margin: 24px auto 0;
-  width: 100%;
-  min-height: 320px;
-  flex: 1;
   min-height: 0;
 }
 
-.knowledge-panel.has-chat .chat-section {
-  margin-top: 10px;
-}
-
-.chat-messages {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  min-height: 320px;
-  height: 100%;
-  overflow: auto;
-  /* 给底部输入框留空间，避免贴得太近 */
-  padding-bottom: 240px;
-}
-
-.chat-empty {
-  color: #64748b;
-  font-size: 0.95rem;
-  line-height: 1.6;
-  padding: 32px 8px;
-}
-
-.chat-row {
+.mindmap-workbench {
   display: flex;
-  margin-bottom: 14px;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+  align-items: stretch;
 }
 
-.chat-row.user {
+/* ---------- 左侧预览 ---------- */
+.preview-column {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  min-height: 520px;
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #6b7280;
+  letter-spacing: 0.02em;
+}
+
+.toolbar-actions {
+  flex-wrap: wrap;
   justify-content: flex-end;
 }
 
-.chat-row.assistant {
+.tool-icon-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.tool-icon-btn:hover:not(:disabled) {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.tool-icon-btn-primary {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+.tool-icon-btn-primary:hover:not(:disabled) {
+  background: #1f2937;
+  border-color: #1f2937;
+  color: #ffffff;
+}
+
+.tool-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 22px;
+  background: #d1d5db;
+  margin: 0 4px;
+}
+
+.preview-canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background-color: #fafafa;
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.preview-empty-minimal {
+  height: 100%;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.preview-empty-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #9ca3af;
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+.preview-mindmap-root {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #ffffff;
+}
+
+.preview-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  color: #64748b;
+}
+
+.flow-wrap-preview {
+  flex: 1;
+  min-height: 0;
+  height: auto !important;
+  border: none;
+  border-radius: 0;
+  background: #ffffff;
+  position: relative;
+}
+
+.flow-wrap-preview.editing {
+  cursor: text;
+}
+
+.flow-wrap-preview.editing :deep(text),
+.flow-wrap-preview.editing :deep(tspan),
+.flow-wrap-preview.editing :deep(foreignObject),
+.flow-wrap-preview.editing :deep(.markmap-foreign),
+.flow-wrap-preview.editing :deep(.markmap-node) {
+  cursor: text;
+  pointer-events: auto;
+}
+
+.mindmap-edit-hint {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  z-index: 4;
+  user-select: none;
+}
+
+.mindmap-inline-editor {
+  position: absolute;
+  z-index: 6;
+}
+
+.mindmap-inline-input {
+  width: 100%;
+  border: 1px solid #93c5fd;
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #0f172a;
+  outline: none;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.18);
+}
+
+.mindmap-inline-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18), 0 14px 30px rgba(37, 99, 235, 0.18);
+}
+
+.preview-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  font-size: 12px;
+  color: #6b7280;
+  background: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  flex-shrink: 0;
+}
+
+.status-left {
+  font-weight: 600;
+  color: #374151;
+}
+
+/* ---------- 右侧对话 ---------- */
+.chat-column {
+  flex: 0 0 min(360px, 32%);
+  max-width: 400px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  min-height: 520px;
+}
+
+.chat-column-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  flex-shrink: 0;
+}
+
+.chat-column-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.chat-column-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+.new-chat-btn {
+  flex-shrink: 0;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.new-chat-btn:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.chat-messages-split {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 10px 12px;
+  text-align: center;
+  min-height: 0;
+}
+
+.chat-welcome-lottie {
+  width: 140px;
+  height: 140px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.chat-welcome-lottie :deep(.lottie-container) {
+  width: 140px;
+  height: 140px;
+  min-height: 0;
+}
+
+.chat-welcome-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #111827;
+}
+
+.chat-welcome-desc {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.55;
+  max-width: 100%;
+}
+
+.chat-row-split {
+  display: flex;
+}
+
+.chat-row-split.user {
+  justify-content: flex-end;
+}
+
+.chat-row-split.assistant {
   justify-content: flex-start;
 }
 
-.chat-bubble {
-  max-width: 900px;
-  border-radius: 16px;
-  padding: 12px 14px;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+.chat-bubble-split {
+  max-width: 100%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.55;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
 
-.chat-bubble.user {
+.chat-bubble-split.user {
   background: #2563eb;
   color: #ffffff;
 }
 
-.chat-bubble.assistant {
-  background: #ffffff;
-  color: #0f172a;
-  border: 1px solid rgba(226, 232, 240, 0.9);
+.chat-bubble-split.assistant {
+  background: #f8fafc;
+  color: #334155;
+  border: 1px solid #eef2f7;
+}
+
+.chat-bubble-split.mindmap-hint {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  color: #5b21b6;
+  font-size: 12px;
+}
+
+.hint-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7c3aed;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: hint-pulse 1s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.error-bubble {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.chat-input-stack {
+  flex-shrink: 0;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #f1f5f9;
+  background: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
+}
+
+.chat-input-box {
+  height: auto !important;
+  min-height: 120px;
+}
+
+.primary-send {
+  background: #111827 !important;
+  color: #ffffff !important;
+}
+
+.primary-send:hover:not(:disabled) {
+  background: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+.upload-hint-split,
+.error-text-split {
+  margin: 8px 2px 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.upload-hint-split {
+  color: #6b7280;
+}
+
+.error-text-split {
+  color: #dc2626;
 }
 
 .chat-text {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.6;
-}
-
-.mindmap-bubble {
-  width: 900px;
-  max-width: 100%;
 }
 
 .mindmap-container:fullscreen {
@@ -628,176 +1305,22 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.mindmap-container:fullscreen .mindmap-bubble {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.mindmap-container:fullscreen .mindmap-bubble-header {
-  flex: 0 0 auto;
-}
-
-.mindmap-container:fullscreen .flow-wrap {
+.mindmap-container:fullscreen .flow-wrap-preview {
   flex: 1;
   height: auto;
   min-height: 0;
   background: #ffffff;
 }
 
-.mindmap-container:fullscreen .flow-wrap-in-chat {
+.mindmap-container:fullscreen .preview-loading {
   flex: 1;
-  height: auto;
-}
-
-.mindmap-container:fullscreen .mindmap-toolbar {
-  background: rgba(255, 255, 255, 0.95);
-}
-
-.mindmap-bubble-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 10px;
-}
-
-.mindmap-bubble-title {
-  font-weight: 800;
-  font-size: 1.1rem;
-  color: #0f172a;
-  margin-bottom: 4px;
-}
-
-.mindmap-bubble-desc {
-  color: #475569;
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.mindmap-toolbar {
-  display: inline-flex;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 999px;
-  padding: 8px 10px;
-  flex-shrink: 0;
-}
-
-.tool-btn {
-  border: none;
-  background: transparent;
-  color: #0f172a;
-  font-weight: 700;
-  font-size: 0.9rem;
-  padding: 6px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.tool-btn:hover {
-  background: rgba(37, 99, 235, 0.1);
+  min-height: 0;
 }
 
 .mindmap-loading {
   padding: 18px 12px;
   color: #64748b;
   font-weight: 600;
-}
-
-.flow-wrap-in-chat {
-  border-radius: 14px;
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  overflow: hidden;
-  background: #ffffff;
-}
-
-.knowledge-header {
-  text-align: center;
-  margin-bottom: 48px;
-}
-
-.knowledge-lottie {
-  width: 190px;
-  height: 190px;
-  margin: 0 auto 24px;
-}
-
-.knowledge-lottie :deep(.lottie-container) {
-  min-height: 0;
-  width: 190px;
-  height: 190px;
-}
-
-.knowledge-title {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #1e293b;
-  margin: 0 0 12px;
-  line-height: 1.3;
-}
-
-.knowledge-subtitle {
-  font-size: 1.05rem;
-  color: #4b5563;
-  line-height: 1.6;
-  margin: 0;
-  max-width: 560px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-
-.knowledge-tabs-wrap {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 40px;
-}
-
-.knowledge-tabs {
-  display: inline-flex;
-  padding: 3px;
-  gap: 0;
-  background: #e8f1ff;
-  border-radius: 999px;
-}
-
-.knowledge-tab {
-  display: inline-flex;
-  align-items: center;
-  padding: 9px 24px;
-  border: none;
-  background: transparent;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #64748b;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
-  border-radius: 999px;
-}
-
-.knowledge-tab:hover {
-  color: #2563eb;
-}
-
-.knowledge-tab.active {
-  background: #ffffff;
-  color: #2563eb;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
-}
-
-.knowledge-input-wrap {
-  width: min(1060px, 75%);
-  margin: 16px auto 0;
-  position: sticky;
-  bottom: 18px;
-  z-index: 10;
-  /* 底部磨砂遮罩，让输入框更像固定栏 */
-  padding: 12px 0 0;
-  background: linear-gradient(to top, rgba(241, 245, 249, 0.96), rgba(241, 245, 249, 0));
 }
 
 .knowledge-input-box {
