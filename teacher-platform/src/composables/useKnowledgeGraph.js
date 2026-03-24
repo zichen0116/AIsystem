@@ -117,32 +117,62 @@ export function useKnowledgeGraph(containerRef) {
 
   // ── 节点自定义渲染（恒星发光体）──────────────────────────────────
   const glowTexture = createGlowTexture()
+  const coreGeometry = new SphereGeometry(1, 16, 12)
 
   function createNodeObject(node) {
-    const color = getCategoryColor(node.category)
-    const threeColor = new Color(color)
+    const group = new Group()
+    const baseColor = getCategoryColor(node.category)
+    const threeColor = new Color(baseColor)
+    const val = node.val || 1
+    const coreSize = getNodeCoreSize(node)
+    const brightness = 0.4 + 0.6 * Math.pow(val / MAX_VAL, 0.3)
 
-    // 发光点 Sprite
-    const mat = new SpriteMaterial({
-      map: glowTexture,
-      color: threeColor.clone().multiplyScalar(1.5), // 超亮，触发 bloom
+    // Layer 1: 实心核心球
+    const coreMat = new MeshBasicMaterial({
+      color: threeColor.clone().lerp(new Color('#ffffff'), 0.5),
       transparent: true,
+      opacity: 0.95 * brightness,
+    })
+    const core = new Mesh(coreGeometry, coreMat)
+    core.scale.setScalar(coreSize * 0.3)
+    group.add(core)
+
+    // Layer 2: 内层光晕
+    const innerMat = new SpriteMaterial({
+      map: glowTexture,
+      color: threeColor.clone().multiplyScalar(1.8),
+      transparent: true,
+      opacity: 0.7 * brightness,
       blending: AdditiveBlending,
       depthWrite: false,
     })
-    const sprite = new Sprite(mat)
-    const size = Math.max(3, Math.sqrt(node.val || 1) * 3)
-    sprite.scale.set(size, size, 1)
+    const innerGlow = new Sprite(innerMat)
+    innerGlow.scale.setScalar(coreSize * 1.2)
+    group.add(innerGlow)
 
-    return sprite
+    // Layer 3: 外层光环
+    const outerMat = new SpriteMaterial({
+      map: glowTexture,
+      color: threeColor.clone().multiplyScalar(1.2),
+      transparent: true,
+      opacity: (0.15 + (val / MAX_VAL) * 0.2) * brightness,
+      blending: AdditiveBlending,
+      depthWrite: false,
+    })
+    const outerHalo = new Sprite(outerMat)
+    outerHalo.scale.setScalar(coreSize * 3.0)
+    group.add(outerHalo)
+
+    group.userData = { core, innerGlow, outerHalo, label: null }
+    return group
   }
 
   // ── 节点标签（仅大节点常显）──────────────────────────────────────
   function createNodeLabel(node) {
-    if ((node.val || 0) < 5) return null // 小节点不常显标签
+    if ((node.val || 0) < LABEL_VAL_THRESHOLD) return null
     const label = new SpriteText(node.name)
-    label.color = '#cccccc' // 偏暗灰白，不触发 bloom
-    label.textHeight = 2.5
+    label.color = '#aabbcc'
+    label.textHeight = 2.0
     label.fontFace = 'sans-serif'
     label.backgroundColor = false
     label.padding = 0
@@ -365,13 +395,14 @@ export function useKnowledgeGraph(containerRef) {
       .height(containerRef.value.clientHeight)
       // 节点
       .nodeThreeObject(node => {
-        const sprite = createNodeObject(node)
+        const group = createNodeObject(node)
         const label = createNodeLabel(node)
         if (label) {
-          label.position.y = Math.max(3, Math.sqrt(node.val || 1) * 3) / 2 + 2
-          sprite.add(label)
+          label.position.y = getNodeCoreSize(node) * 1.5 + 2
+          group.add(label)
+          group.userData.label = label
         }
-        return sprite
+        return group
       })
       .nodeLabel(node => `
         <div style="background:rgba(10,15,30,0.9);border:1px solid rgba(100,116,139,0.3);border-radius:6px;padding:8px 12px;color:#e2e8f0;font-size:12px;font-family:sans-serif;backdrop-filter:blur(4px);">
