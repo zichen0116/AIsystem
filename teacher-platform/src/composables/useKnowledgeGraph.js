@@ -271,27 +271,34 @@ export function useKnowledgeGraph(containerRef) {
     if (!graph) return
     const hasHighlight = highlightNodes.value.size > 0
 
+    graphData.value.nodes.forEach(node => {
+      const group = node.__threeObj
+      if (!group?.userData) return
+      const { core, innerGlow, outerHalo, label } = group.userData
+      const val = node.val || 1
+      const brightness = 0.4 + 0.6 * Math.pow(val / MAX_VAL, 0.3)
+
+      if (hasHighlight && !highlightNodes.value.has(node)) {
+        if (core) core.material.opacity = 0.95 * brightness * 0.05
+        if (innerGlow) innerGlow.material.opacity = 0.7 * brightness * 0.05
+        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness * 0.05
+        if (label) label.visible = false
+      } else {
+        if (core) core.material.opacity = 0.95 * brightness
+        if (innerGlow) innerGlow.material.opacity = 0.7 * brightness
+        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness
+        if (label) label.visible = labelVisible
+      }
+    })
+
     graph
-      .nodeThreeObject(node => {
-        const sprite = createNodeObject(node)
-        if (hasHighlight && !highlightNodes.value.has(node)) {
-          sprite.material.opacity = 0.05
-        }
-        if (labelVisible) {
-          const label = createNodeLabel(node)
-          if (label) {
-            if (hasHighlight && !highlightNodes.value.has(node)) {
-              label.material.opacity = 0.05
-            }
-            label.position.y = Math.max(3, Math.sqrt(node.val || 1) * 3) / 2 + 2
-            sprite.add(label)
-          }
-        }
-        return sprite
-      })
       .linkOpacity(link => {
-        if (!hasHighlight) return 0.12
-        return highlightLinks.value.has(link) ? 0.3 : 0.02
+        if (!hasHighlight) return 0.08
+        return highlightLinks.value.has(link) ? 0.5 : 0.01
+      })
+      .linkDirectionalParticles(link => {
+        if (!hasHighlight) return 2
+        return highlightLinks.value.has(link) ? 4 : 0
       })
   }
 
@@ -355,16 +362,9 @@ export function useKnowledgeGraph(containerRef) {
     const shouldShow = dist < 600
     if (shouldShow !== labelVisible) {
       labelVisible = shouldShow
-      graph.nodeThreeObject(node => {
-        const sprite = createNodeObject(node)
-        if (labelVisible) {
-          const label = createNodeLabel(node)
-          if (label) {
-            label.position.y = Math.max(3, Math.sqrt(node.val || 1) * 3) / 2 + 2
-            sprite.add(label)
-          }
-        }
-        return sprite
+      graphData.value.nodes.forEach(node => {
+        const label = node.__threeObj?.userData?.label
+        if (label) label.visible = shouldShow
       })
     }
   }
