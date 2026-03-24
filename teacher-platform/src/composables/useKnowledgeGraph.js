@@ -359,9 +359,12 @@ export function useKnowledgeGraph(containerRef) {
     graph
       .nodeVisibility(node => !hiddenCategories.value.has(node.category))
       .linkVisibility(link => {
-        const src = typeof link.source === 'object' ? link.source : { category: '' }
-        const tgt = typeof link.target === 'object' ? link.target : { category: '' }
-        return !hiddenCategories.value.has(src.category) && !hiddenCategories.value.has(tgt.category)
+        const srcId = typeof link.source === 'object' ? link.source.id : link.source
+        const tgtId = typeof link.target === 'object' ? link.target.id : link.target
+        const srcNode = nodeMap[srcId]
+        const tgtNode = nodeMap[tgtId]
+        if (!srcNode || !tgtNode) return false
+        return !hiddenCategories.value.has(srcNode.category) && !hiddenCategories.value.has(tgtNode.category)
       })
   }
 
@@ -482,6 +485,10 @@ export function useKnowledgeGraph(containerRef) {
     if (!containerRef.value) return
 
     graphData.value = data
+
+    // 构建 node lookup map（供 updateVisibility 使用）
+    nodeMap = {}
+    data.nodes.forEach(n => { nodeMap[n.id] = n })
 
     // 提取分类列表
     const cats = [...new Set(data.nodes.map(n => n.category).filter(Boolean))]
@@ -615,14 +622,41 @@ export function useKnowledgeGraph(containerRef) {
       containerRef.value.removeEventListener('wheel', resetIdleTimer)
     }
     if (graph) {
-      if (typeof graph._destructor === 'function') {
-        graph._destructor()
-      } else {
-        graph.pauseAnimation()
-        if (containerRef.value) containerRef.value.innerHTML = ''
-      }
+      // 释放节点 Group 子对象的 GPU 资源
+      graphData.value.nodes.forEach(node => {
+        const group = node.__threeObj
+        if (!group) return
+        group.children.forEach(child => {
+          if (child.geometry) child.geometry.dispose()
+          if (child.material) {
+            if (child.material.map) child.material.map.dispose()
+            child.material.dispose()
+          }
+        })
+      })
+
+      // 释放星空层
+      graph.scene().children.forEach(child => {
+        if (child instanceof Points) {
+          child.geometry.dispose()
+          child.material.dispose()
+        }
+      })
+
+      // 官方 API 清理
+      graph.pauseAnimation()
+      try { graph.controls()?.dispose() } catch (_) {}
+      try { graph.renderer()?.dispose() } catch (_) {}
+      if (containerRef.value) containerRef.value.innerHTML = ''
+
+      // 兜底私有 API（受版本约束 ^1.79.1）
+      try {
+        if (typeof graph._destructor === 'function') graph._destructor()
+      } catch (_) {}
+
       graph = null
     }
+    nodeMap = {}
   }
 
   return {
