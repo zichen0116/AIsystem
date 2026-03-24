@@ -446,8 +446,34 @@ export function useKnowledgeGraph(containerRef) {
       // 分类筛选
       .nodeVisibility(node => !hiddenCategories.value.has(node.category))
       // 力模拟
-      .cooldownTime(5000)
+      .d3AlphaDecay(0.02)
+      .d3VelocityDecay(0.3)
+      .cooldownTime(8000)
       .graphData(data)
+
+    // ── 力布局调优 ─────────────────────────────────────────────────
+    graph.d3Force('charge').strength(node => -60 - (node.val || 1) * 10).distanceMax(300)
+
+    graph.d3Force('link')
+      .distance(link => {
+        const src = typeof link.source === 'object' ? link.source : null
+        const tgt = typeof link.target === 'object' ? link.target : null
+        if (src && tgt && src.category === tgt.category) return 35
+        return 50
+      })
+      .strength(link => {
+        const src = typeof link.source === 'object' ? link.source : null
+        const tgt = typeof link.target === 'object' ? link.target : null
+        if (src && tgt && src.category === tgt.category) return 0.6
+        return 0.3
+      })
+
+    graph.d3Force('center').strength(0.05)
+
+    graph.d3Force('collide', forceCollide()
+      .radius(node => getNodeCoreSize(node) * 1.5 + 3)
+      .strength(0.7)
+    )
 
     // Bloom
     setupBloom()
