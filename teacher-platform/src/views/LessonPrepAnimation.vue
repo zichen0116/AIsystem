@@ -449,7 +449,7 @@ watch(
               </svg>
             </span>
             <span class="animation-tab-label">
-              {{ tab.id === 'animation' ? '动画制作' : '小游戏制作' }}
+              {{ tab.id === 'animation' ? '动画' : '小游戏' }}
             </span>
           </button>
         </div>
@@ -626,7 +626,7 @@ watch(
 
 .animation-panel {
   position: relative;
-  padding: 20px 32px 18px;
+  padding: 2% 3% 2%;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -645,12 +645,12 @@ watch(
 
 /* 顶部动画区固定高度，切换选项时说明/选项/聊天框位置不变 */
 .animation-top-slot {
-  height: 250px;
+  height: 30%;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 40px;
-  margin-bottom: 0px;
+  margin-top: 4%;
+  margin-bottom: 0;
   flex-shrink: 0;
 }
 
@@ -666,28 +666,37 @@ watch(
 
 .animation-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 3%;
 }
 
 .animation-tabs-wrap {
   display: flex;
   justify-content: center;
-  margin-bottom: 40px;
+  width: 100%;
+  margin-bottom: 4%;
 }
 
 .animation-tabs {
-  display: inline-flex;
-  padding: 3px;
+  display: flex;
+  width: 18%;
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 0.3%;
   gap: 0;
   background: #e8f1ff;
   border-radius: 999px;
+  box-sizing: border-box;
 }
 
 .animation-tab {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 26px;
+  gap: 1%;
+  padding: 4% 1%;
+  flex: 1 1 50%;
+  min-width: 0;
+  max-width: 50%;
+  justify-content: center;
   border: none;
   background: transparent;
   font-size: 1rem;
@@ -695,6 +704,7 @@ watch(
   color: #64748b;
   cursor: pointer;
   border-radius: 999px;
+  white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -709,16 +719,16 @@ watch(
 }
 
 .animation-tab-icon {
-  width: 20px;
-  height: 20px;
+  width: 1rem;
+  height: 1rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
 .animation-tab-icon svg {
-  width: 20px;
-  height: 20px;
+  width: 100%;
+  height: 100%;
 }
 
 .animation-tab-label {
@@ -728,7 +738,7 @@ watch(
 .animation-header h3 {
   font-size: 1.5rem;
   color: #1e293b;
-  margin: 0 0 12px;
+  margin: 0 0 1.2%;
 }
 
 .animation-header p {
@@ -739,27 +749,26 @@ watch(
 }
 
 .animation-chatbox-wrap {
-  max-width: 860px;
+  width: 82%;
   margin: 0 auto;
-  width: 90%;
 }
 
 .animation-chatbox {
   border: 1px solid #cbd5e1;
   border-radius: 14px;
   background: #fdfefe;
-  padding: 16px 20px;
+  padding: 1.6% 2%;
   display: flex;
   flex-direction: column;
-  min-height: 140px;
+  min-height: 14%;
 }
 
 .upload-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  margin-bottom: 10px;
+  gap: 0.8%;
+  padding: 0.8% 1%;
+  margin-bottom: 1%;
   border-radius: 10px;
   border: 1px solid #e2e8f0;
   background: #f8fafc;
@@ -778,7 +787,7 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 320px;
+  max-width: 36%;
 }
 
 .upload-banner-meta {
@@ -788,8 +797,8 @@ watch(
 
 .upload-banner-remove {
   margin-left: auto;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid #e2e8f0;
   background: #fff;
@@ -806,7 +815,7 @@ watch(
 }
 
 .upload-banner-compact {
-  margin-bottom: 8px;
+  margin-bottom: 0.8%;
 }
 
 .animation-chatbox:focus-within {
@@ -818,7 +827,7 @@ watch(
   flex: 1;
   border: none;
   outline: none;
-  font-size: 16px;
+  font-size: 1rem;
   resize: none;
   padding: 0;
   font-family: inherit;
@@ -832,21 +841,23 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
+  gap: 1.2%;
+  margin-top: 1.2%;
+  padding-top: 1.2%;
   border-top: 1px solid #f1f5f9;
 }
 
 .animation-chatbox-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 1.2%;
 }
 
 .attach-icon {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  flex-shrink: 0;
   cursor: pointer;
   opacity: 0.8;
 }
@@ -856,8 +867,9 @@ watch(
 }
 
 .voice-btn {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
   border: none;
   background: transparent;
   border-radius: 50%;
@@ -883,14 +895,15 @@ watch(
 }
 
 .voice-icon-img {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 }
 
 .send-btn {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border: none;
   background: #e2e8f0;
   border-radius: 50%;
@@ -906,8 +919,8 @@ watch(
 }
 
 .send-btn-icon {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
 }
 
@@ -917,7 +930,7 @@ watch(
   flex: 1;
   min-height: 0;
   max-height: 100%;
-  gap: 16px;
+  gap: 1.6%;
   overflow: hidden;
 }
 
@@ -925,7 +938,7 @@ watch(
   position: fixed;
   inset: 0;
   z-index: 50;
-  padding: 24px 32px;
+  padding: 2.4% 3.2%;
   background: rgba(15, 23, 42, 0.08);
 }
 
@@ -935,13 +948,14 @@ watch(
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: calc(100vh - 140px);
-  max-height: calc(100vh - 140px);
+  height: auto;
+  max-height: none;
   overflow: hidden;
 }
 
 .animation-left.full-width {
-  max-width: 800px;
+  width: 92%;
+  max-width: none;
   margin: 0 auto;
 }
 
@@ -955,7 +969,7 @@ watch(
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 12px 0;
+  padding: 1.2% 0;
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge */
 }
@@ -965,7 +979,7 @@ watch(
 }
 
 .chat-msg {
-  margin-bottom: 16px;
+  margin-bottom: 1.6%;
   display: flex;
   flex-direction: column;
 }
@@ -982,7 +996,7 @@ watch(
 .chat-msg.user .chat-msg-content {
   background: #E0EDFE;
   color: #000000;
-  padding: 10px 14px;
+  padding: 1% 1.4%;
   border-radius: 12px;
   display: inline-block;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -992,7 +1006,7 @@ watch(
 .chat-msg.assistant .chat-msg-content {
   background: #FFFFFF;
   color: #000000;
-  padding: 10px 14px;
+  padding: 1% 1.4%;
   border-radius: 12px;
   display: inline-block;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -1001,7 +1015,7 @@ watch(
 
 .chat-msg-label {
   font-size: 13px;
-  margin-bottom: 4px;
+  margin-bottom: 0.4%;
   display: block;
 }
 
@@ -1018,23 +1032,31 @@ watch(
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   background: #fff;
-  padding: 12px 16px;
+  padding: 1.2% 1.6%;
   display: flex;
   flex-direction: column;
-  min-height: 80px;
+  min-height: 8%;
 }
 
 .chatbox-top-bar {
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 0.8%;
+  width: 100%;
+  box-sizing: border-box;
+  gap: 1%;
+  flex-wrap: nowrap;
 }
 
 .html-mode-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  justify-content: center;
+  gap: 0.6%;
+  flex: 0 0 13%;
+  min-width: 0;
+  white-space: nowrap;
+  padding: 0.6% 1.2%;
   font-size: 13px;
   font-weight: 500;
   color: #64748b;
@@ -1043,12 +1065,14 @@ watch(
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 
 .html-mode-btn.secondary {
-  margin-left: 8px;
+  flex: 0 0 14%;
+  margin-left: 0;
   font-size: 12px;
-  padding: 4px 10px;
+  padding: 0.4% 1%;
 }
 
 .html-mode-btn:hover {
@@ -1085,8 +1109,8 @@ watch(
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  height: calc(100vh - 140px);
-  max-height: calc(100vh - 140px);
+  height: auto;
+  max-height: none;
   background: #fff;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
@@ -1110,7 +1134,7 @@ watch(
 
 .animation-right.fullscreen .preview-iframe {
   min-height: 0;
-  height: calc(100vh - 220px);
+  height: calc(100dvh - 220px);
 }
 
 .code-panel-header {
@@ -1118,7 +1142,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 1.2% 1.6%;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -1131,7 +1155,7 @@ watch(
 
 .code-panel-actions {
   display: flex;
-  gap: 8px;
+  gap: 0.8%;
   flex-wrap: wrap;
 }
 
@@ -1139,8 +1163,8 @@ watch(
 .code-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
+  gap: 0.4%;
+  padding: 0.5% 1%;
   border: 1px solid #E0E0E0;
   background: #FFFFFF;
   border-radius: 999px;
@@ -1165,8 +1189,8 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   color: inherit;
 }
@@ -1179,13 +1203,13 @@ watch(
 /* 图2：药丸形分段，边框小一点 */
 .code-panel-tabs-wrap {
   flex-shrink: 0;
-  padding: 8px 16px 12px;
+  padding: 0.8% 1.6% 1.2%;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .code-panel-tabs {
   display: inline-flex;
-  padding: 2px;
+  padding: 0.2%;
   background: #F0F5FA;
   border-radius: 999px;
   gap: 0;
@@ -1193,7 +1217,7 @@ watch(
 }
 
 .code-tab {
-  padding: 4px 10px;
+  padding: 0.4% 1%;
   border: none;
   background: transparent;
   font-size: 13px;
@@ -1231,7 +1255,7 @@ watch(
 
 .code-display {
   margin: 0;
-  padding: 16px;
+  padding: 1.6%;
   background: #1e293b;
   color: #e2e8f0;
   font-size: 13px;
@@ -1254,23 +1278,61 @@ watch(
 .preview-iframe {
   width: 100%;
   height: 100%;
-  min-height: calc(100vh - 260px);
+  min-height: 55%;
   border: none;
 }
 
 .preview-empty {
-  padding: 40px;
+  padding: 4%;
   text-align: center;
   color: #94a3b8;
 }
 
 @media (max-width: 960px) {
   .animation-two-column { flex-direction: column; }
-  .animation-left { max-height: 50vh; height: auto; }
-  .animation-two-column.fullscreen-mode { padding: 16px; }
+  .animation-left { max-height: 48%; }
+  .animation-right { min-height: 52%; }
+  .animation-two-column.fullscreen-mode { padding: 1.6%; }
+  .animation-chatbox-wrap { width: 97%; }
 }
 
 @media (max-width: 720px) {
-  .animation-two-column.fullscreen-mode { padding: 12px; }
+  .animation-panel {
+    padding: 1.2%;
+  }
+  .animation-tabs {
+    width: 86%;
+    max-width: none;
+    min-width: 0;
+  }
+  .animation-tab {
+    padding: 0.8% 1.4%;
+    font-size: 0.92rem;
+  }
+  .animation-chatbox {
+    padding: 1.2%;
+  }
+  .animation-chatbox-bottom {
+    gap: 0.8%;
+    flex-wrap: wrap;
+  }
+  .animation-right {
+    min-height: 56%;
+  }
+  .preview-iframe {
+    min-height: 52%;
+  }
+  .animation-chatbox-wrap {
+    width: 98%;
+  }
+  .html-mode-btn {
+    flex: 0 0 34%;
+    font-size: 12px;
+  }
+  .html-mode-btn.secondary {
+    flex: 0 0 64%;
+    font-size: 11px;
+  }
+  .animation-two-column.fullscreen-mode { padding: 1.2%; }
 }
 </style>

@@ -1,11 +1,13 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { apiRequest } from '../api/http'
-import smartImg from '../assets/智能.png'
+import { useLoginCharactersAnim } from '../composables/useLoginCharactersAnim.js'
 
 const userStore = useUserStore()
+const showPassword = ref(false)
+const rememberMe = ref(false)
 const router = useRouter()
 const route = useRoute()
 
@@ -23,11 +25,36 @@ const form = ref({
   fullName: '',
 })
 
+const {
+  purpleEl,
+  blackEl,
+  orangeEl,
+  yellowEl,
+  purpleEyes,
+  blackEyes,
+  orangeEyes,
+  yellowEyes,
+  yellowMouth,
+  onPhoneFocus,
+  onPhoneBlur,
+  onPasswordFocus,
+  onPasswordBlur,
+} = useLoginCharactersAnim({ showPassword, form })
+
+onMounted(() => {
+  try {
+    rememberMe.value = localStorage.getItem('eduprep_remember_login') === '1'
+  } catch {
+    /* ignore */
+  }
+})
+
 function setMode(nextIsLogin) {
   if (isLogin.value === nextIsLogin) return
   isLogin.value = nextIsLogin
   form.value = { phone: '', password: '', confirmPassword: '', code: '', fullName: '' }
   errorMsg.value = ''
+  showPassword.value = false
 }
 
 async function sendCode() {
@@ -78,6 +105,19 @@ async function handleSubmit() {
     let user
     if (isLogin.value) {
       user = await userStore.login(form.value.phone, form.value.password)
+      if (rememberMe.value) {
+        try {
+          localStorage.setItem('eduprep_remember_login', '1')
+        } catch {
+          /* ignore */
+        }
+      } else {
+        try {
+          localStorage.removeItem('eduprep_remember_login')
+        } catch {
+          /* ignore */
+        }
+      }
     } else {
       user = await userStore.register(
         form.value.phone,
@@ -112,45 +152,137 @@ function goHome() {
   <div class="auth-page">
     <div class="auth-card">
       <section class="auth-left" aria-hidden="true">
-        <div class="auth-left-inner">
-          <button type="button" class="home-btn" @click.stop="goHome">首页</button>
-          <div class="illus-bg">
-            <div class="blob blob-1"></div>
-            <div class="blob blob-2"></div>
-            <div class="spark spark-1"></div>
-            <div class="spark spark-2"></div>
-          </div>
-
-          <div class="illus-hero">
-            <img class="auth-illus-img" :src="smartImg" alt="" />
+        <button type="button" class="home-btn" @click.stop="goHome">首页</button>
+        <div class="characters-wrap">
+          <div class="characters">
+            <div ref="purpleEl" class="char char-purple">
+              <div ref="purpleEyes" class="eyes-wrap">
+                <div class="eyeball" style="width: 18px; height: 18px">
+                  <div class="pupil" style="width: 7px; height: 7px" />
+                </div>
+                <div class="eyeball" style="width: 18px; height: 18px">
+                  <div class="pupil" style="width: 7px; height: 7px" />
+                </div>
+              </div>
+            </div>
+            <div ref="blackEl" class="char char-black">
+              <div ref="blackEyes" class="eyes-wrap">
+                <div class="eyeball" style="width: 16px; height: 16px">
+                  <div class="pupil" style="width: 6px; height: 6px" />
+                </div>
+                <div class="eyeball" style="width: 16px; height: 16px">
+                  <div class="pupil" style="width: 6px; height: 6px" />
+                </div>
+              </div>
+            </div>
+            <div ref="orangeEl" class="char char-orange">
+              <div ref="orangeEyes" class="eyes-wrap">
+                <div class="pupil-only" style="width: 12px; height: 12px" />
+                <div class="pupil-only" style="width: 12px; height: 12px" />
+              </div>
+            </div>
+            <div ref="yellowEl" class="char char-yellow">
+              <div ref="yellowEyes" class="eyes-wrap">
+                <div class="pupil-only" style="width: 12px; height: 12px" />
+                <div class="pupil-only" style="width: 12px; height: 12px" />
+              </div>
+              <div ref="yellowMouth" class="mouth" />
+            </div>
           </div>
         </div>
+        <div class="grid-overlay"></div>
+        <div class="blob1"></div>
+        <div class="blob2"></div>
       </section>
 
       <section class="auth-right">
-        <h1 class="welcome-title">欢迎使用 EduPrep 教师备课平台</h1>
-        <div class="mode-tabs" role="tablist" aria-label="登录注册切换">
-          <button type="button" class="tab" :class="{ active: !isLogin }" @click="setMode(false)">注册账号</button>
-          <button type="button" class="tab" :class="{ active: isLogin }" @click="setMode(true)">登录账号</button>
-        </div>
+        <div class="form-box">
+          <header class="form-header">
+            <h1 class="form-title">{{ isLogin ? '欢迎回来！' : '注册账号' }}</h1>
+            <p class="form-subtitle">
+              {{ isLogin ? '请输入你的登录信息' : '请填写手机号与验证码完成注册' }}
+            </p>
+          </header>
 
-        <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
+          <div class="mode-tabs" role="tablist" aria-label="登录注册切换">
+            <button type="button" class="tab" :class="{ active: !isLogin }" @click="setMode(false)">注册账号</button>
+            <button type="button" class="tab" :class="{ active: isLogin }" @click="setMode(true)">登录账号</button>
+          </div>
 
-        <form class="auth-form" @submit.prevent="handleSubmit">
+          <div v-if="errorMsg" class="error-msg">{{ errorMsg }}</div>
+
+          <form class="auth-form" @submit.prevent="handleSubmit">
           <label class="field">
             <span class="label">手机号</span>
-            <input v-model="form.phone" type="tel" placeholder="请输入手机号" class="input" required />
+            <input
+              v-model="form.phone"
+              type="tel"
+              placeholder="请输入手机号"
+              class="input"
+              required
+              @focus="onPhoneFocus"
+              @blur="onPhoneBlur"
+            />
           </label>
 
           <label class="field">
             <span class="label">密码</span>
-            <input v-model="form.password" type="password" placeholder="请输入密码" class="input" required />
+            <div class="input-wrap">
+              <input
+                v-model="form.password"
+                :type="showPassword ? 'text' : 'password'"
+                placeholder="请输入密码"
+                class="input input-with-toggle input-password"
+                required
+                @focus="onPasswordFocus"
+                @blur="onPasswordBlur"
+              />
+              <button type="button" class="toggle-pw" aria-label="显示或隐藏密码" @click="showPassword = !showPassword">
+                <svg
+                  v-show="!showPassword"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"
+                  />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                </svg>
+                <svg
+                  v-show="showPassword"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.5"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12c1.292 4.338 5.31 7.5 10.066 7.5.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88"
+                  />
+                </svg>
+              </button>
+            </div>
           </label>
 
           <template v-if="!isLogin">
             <label class="field">
               <span class="label">确认密码</span>
-              <input v-model="form.confirmPassword" type="password" placeholder="再次输入密码" class="input" required />
+              <input
+                v-model="form.confirmPassword"
+                :type="showPassword ? 'text' : 'password'"
+                placeholder="再次输入密码"
+                class="input input-password"
+                required
+                @focus="onPasswordFocus"
+                @blur="onPasswordBlur"
+              />
             </label>
 
             <label class="field">
@@ -174,10 +306,25 @@ function goHome() {
             </div>
           </template>
 
-          <button type="submit" class="submit-btn" :disabled="loading">
-            {{ loading ? '处理中...' : (isLogin ? '登录' : '注册') }}
+          <div v-if="isLogin" class="form-options-row">
+            <label class="remember">
+              <input v-model="rememberMe" type="checkbox" />
+              30天内记住我
+            </label>
+            <a href="#" class="forgot-link" @click.prevent>忘记密码？</a>
+          </div>
+
+          <button type="submit" class="submit-btn hover-btn" :disabled="loading">
+            <span class="btn-label">{{ loading ? '处理中...' : (isLogin ? '登录' : '注册') }}</span>
+            <span class="btn-overlay" aria-hidden="true">
+              <span>{{ isLogin ? '登录' : '注册' }}</span>
+              <svg class="arrow-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+            </span>
           </button>
         </form>
+        </div>
       </section>
     </div>
   </div>
@@ -186,39 +333,191 @@ function goHome() {
 <style scoped>
 .auth-page {
   min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   background: linear-gradient(135deg, #eef2ff 0%, #f8fafc 60%, #ffffff 100%);
-  padding: 24px;
-  overflow-y: auto;
+  padding: 0;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .auth-card {
   display: flex;
-  width: min(1150px, 100%);
-  max-width: 100%;
-  min-height: 665px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
   background: #fff;
-  border-radius: 18px;
+  border-radius: 0;
   overflow: hidden;
-  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.18);
-  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: none;
+  border: none;
 }
 
 .auth-left {
   flex: 1 1 0;
-  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 45%, #dbeafe 100%);
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px;
+  background: linear-gradient(135deg, #9ca3af, #6b7280, #4b5563);
+  color: #fff;
+  overflow: hidden;
+  min-height: 0;
 }
 
-.auth-left-inner {
-  height: 100%;
+.auth-left .blob1,
+.auth-left .blob2 {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+.auth-left .blob1 {
+  top: 25%;
+  right: 25%;
+  width: 256px;
+  height: 256px;
+  background: rgba(156, 163, 175, 0.2);
+}
+
+.auth-left .blob2 {
+  bottom: 25%;
+  left: 25%;
+  width: 384px;
+  height: 384px;
+  background: rgba(209, 213, 219, 0.2);
+}
+
+.auth-left .grid-overlay {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 20px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 20px);
+  pointer-events: none;
+}
+
+.auth-left .characters-wrap {
   position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 500px;
+}
+
+.auth-left .characters {
+  position: relative;
+  width: 550px;
+  height: 400px;
+}
+
+.auth-left .char {
+  position: absolute;
+  bottom: 0;
+  transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: bottom center;
+}
+
+.auth-left .char-purple {
+  left: 70px;
+  width: 180px;
+  height: 400px;
+  background: #6c3ff5;
+  border-radius: 10px 10px 0 0;
+  z-index: 1;
+}
+
+.auth-left .char-purple .eyes-wrap {
+  position: absolute;
+  display: flex;
+  gap: 32px;
+  transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.auth-left .char-black {
+  left: 240px;
+  width: 120px;
+  height: 310px;
+  background: #2d2d2d;
+  border-radius: 8px 8px 0 0;
+  z-index: 2;
+}
+
+.auth-left .char-black .eyes-wrap {
+  position: absolute;
+  display: flex;
+  gap: 24px;
+  transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.auth-left .char-orange {
+  left: 0;
+  width: 240px;
+  height: 200px;
+  background: #ff9b6b;
+  border-radius: 120px 120px 0 0;
+  z-index: 3;
+}
+
+.auth-left .char-orange .eyes-wrap {
+  position: absolute;
+  display: flex;
+  gap: 32px;
+  transition: all 0.2s ease-out;
+}
+
+.auth-left .char-yellow {
+  left: 310px;
+  width: 140px;
+  height: 230px;
+  background: #e8d754;
+  border-radius: 70px 70px 0 0;
+  z-index: 4;
+}
+
+.auth-left .char-yellow .eyes-wrap {
+  position: absolute;
+  display: flex;
+  gap: 24px;
+  transition: all 0.2s ease-out;
+}
+
+.auth-left .char-yellow .mouth {
+  position: absolute;
+  width: 80px;
+  height: 4px;
+  background: #2d2d2d;
+  border-radius: 4px;
+  transition: all 0.2s ease-out;
+}
+
+.auth-left .eyeball {
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  overflow: hidden;
+  transition: height 0.15s;
+  background: #fff;
+}
+
+.auth-left .eyeball .pupil {
+  border-radius: 50%;
+  background: #2d2d2d;
+  transition: transform 0.1s ease-out;
+}
+
+.auth-left .pupil-only {
+  border-radius: 50%;
+  background: #2d2d2d;
+  transition: transform 0.1s ease-out;
 }
 
 .home-btn {
@@ -228,134 +527,93 @@ function goHome() {
   height: 46px;
   padding: 0 22px;
   border-radius: 999px;
-  border: 1.5px solid rgba(96, 165, 250, 0.55);
-  background: #ffffff;
-  color: rgba(96, 165, 250, 0.95);
+  border: 1.5px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  z-index: 2;
+  z-index: 30;
   backdrop-filter: blur(6px);
 }
 
 .home-btn:hover {
-  background: rgba(96, 165, 250, 0.08);
-  border-color: rgba(96, 165, 250, 0.70);
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.65);
 }
 
 .home-btn:active {
   transform: translateY(1px);
 }
 
-.illus-hero {
-  position: relative;
-  width: 100%;
-  max-width: 520px;
-  height: 360px;
-  z-index: 1;
+.auth-right {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
+  padding: 32px;
+  box-sizing: border-box;
+  background: #fff;
 }
 
-.auth-illus-img {
+.form-box {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
+  max-width: 420px;
 }
 
-.illus-bg {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
+.form-header {
+  text-align: center;
+  margin-bottom: 28px;
 }
 
-.blob {
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(0px);
-}
-
-.blob-1 {
-  width: 320px;
-  height: 320px;
-  left: -80px;
-  top: -60px;
-  background: radial-gradient(circle at 30% 30%, rgba(59,130,246,0.18), rgba(59,130,246,0));
-}
-
-.blob-2 {
-  width: 360px;
-  height: 360px;
-  right: -120px;
-  bottom: -120px;
-  background: radial-gradient(circle at 60% 40%, rgba(99,102,241,0.18), rgba(99,102,241,0));
-}
-
-.spark {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(59, 130, 246, 0.5);
-}
-
-.spark-1 { left: 22%; top: 38%; opacity: 0.6; }
-.spark-2 { right: 26%; top: 28%; opacity: 0.35; background: rgba(99,102,241,0.5); }
-
-.auth-right {
-  flex: 1 1 0;
-  padding: 40px 64px 40px;
-}
-
-.welcome-title {
-  margin: 0 0 14px;
+.form-title {
+  margin: 0 0 8px;
   font-size: 30px;
   font-weight: 700;
-  color: #334155;
+  letter-spacing: -0.5px;
+  color: #111827;
+}
+
+.form-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+  line-height: 1.5;
 }
 
 .mode-tabs {
   display: flex;
-  gap: 18px;
-  margin-bottom: 22px;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 24px;
 }
 
 .tab {
   border: none;
   background: transparent;
   padding: 4px 0;
-  font-size: 16px;
-  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
   cursor: pointer;
-  position: relative;
+  transition: color 0.2s;
 }
 
-.tab::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -8px;
-  height: 2px;
-  border-radius: 999px;
-  background: transparent;
-  transition: background 0.2s;
+.tab:hover {
+  color: #111827;
 }
 
 .tab.active {
-  color: #3b82f6;
+  color: #111827;
   font-weight: 600;
-}
-
-.tab.active::after {
-  background: #3b82f6;
 }
 
 .error-msg {
   padding: 10px 14px;
-  margin-bottom: 12px;
+  margin-bottom: 20px;
   background: #fef2f2;
   border: 1px solid #fecaca;
   border-radius: 8px;
@@ -366,102 +624,268 @@ function goHome() {
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: block;
+  margin-bottom: 20px;
 }
 
 .label {
+  display: block;
   font-size: 14px;
-  color: #64748b;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #111827;
 }
 
 .input {
-  padding: 14px 16px;
-  border: 1px solid #e2e8f0;
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
   font-size: 15px;
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s;
   background: #fff;
+  color: #111827;
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: #9ca3af;
 }
 
 .input:focus {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 4px rgba(59,130,246,0.12);
+  border-color: #111827;
+  box-shadow: none;
+}
+
+.input-password {
+  background: #e8f0fe;
+}
+
+.input-password:focus {
+  background: #e8f0fe;
+}
+
+.input-wrap {
+  position: relative;
+}
+
+.input-with-toggle {
+  padding-right: 44px;
+}
+
+.toggle-pw {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  transition: color 0.2s;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle-pw:hover {
+  color: #111827;
+}
+
+.toggle-pw svg {
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
 }
 
 .code-btn {
-  height: 46px;
-  padding: 0 22px;
-  background: #3b82f6;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
+  height: 48px;
+  padding: 0 18px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  color: #111827;
   font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
-  align-self: end;
-  transition: filter 0.2s;
+  align-self: flex-end;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.code-btn:hover:not(:disabled) {
+  background: #f9fafb;
+  border-color: #d1d5db;
 }
 
 .code-btn:disabled {
-  background: #94a3b8;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 
-.submit-btn {
-  margin-top: 8px;
-  height: 50px;
-  background: #3b82f6;
-  border: none;
-  border-radius: 8px;
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
+.form-options-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  margin-top: 4px;
+}
+
+.remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #111827;
   cursor: pointer;
-  transition: filter 0.2s;
+  user-select: none;
+}
+
+.remember input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: #111827;
+  cursor: pointer;
+}
+
+.forgot-link {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111827;
+  text-decoration: none;
+}
+
+.forgot-link:hover {
+  text-decoration: underline;
+}
+
+.submit-btn.hover-btn {
+  position: relative;
+  width: 100%;
+  height: 48px;
+  margin-top: 4px;
+  border-radius: 9999px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+  padding: 0;
+}
+
+.submit-btn .btn-label {
+  display: inline-block;
+  transition: all 0.3s;
+}
+
+.submit-btn .btn-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #111827;
+  color: #fff;
+  border-radius: 9999px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.submit-btn:hover:not(:disabled) .btn-label {
+  transform: translateX(48px);
+  opacity: 0;
+}
+
+.submit-btn:hover:not(:disabled) .btn-overlay {
+  opacity: 1;
 }
 
 .submit-btn:disabled {
-  background: #94a3b8;
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
-.submit-btn:hover:not(:disabled),
-.code-btn:hover:not(:disabled) {
-  filter: brightness(0.95);
+.submit-btn:disabled:hover .btn-label {
+  transform: none;
+  opacity: 1;
+}
+
+.submit-btn:disabled:hover .btn-overlay {
+  opacity: 0;
+}
+
+.arrow-icon {
+  width: 16px;
+  height: 16px;
 }
 
 .code-row {
   display: flex;
   gap: 12px;
   align-items: flex-end;
+  margin-bottom: 20px;
 }
 
 .field-code {
   flex: 1;
+  margin-bottom: 0;
+}
+
+.code-row .field {
+  margin-bottom: 0;
 }
 
 @media (max-width: 900px) {
+  .auth-page {
+    height: auto;
+    min-height: 100vh;
+    max-height: none;
+    overflow-y: auto;
+  }
+
   .auth-card {
-    width: 100%;
-    min-height: auto;
     flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
   }
 
   .auth-left {
-    min-height: 260px;
+    flex: 0 0 auto;
+    min-height: 220px;
+    padding: 24px 16px 0;
+  }
+
+  .auth-left .characters-wrap {
+    height: 220px;
+  }
+
+  .auth-left .characters {
+    transform: scale(0.45);
+    transform-origin: bottom center;
   }
 
   .auth-right {
-    padding: 28px 22px 26px;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 24px 20px 40px;
+    align-items: flex-start;
   }
 
-  .illus-hero { height: 260px; }
+  .form-header {
+    margin-bottom: 24px;
+  }
 }
 </style>
