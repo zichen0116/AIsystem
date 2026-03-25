@@ -59,7 +59,13 @@ function createGlowTexture(size = 128) {
 
 // ── 节点尺寸常量 ──────────────────────────────────────────────────
 const MAX_VAL = 12
-const LABEL_VAL_THRESHOLD = 5
+const LABEL_MIN_ASSOCIATIONS = 5
+const LABEL_SHOW_NEAR_DIST = 130
+const LABEL_SHOW_FAR_DIST = 600
+const LABEL_TEXT_HEIGHT_FAR = 5.0
+const LABEL_TEXT_HEIGHT_NEAR = 6.0
+const ZOOM_IN_LIMIT_RATIO = 0.4
+const FOCUS_NODE_DISTANCE = 10
 
 function getNodeCoreSize(node) {
   return 1.0 + Math.pow((node.val || 1) / MAX_VAL, 0.6) * 5.0
@@ -71,6 +77,8 @@ export function useKnowledgeGraph(containerRef) {
   let nodeMap = {}
   let autoRotateTimer = null
   let autoRotating = false
+  let minZoomDistance = null
+  let currentLabelTextHeight = LABEL_TEXT_HEIGHT_FAR
   const ROTATE_SPEED = Math.PI / 600
 
   // 用 shallowRef 存储需要在模板中响应的状态
@@ -111,6 +119,31 @@ export function useKnowledgeGraph(containerRef) {
     addStarLayer(scene, { count: 150, spread: 1500, size: 4.0, opacity: 0.8 })
   }
 
+  function getCameraDistance() {
+    if (!graph) return 0
+    const camera = graph.camera()
+    const controls = graph.controls?.()
+    if (controls?.target) return camera.position.distanceTo(controls.target)
+    return camera.position.length()
+  }
+
+  function setupZoomLimits() {
+    if (!graph) return
+    const controls = graph.controls?.()
+    if (!controls) return
+    const baseDistance = getCameraDistance()
+    if (!baseDistance) return
+    minZoomDistance = baseDistance * ZOOM_IN_LIMIT_RATIO
+    controls.minDistance = minZoomDistance
+  }
+
+  function getLabelTextHeightByDistance(dist) {
+    const span = LABEL_SHOW_FAR_DIST - LABEL_SHOW_NEAR_DIST
+    if (span <= 0) return LABEL_TEXT_HEIGHT_FAR
+    const t = Math.max(0, Math.min(1, (dist - LABEL_SHOW_NEAR_DIST) / span))
+    return LABEL_TEXT_HEIGHT_NEAR + t * (LABEL_TEXT_HEIGHT_FAR - LABEL_TEXT_HEIGHT_NEAR)
+  }
+
 // ── Bloom 后处理（距离自适应）────────────────────────────────────                                                  
   let bloomPass = null                                                                                                  
   const BLOOM_FAR_DIST = 500    // 远处全强度                                                                           
@@ -131,7 +164,7 @@ export function useKnowledgeGraph(containerRef) {
   }
 function updateBloomByDistance() {                                                                                    
     if (!bloomPass || !graph) return                                                                                    
-    const dist = graph.camera().position.length()                                                                       
+    const dist = getCameraDistance()                                                                       
     // 线性插值：远处满强度，近处降到最低                                                                               
     const t = Math.max(0, Math.min(1, (dist - BLOOM_NEAR_DIST) / (BLOOM_FAR_DIST - BLOOM_NEAR_DIST)))                   
     bloomPass.strength = BLOOM_STRENGTH_MIN + t * (BLOOM_STRENGTH_MAX - BLOOM_STRENGTH_MIN)                             
@@ -190,10 +223,10 @@ function updateBloomByDistance() {
 
   // ── 节点标签（仅大节点常显）──────────────────────────────────────
   function createNodeLabel(node) {
-    if ((node.val || 0) < LABEL_VAL_THRESHOLD) return null
+    if ((node.val || 0) < LABEL_MIN_ASSOCIATIONS) return null
     const label = new SpriteText(node.name)
     label.color = '#e0e0e0'
-    label.textHeight = 2.0
+    label.textHeight = currentLabelTextHeight
     label.fontFace = 'sans-serif'
     label.backgroundColor = false
     label.padding = 0
@@ -263,8 +296,9 @@ function updateBloomByDistance() {
     applyHighlight()
 
     // 相机飞向节点
-    const distance = 80
-    const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z)
+    const distance = Math.max(FOCUS_NODE_DISTANCE, minZoomDistance || 0)
+    const originDist = Math.hypot(node.x || 0, node.y || 0, node.z || 0) || 1
+    const distRatio = 1 + distance / originDist
     graph.cameraPosition(
       { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
       node,
@@ -370,14 +404,22 @@ function updateBloomByDistance() {
   let labelVisible = true
   function checkZoomLevel() {
     if (!graph) return
-    const dist = graph.camera().position.length()
-    const shouldShow = dist < 600
-    if (shouldShow !== labelVisible) {
-      labelVisible = shouldShow
+    const dist = getCameraDistance()
+    const shouldShow = dist >= LABEL_SHOW_NEAR_DIST && dist <= LABEL_SHOW_FAR_DIST
+    const nextLabelTextHeight = getLabelTextHeightByDistance(dist)
+    const textHeightChanged = Math.abs(nextLabelTextHeight - currentLabelTextHeight) > 0.05
+
+    if (textHeightChanged) {
+      currentLabelTextHeight = nextLabelTextHeight
       graphData.value.nodes.forEach(node => {
         const label = node.__threeObj?.userData?.label
-        if (label) label.visible = shouldShow
+        if (label) label.textHeight = currentLabelTextHeight
       })
+    }
+
+    if (shouldShow !== labelVisible) {
+      labelVisible = shouldShow
+      applyHighlight()
     }
     updateBloomByDistance()
   }
@@ -572,6 +614,7 @@ function updateBloomByDistance() {
 
     // Bloom
     setupBloom()
+    setupZoomLimits()
 
     // 深度雾：远处物体自然淡出
     graph.scene().fog = new FogExp2(0x000000, 0.0008)
@@ -584,6 +627,7 @@ function updateBloomByDistance() {
 
     // 缩放检查
     graph.controls().addEventListener('change', checkZoomLevel)
+    checkZoomLevel()
   }
 
   // ── 生命周期 ──────────────────────────────────────────────────────
@@ -637,6 +681,7 @@ function updateBloomByDistance() {
       graph = null
     }
     nodeMap = {}
+    minZoomDistance = null
   }
 
   return {
