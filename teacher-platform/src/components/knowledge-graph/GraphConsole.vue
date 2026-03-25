@@ -1,16 +1,17 @@
 <template>
   <div class="graph-console">
-    <!-- 节点网格 -->
+    <!-- 节点排行榜 -->
     <div class="node-grid">
       <div
-        v-for="node in nodes"
+        v-for="(node, i) in nodes"
         :key="node.id"
         class="node-item"
         @click="$emit('focusNode', node)"
       >
+        <span class="node-rank">{{ i + 1 }}</span>
         <span
           class="node-dot"
-          :style="{ backgroundColor: getCategoryColor(node.category) }"
+          :style="{ backgroundColor: getCategoryColor(node.category), boxShadow: `0 0 6px ${getCategoryColor(node.category)}` }"
         ></span>
         <span class="node-name">{{ node.name }}</span>
         <span class="node-count">{{ node.val || 0 }}</span>
@@ -19,14 +20,14 @@
 
     <!-- 功能按钮 -->
     <div class="console-actions">
-      <button class="console-btn" @click="$emit('toggleRotation')">
+      <button class="console-btn" :class="{ active: isRotating }" @click="$emit('toggleRotation')">
         {{ isRotating ? '停止旋转' : '开始旋转' }}
       </button>
-      <button class="console-btn" @click="showFilter = !showFilter">
+      <button class="console-btn" :class="{ active: showFilter }" @click="showFilter = !showFilter">
         标签筛选
       </button>
       <button class="console-btn" @click="showSearch = !showSearch">
-        搜索名字
+        搜索节点
       </button>
     </div>
 
@@ -79,15 +80,16 @@ function handleSearch(name) {
 <style scoped>
 .graph-console {
   position: absolute;
-  bottom: 16px;
+  bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 50%;
-  background: rgba(10, 15, 30, 0.85);
-  border: 1px solid rgba(100, 116, 139, 0.25);
-  border-radius: 12px;
-  padding: 14px 18px;
-  backdrop-filter: blur(8px);
+  width: 52%;
+  max-width: 720px;
+  background: rgba(0, 0, 0, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px 20px;
+  backdrop-filter: blur(16px);
   z-index: 10;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -95,8 +97,8 @@ function handleSearch(name) {
 .node-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 6px 12px;
-  margin-bottom: 10px;
+  gap: 4px 10px;
+  margin-bottom: 12px;
 }
 
 .node-item {
@@ -104,24 +106,34 @@ function handleSearch(name) {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 4px;
-  transition: background 0.2s;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.2s, transform 0.15s;
 }
 
 .node-item:hover {
-  background: rgba(51, 65, 85, 0.4);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateX(2px);
+}
+
+.node-rank {
+  color: rgba(255, 255, 255, 0.2);
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 14px;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 .node-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .node-name {
-  color: rgba(226, 232, 240, 0.9);
+  color: rgba(255, 255, 255, 0.85);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -130,9 +142,10 @@ function handleSearch(name) {
 }
 
 .node-count {
-  color: rgba(100, 116, 139, 0.7);
+  color: rgba(255, 255, 255, 0.3);
   font-size: 10px;
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .console-actions {
@@ -142,24 +155,32 @@ function handleSearch(name) {
 
 .console-btn {
   flex: 1;
-  background: rgba(51, 65, 85, 0.4);
-  border: 1px solid rgba(71, 85, 105, 0.3);
-  border-radius: 6px;
-  padding: 6px 0;
-  color: rgba(148, 163, 184, 0.9);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 7px 0;
+  color: rgba(255, 255, 255, 0.6);
   font-size: 12px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
+  letter-spacing: 0.5px;
 }
 
 .console-btn:hover {
-  background: rgba(71, 85, 105, 0.5);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.console-btn.active {
+  background: rgba(255, 107, 74, 0.15);
+  border-color: rgba(255, 107, 74, 0.3);
+  color: #ff8a65;
 }
 
 /* ── 小屏适配 ── */
 @media (max-width: 768px) {
   .graph-console {
-    width: 90%;
+    width: 92%;
     padding: 10px 12px;
   }
 
@@ -167,7 +188,6 @@ function handleSearch(name) {
     grid-template-columns: repeat(2, 1fr);
   }
 
-  /* 小屏只显示 Top 10 */
   .node-item:nth-child(n+11) {
     display: none;
   }
@@ -177,7 +197,6 @@ function handleSearch(name) {
     padding: 8px;
   }
 
-  /* 图标替代文字 */
   .console-btn::before {
     font-size: 14px;
   }

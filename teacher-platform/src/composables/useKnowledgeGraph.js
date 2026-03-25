@@ -23,12 +23,12 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 
 // ── 宇宙色系 ──────────────────────────────────────────────────────
 const COSMIC_PALETTE = [
-  '#6ea8fe', '#b490f0', '#50c8b0', '#7888cc',
-  '#c07090', '#60b880', '#8899aa', '#5c8abf',
+  '#ff6b4a', '#ff9f43', '#ffd93d', '#6bff8a',
+  '#4ecdc4', '#45b7d1', '#a78bfa', '#f472b6',
 ]
 
 const CATEGORY_OVERRIDE = {
-  '文学领袖': '#f0c060',
+  '文学领袖': '#ff4040',
 }
 
 function getCategoryColor(category) {
@@ -72,7 +72,7 @@ export function useKnowledgeGraph(containerRef) {
   let autoRotateTimer = null
   let autoRotating = false
   let mouseIdleTimeout = null
-  const IDLE_DELAY = 3000
+  const IDLE_DELAY = 5000
   const ROTATE_SPEED = Math.PI / 600
 
   // 用 shallowRef 存储需要在模板中响应的状态
@@ -117,9 +117,9 @@ export function useKnowledgeGraph(containerRef) {
   function setupBloom() {
     try {
       const bloomPass = new UnrealBloomPass()
-      bloomPass.strength = 1.5
-      bloomPass.radius = 0.75
-      bloomPass.threshold = 0.65
+      bloomPass.strength = 2.0
+      bloomPass.radius = 0.9
+      bloomPass.threshold = 0.4
       graph.postProcessingComposer().addPass(bloomPass)
     } catch (e) {
       console.warn('Bloom post-processing unavailable, falling back to sprite glow only')
@@ -182,7 +182,7 @@ export function useKnowledgeGraph(containerRef) {
   function createNodeLabel(node) {
     if ((node.val || 0) < LABEL_VAL_THRESHOLD) return null
     const label = new SpriteText(node.name)
-    label.color = '#aabbcc'
+    label.color = '#e0e0e0'
     label.textHeight = 2.0
     label.fontFace = 'sans-serif'
     label.backgroundColor = false
@@ -290,9 +290,9 @@ export function useKnowledgeGraph(containerRef) {
       const brightness = 0.4 + 0.6 * Math.pow(val / MAX_VAL, 0.3)
 
       if (hasHighlight && !highlightNodes.value.has(node)) {
-        if (core) core.material.opacity = 0.95 * brightness * 0.05
-        if (innerGlow) innerGlow.material.opacity = 0.7 * brightness * 0.05
-        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness * 0.05
+        if (core) core.material.opacity = 0.95 * brightness * 0.15
+        if (innerGlow) innerGlow.material.opacity = 0.7 * brightness * 0.15
+        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness * 0.15
         if (label) label.visible = false
       } else {
         if (core) core.material.opacity = 0.95 * brightness
@@ -304,12 +304,8 @@ export function useKnowledgeGraph(containerRef) {
 
     graph
       .linkOpacity(link => {
-        if (!hasHighlight) return 0.08
-        return highlightLinks.value.has(link) ? 0.5 : 0.01
-      })
-      .linkDirectionalParticles(link => {
-        if (!hasHighlight) return 2
-        return highlightLinks.value.has(link) ? 4 : 0
+        if (!hasHighlight) return 0.22
+        return highlightLinks.value.has(link) ? 0.7 : 0.03
       })
   }
 
@@ -497,7 +493,7 @@ export function useKnowledgeGraph(containerRef) {
     graph = new ForceGraph3D(containerRef.value, {
       controlType: 'orbit',
     })
-      .backgroundColor('#050510')
+      .backgroundColor('#000000')
       .showNavInfo(false)
       .width(containerRef.value.clientWidth)
       .height(containerRef.value.clientHeight)
@@ -513,29 +509,23 @@ export function useKnowledgeGraph(containerRef) {
         return group
       })
       .nodeLabel(node => `
-        <div style="background:rgba(10,15,30,0.9);border:1px solid rgba(100,116,139,0.3);border-radius:6px;padding:8px 12px;color:#e2e8f0;font-size:12px;font-family:sans-serif;backdrop-filter:blur(4px);">
+        <div style="background:rgba(0,0,0,0.85);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;color:#f0f0f0;font-size:12px;font-family:sans-serif;backdrop-filter:blur(12px);">
           <div style="font-weight:600;margin-bottom:4px;">${node.name}</div>
-          <div style="color:#94a3b8;font-size:11px;">分类：${node.category || '未知'}</div>
-          <div style="color:#94a3b8;font-size:11px;">关联：${node.val || 0} 个节点</div>
+          <div style="color:rgba(255,255,255,0.5);font-size:11px;">分类：${node.category || '未知'}</div>
+          <div style="color:rgba(255,255,255,0.5);font-size:11px;">关联：${node.val || 0} 个节点</div>
         </div>
       `)
       .nodeOpacity(1)
-      // 边：曲线 + 低透明度 + 流动粒子（阶段一，力模拟期间）
+      // 边：曲线 + 可见颜色 + 无粒子
       .linkCurvature(0.15)
-      .linkWidth(0.3)
-      .linkOpacity(0.08)
+      .linkWidth(1.0)
+      .linkOpacity(0.22)
       .linkColor(link => {
         const src = typeof link.source === 'object' ? link.source : null
-        const color = src ? getCategoryColor(src.category) : '#4466aa'
-        return new Color(color).lerp(new Color('#1a1a3e'), 0.6).getStyle()
+        const color = src ? getCategoryColor(src.category) : '#ff6b4a'
+        return new Color(color).lerp(new Color('#ffffff'), 0.15).getStyle()
       })
-      .linkDirectionalParticles(2)
-      .linkDirectionalParticleSpeed(0.004)
-      .linkDirectionalParticleWidth(1.2)
-      .linkDirectionalParticleColor(link => {
-        const src = typeof link.source === 'object' ? link.source : null
-        return src ? getCategoryColor(src.category) : '#4466aa'
-      })
+      .linkDirectionalParticles(0)
       // 交互
       .onNodeClick(handleNodeClick)
       .onNodeHover(handleNodeHover)
@@ -581,7 +571,7 @@ export function useKnowledgeGraph(containerRef) {
     setupBloom()
 
     // 深度雾：远处物体自然淡出
-    graph.scene().fog = new FogExp2(0x050510, 0.0015)
+    graph.scene().fog = new FogExp2(0x000000, 0.0008)
 
     // 星空粒子
     addStarField()
