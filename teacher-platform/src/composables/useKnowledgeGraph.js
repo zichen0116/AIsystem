@@ -23,12 +23,12 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 
 // ── 宇宙色系 ──────────────────────────────────────────────────────
 const COSMIC_PALETTE = [
-  '#ff6b4a', '#ff9f43', '#ffd93d', '#6bff8a',
+  '#ff6b4a', '#ff9f43', '#ffd93d', '#6ba7ff',
   '#4ecdc4', '#45b7d1', '#a78bfa', '#f472b6',
 ]
 
 const CATEGORY_OVERRIDE = {
-  '文学领袖': '#ff4040',
+  '文学领袖': '#ff4040'
 }
 
 function getCategoryColor(category) {
@@ -64,11 +64,16 @@ const LABEL_SHOW_NEAR_DIST = 130
 const LABEL_SHOW_FAR_DIST = 600
 const LABEL_TEXT_HEIGHT_FAR = 5.0
 const LABEL_TEXT_HEIGHT_NEAR = 6.0
-const ZOOM_IN_LIMIT_RATIO = 0.4
+const ZOOM_IN_LIMIT_RATIO = 0.6
 const FOCUS_NODE_DISTANCE = 10
 
 function getNodeCoreSize(node) {
   return 1.0 + Math.pow((node.val || 1) / MAX_VAL, 0.6) * 5.0
+}
+
+function getClampedValRatio(val) {
+  const safeVal = Math.max(0, Number(val || 0))
+  return Math.max(0, Math.min(1, safeVal / MAX_VAL))
 }
 
 // ── 主 Composable ──────────────────────────────────────────────────
@@ -179,7 +184,8 @@ function updateBloomByDistance() {
     const threeColor = new Color(baseColor)
     const val = node.val || 1
     const coreSize = getNodeCoreSize(node)
-    const brightness = 0.4 + 0.6 * Math.pow(val / MAX_VAL, 0.3)
+    const valRatio = getClampedValRatio(val)
+    const brightness = 0.4 + 0.6 * Math.pow(valRatio, 0.3)
 
     // Layer 1: 实心核心球
     const coreMat = new MeshBasicMaterial({
@@ -209,7 +215,7 @@ function updateBloomByDistance() {
       map: glowTexture,
       color: threeColor.clone().multiplyScalar(1.2),
       transparent: true,
-      opacity: (0.15 + (val / MAX_VAL) * 0.2) * brightness,
+      opacity: (0.15 + valRatio * 0.2) * brightness,
       blending: AdditiveBlending,
       depthWrite: false,
     })
@@ -292,6 +298,8 @@ function updateBloomByDistance() {
     highlightNodes.value = newHighlightNodes
     highlightLinks.value = newHighlightLinks
     selectedNode.value = node
+    // 选中节点后固定展示其关联标签，避免仅旋转视角时被距离阈值误隐藏
+    labelVisible = true
 
     applyHighlight()
 
@@ -311,6 +319,8 @@ function updateBloomByDistance() {
     highlightLinks.value = new Set()
     selectedNode.value = null
     applyHighlight()
+    // 取消选中后恢复按当前缩放距离控制标签显隐
+    checkZoomLevel()
   }
 
   // ── 应用高亮/暗淡效果 ────────────────────────────────────────────
@@ -323,18 +333,19 @@ function updateBloomByDistance() {
       if (!group?.userData) return
       const { core, innerGlow, outerHalo, label } = group.userData
       const val = node.val || 1
-      const brightness = 0.4 + 0.6 * Math.pow(val / MAX_VAL, 0.3)
+      const valRatio = getClampedValRatio(val)
+      const brightness = 0.4 + 0.6 * Math.pow(valRatio, 0.3)
 
       if (hasHighlight && !highlightNodes.value.has(node)) {
         if (core) core.material.opacity = 0.95 * brightness * 0.15
         if (innerGlow) innerGlow.material.opacity = 0.7 * brightness * 0.15
-        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness * 0.15
+        if (outerHalo) outerHalo.material.opacity = (0.15 + valRatio * 0.2) * brightness * 0.15
         if (label) label.visible = false
       } else {
         if (core) core.material.opacity = 0.95 * brightness
         if (innerGlow) innerGlow.material.opacity = 0.7 * brightness
-        if (outerHalo) outerHalo.material.opacity = (0.15 + (val / MAX_VAL) * 0.2) * brightness
-        if (label) label.visible = labelVisible
+        if (outerHalo) outerHalo.material.opacity = (0.15 + valRatio * 0.2) * brightness
+        if (label) label.visible = selectedNode.value ? true : labelVisible
       }
     })
 
@@ -406,6 +417,7 @@ function updateBloomByDistance() {
     if (!graph) return
     const dist = getCameraDistance()
     const shouldShow = dist >= LABEL_SHOW_NEAR_DIST && dist <= LABEL_SHOW_FAR_DIST
+    const lockLabelVisibility = Boolean(selectedNode.value)
     const nextLabelTextHeight = getLabelTextHeightByDistance(dist)
     const textHeightChanged = Math.abs(nextLabelTextHeight - currentLabelTextHeight) > 0.05
 
@@ -417,7 +429,7 @@ function updateBloomByDistance() {
       })
     }
 
-    if (shouldShow !== labelVisible) {
+    if (!lockLabelVisibility && shouldShow !== labelVisible) {
       labelVisible = shouldShow
       applyHighlight()
     }
