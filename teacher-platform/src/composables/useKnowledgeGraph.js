@@ -71,8 +71,6 @@ export function useKnowledgeGraph(containerRef) {
   let nodeMap = {}
   let autoRotateTimer = null
   let autoRotating = false
-  let mouseIdleTimeout = null
-  const IDLE_DELAY = 5000
   const ROTATE_SPEED = Math.PI / 600
 
   // 用 shallowRef 存储需要在模板中响应的状态
@@ -82,7 +80,7 @@ export function useKnowledgeGraph(containerRef) {
   const selectedNode = shallowRef(null)
   const categories = shallowRef([])
   const hiddenCategories = shallowRef(new Set())
-  const isRotating = shallowRef(true)
+  const isRotating = shallowRef(false)
 
   // ── 多层星空背景 ──────────────────────────────────────────────────
   function addStarLayer(scene, { count, spread, size, opacity }) {
@@ -113,11 +111,17 @@ export function useKnowledgeGraph(containerRef) {
     addStarLayer(scene, { count: 150, spread: 1500, size: 4.0, opacity: 0.8 })
   }
 
-  // ── Bloom 后处理 ────────────────────────────────────────────────
+// ── Bloom 后处理（距离自适应）────────────────────────────────────                                                  
+  let bloomPass = null                                                                                                  
+  const BLOOM_FAR_DIST = 500    // 远处全强度                                                                           
+  const BLOOM_NEAR_DIST = 80    // 近处最低强度                                                                         
+  const BLOOM_STRENGTH_MAX = 2.0                                                                                        
+  const BLOOM_STRENGTH_MIN = 0.4                                                                                        
+
   function setupBloom() {
     try {
-      const bloomPass = new UnrealBloomPass()
-      bloomPass.strength = 2.0
+      bloomPass = new UnrealBloomPass()                                                                                 
+      bloomPass.strength = BLOOM_STRENGTH_MAX 
       bloomPass.radius = 0.9
       bloomPass.threshold = 0.4
       graph.postProcessingComposer().addPass(bloomPass)
@@ -125,7 +129,13 @@ export function useKnowledgeGraph(containerRef) {
       console.warn('Bloom post-processing unavailable, falling back to sprite glow only')
     }
   }
-
+function updateBloomByDistance() {                                                                                    
+    if (!bloomPass || !graph) return                                                                                    
+    const dist = graph.camera().position.length()                                                                       
+    // 线性插值：远处满强度，近处降到最低                                                                               
+    const t = Math.max(0, Math.min(1, (dist - BLOOM_NEAR_DIST) / (BLOOM_FAR_DIST - BLOOM_NEAR_DIST)))                   
+    bloomPass.strength = BLOOM_STRENGTH_MIN + t * (BLOOM_STRENGTH_MAX - BLOOM_STRENGTH_MIN)                             
+  }
   // ── 节点自定义渲染（恒星发光体）──────────────────────────────────
   const glowTexture = createGlowTexture()
   const coreGeometry = new SphereGeometry(1, 16, 12)
@@ -219,21 +229,13 @@ export function useKnowledgeGraph(containerRef) {
     }
   }
 
-  function resetIdleTimer() {
-    stopAutoRotate()
-    clearTimeout(mouseIdleTimeout)
-    if (isRotating.value) {
-      mouseIdleTimeout = setTimeout(startAutoRotate, IDLE_DELAY)
-    }
-  }
-
   function toggleRotation() {
     isRotating.value = !isRotating.value
     if (!isRotating.value) {
       stopAutoRotate()
       clearTimeout(mouseIdleTimeout)
     } else {
-      resetIdleTimer()
+      startAutoRotate()
     }
   }
 
@@ -377,6 +379,7 @@ export function useKnowledgeGraph(containerRef) {
         if (label) label.visible = shouldShow
       })
     }
+    updateBloomByDistance()
   }
 
   // ── 聚类质心边捆绑（阶段二）──────────────────────────────────────
@@ -519,7 +522,7 @@ export function useKnowledgeGraph(containerRef) {
       // 边：曲线 + 可见颜色 + 无粒子
       .linkCurvature(0.15)
       .linkWidth(1.0)
-      .linkOpacity(0.22)
+      .linkOpacity(0.4)
       .linkColor(link => {
         const src = typeof link.source === 'object' ? link.source : null
         const color = src ? getCategoryColor(src.category) : '#ff6b4a'
@@ -577,13 +580,7 @@ export function useKnowledgeGraph(containerRef) {
     addStarField()
 
     // 事件监听
-    containerRef.value.addEventListener('mousemove', resetIdleTimer)
-    containerRef.value.addEventListener('mousedown', resetIdleTimer)
-    containerRef.value.addEventListener('wheel', resetIdleTimer)
     window.addEventListener('resize', handleResize)
-
-    // 启动空闲计时器
-    resetIdleTimer()
 
     // 缩放检查
     graph.controls().addEventListener('change', checkZoomLevel)
@@ -593,7 +590,6 @@ export function useKnowledgeGraph(containerRef) {
   function pause() {
     if (graph) graph.pauseAnimation()
     stopAutoRotate()
-    clearTimeout(mouseIdleTimeout)
     window.removeEventListener('resize', handleResize)
   }
 
@@ -601,16 +597,10 @@ export function useKnowledgeGraph(containerRef) {
     if (graph) graph.resumeAnimation()
     window.addEventListener('resize', handleResize)
     handleResize()
-    if (isRotating.value) resetIdleTimer()
   }
 
   function destroy() {
     pause()
-    if (containerRef.value) {
-      containerRef.value.removeEventListener('mousemove', resetIdleTimer)
-      containerRef.value.removeEventListener('mousedown', resetIdleTimer)
-      containerRef.value.removeEventListener('wheel', resetIdleTimer)
-    }
     if (graph) {
       // 释放节点 Group 子对象的 GPU 资源
       graphData.value.nodes.forEach(node => {
