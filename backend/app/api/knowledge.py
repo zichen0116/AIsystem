@@ -71,10 +71,30 @@ async def list_knowledge_assets(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100)
 ):
-    """列出知识资产，可按知识库过滤。"""
-    conditions = [KnowledgeAsset.user_id == current_user.id]
+    """列出知识资产，可按知识库过滤。系统公开库对所有用户可见。"""
+    conditions = []
+
     if library_id is not None:
-        conditions.append(KnowledgeAsset.library_id == library_id)
+        # Check if it's a system public library
+        lib_result = await db.execute(
+            select(KnowledgeLibrary).where(
+                KnowledgeLibrary.id == library_id,
+                KnowledgeLibrary.is_deleted == False,
+            )
+        )
+        library = lib_result.scalar_one_or_none()
+        if not library:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在")
+
+        if library.is_system and library.is_public:
+            # System public library: all users can see assets
+            conditions.append(KnowledgeAsset.library_id == library_id)
+        else:
+            # Personal library: only owner can see
+            conditions.append(KnowledgeAsset.library_id == library_id)
+            conditions.append(KnowledgeAsset.user_id == current_user.id)
+    else:
+        conditions.append(KnowledgeAsset.user_id == current_user.id)
 
     count_result = await db.execute(
         select(func.count()).select_from(KnowledgeAsset).where(*conditions)
@@ -271,7 +291,14 @@ async def delete_knowledge_asset(
         vs = VectorStore()
         vs.delete_asset_documents(asset_id=asset_id, library_id=asset.library_id)
     except Exception:
-        pass  # 向量删除失败不阻断 DB 删除
+        pass
+
+    # 删除 OSS 文件
+    try:
+        from app.services.oss_service import delete_file
+        delete_file(asset.file_path)
+    except Exception:
+        pass
 
     await db.delete(asset)
     await db.commit()
