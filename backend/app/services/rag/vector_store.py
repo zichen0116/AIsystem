@@ -4,6 +4,7 @@
 """
 import os
 import logging
+import json
 from typing import Any
 from pathlib import Path
 
@@ -136,6 +137,43 @@ class VectorStore:
 
         logger.info(f"ChromaDB 初始化完成: {self.collection_name}")
 
+    @staticmethod
+    def _sanitize_metadata_value(value: Any) -> Any | None:
+        """
+        清洗 metadata 值，保证可被 Chroma 接受。
+
+        规则：
+        - None 或空列表直接丢弃
+        - 基础标量类型保持原样
+        - 复杂结构（list/dict/tuple/set）转 JSON 字符串
+        - 其他类型兜底转字符串
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, list):
+            if len(value) == 0:
+                return None
+            return json.dumps(value, ensure_ascii=False)
+
+        if isinstance(value, (dict, tuple, set)):
+            return json.dumps(value, ensure_ascii=False)
+
+        return str(value)
+
+    @classmethod
+    def _sanitize_metadata(cls, metadata: dict[str, Any]) -> dict[str, Any]:
+        """清洗整份 metadata，移除不支持的键值。"""
+        sanitized: dict[str, Any] = {}
+        for key, value in metadata.items():
+            normalized = cls._sanitize_metadata_value(value)
+            if normalized is not None:
+                sanitized[str(key)] = normalized
+        return sanitized
+
     def add_documents(self, chunks: list[ParsedChunk], user_id: int, library_id: int | None = None, asset_id: int | None = None) -> int:
         """
         添加文档到向量库
@@ -170,6 +208,7 @@ class VectorStore:
                 metadata["library_id"] = library_id
             if asset_id is not None:
                 metadata["asset_id"] = asset_id
+            metadata = self._sanitize_metadata(metadata)
 
             doc = Document(
                 page_content=content,
