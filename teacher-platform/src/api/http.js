@@ -80,6 +80,14 @@ export async function apiRequest(path, { method = 'GET', headers = {}, body } = 
     throw new Error(detail || `HTTP ${res.status}`)
   }
 
-  if (contentType.includes('application/json')) return await res.json()
-  return await res.text()
+  // 204/205 has no response body.
+  if (res.status === 204 || res.status === 205) return null
+
+  if (contentType.includes('application/json')) {
+    const text = await res.text()
+    return text ? JSON.parse(text) : null
+  }
+
+  const text = await res.text()
+  return text || null
 }

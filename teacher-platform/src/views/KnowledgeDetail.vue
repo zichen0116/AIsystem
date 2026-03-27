@@ -74,11 +74,12 @@ function triggerAddFile() {
 async function handleFilesSelected(e) {
   const files = e.target.files
   if (!files || !files.length) return
+  const selectedFiles = Array.from(files)
   e.target.value = ''
 
   uploading.value = true
   try {
-    for (const file of Array.from(files)) {
+    for (const file of selectedFiles) {
       // Step 1: Upload to OSS
       const uploadResult = await store.uploadFile(file)
       // Step 2: Create knowledge asset
