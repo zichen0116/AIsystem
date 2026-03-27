@@ -1,17 +1,18 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useKnowledgeStore } from '../stores/knowledge'
 
 const route = useRoute()
 const router = useRouter()
+const store = useKnowledgeStore()
 
+const libraryId = computed(() => Number(route.params.id))
 const kbTitle = computed(() => route.query.title || '知识库详情')
 
-const allDocs = ref([
-  { id: 1, name: '备课功能.docx', words: 402, uploads: 0, time: '2026-03-09 23:04', status: '可用', file: null }
-])
-
+const allDocs = ref([])
 const searchText = ref('')
+const uploading = ref(false)
 
 const docs = computed(() =>
   allDocs.value.filter(d =>
@@ -22,6 +23,46 @@ const docs = computed(() =>
 
 const fileInputRef = ref(null)
 
+async function loadDocs() {
+  try {
+    const data = await store.fetchAssets(libraryId.value)
+    allDocs.value = data.items.map(a => ({
+      id: a.id,
+      name: a.file_name,
+      words: a.chunk_count || 0,
+      uploads: a.image_count || 0,
+      time: new Date(a.created_at).toLocaleString('zh-CN'),
+      status: a.vector_status,
+      filePath: a.file_path,
+    }))
+  } catch {
+    allDocs.value = []
+  }
+}
+
+onMounted(loadDocs)
+
+// Poll for pending/processing assets
+let pollTimer = null
+
+function startPolling() {
+  pollTimer = setInterval(async () => {
+    const pending = allDocs.value.filter(d => d.status === 'pending' || d.status === 'processing')
+    if (!pending.length) return
+    for (const doc of pending) {
+      try {
+        const st = await store.getAssetStatus(doc.id)
+        doc.status = st.vector_status
+        doc.words = st.chunk_count || 0
+        doc.uploads = st.image_count || 0
+      } catch { /* ignore */ }
+    }
+  }, 5000)
+}
+
+onMounted(startPolling)
+onBeforeUnmount(() => clearInterval(pollTimer))
+
 function goBack() {
   router.push('/knowledge-base')
 }
@@ -30,54 +71,48 @@ function triggerAddFile() {
   fileInputRef.value?.click()
 }
 
-function formatNow() {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function handleFilesSelected(e) {
+async function handleFilesSelected(e) {
   const files = e.target.files
   if (!files || !files.length) return
-  const nextId = (arr) => Math.max(0, ...arr.map(d => d.id || 0)) + 1
-  const now = formatNow()
-  const added = Array.from(files).map((file, idx) => ({
-    id: nextId(allDocs.value) + idx,
-    name: file.name,
-    words: 0,
-    uploads: 0,
-    time: now,
-    status: '可用',
-    file
-  }))
-  allDocs.value = [...allDocs.value, ...added]
   e.target.value = ''
+
+  uploading.value = true
+  try {
+    for (const file of Array.from(files)) {
+      // Step 1: Upload to OSS
+      const uploadResult = await store.uploadFile(file)
+      // Step 2: Create knowledge asset
+      await store.createAsset({
+        fileName: uploadResult.file_name,
+        fileType: uploadResult.file_type,
+        filePath: uploadResult.url,
+        libraryId: libraryId.value,
+      })
+    }
+    await loadDocs()
+  } catch (err) {
+    alert(err.message || '上传失败')
+  } finally {
+    uploading.value = false
+  }
 }
 
-function renameDoc(doc) {
-  const next = window.prompt('重命名文档', doc.name)
-  if (!next || !next.trim()) return
-  doc.name = next.trim()
-}
-
-function deleteDoc(doc) {
-  if (!window.confirm(`确定要删除文档「${doc.name}」吗？`)) return
-  allDocs.value = allDocs.value.filter(d => d.id !== doc.id)
+async function deleteDoc(doc) {
+  if (!confirm(`确定要删除文档「${doc.name}」吗？`)) return
+  try {
+    await store.deleteAsset(doc.id)
+    allDocs.value = allDocs.value.filter(d => d.id !== doc.id)
+  } catch (err) {
+    alert(err.message || '删除失败')
+  }
 }
 
 function downloadDoc(doc) {
-  if (!doc.file) {
-    window.alert('该示例文档仅为演示，暂不支持下载。请先通过“添加文件”上传真实文档后再下载。')
+  if (!doc.filePath) {
+    alert('文件路径不可用')
     return
   }
-  const url = URL.createObjectURL(doc.file)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = doc.name
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  window.open(doc.filePath, '_blank')
 }
 </script>
 
@@ -90,12 +125,15 @@ function downloadDoc(doc) {
       </div>
       <div class="kb-detail-actions">
           <input v-model="searchText" class="search-input" type="text" placeholder="搜索文档" />
-          <button type="button" class="primary-btn" @click="triggerAddFile">添加文件</button>
+          <button type="button" class="primary-btn" :disabled="uploading" @click="triggerAddFile">
+            {{ uploading ? '上传中...' : '添加文件' }}
+          </button>
           <input
             ref="fileInputRef"
             type="file"
             class="hidden-file-input"
             multiple
+            accept=".pdf,.doc,.docx,.mp4,.jpg,.jpeg,.png"
             @change="handleFilesSelected"
           />
       </div>
@@ -105,8 +143,8 @@ function downloadDoc(doc) {
       <div class="kb-table-header">
         <div class="col col-index">#</div>
         <div class="col col-name">名称</div>
-        <div class="col col-words">字数</div>
-        <div class="col col-calls">引用数</div>
+        <div class="col col-words">文本块数</div>
+        <div class="col col-calls">图片数</div>
         <div class="col col-time">上传时间</div>
         <div class="col col-status">状态</div>
         <div class="col col-ops">操作</div>
@@ -121,14 +159,16 @@ function downloadDoc(doc) {
         <div class="col col-calls">{{ doc.uploads }}</div>
         <div class="col col-time">{{ doc.time }}</div>
         <div class="col col-status">
-          <span class="status-dot"></span>
-          <span>可用</span>
+          <span class="status-dot" :class="doc.status"></span>
+          <span>{{ { pending: '等待处理', processing: '处理中', completed: '可用', failed: '失败' }[doc.status] || doc.status }}</span>
         </div>
         <div class="col col-ops">
-          <button type="button" class="link-btn" @click="renameDoc(doc)">重命名</button>
           <button type="button" class="link-btn" @click="downloadDoc(doc)">下载</button>
           <button type="button" class="link-btn danger" @click="deleteDoc(doc)">删除</button>
         </div>
+      </div>
+      <div v-if="docs.length === 0" class="kb-empty-row">
+        <span>暂无文档，点击"添加文件"上传</span>
       </div>
     </div>
   </div>
@@ -307,9 +347,22 @@ function downloadDoc(doc) {
   }
 }
 
-@media (max-width: 480px) {
-  .kb-detail-page { padding: 12px 10px; }
-  .kb-detail-actions { flex-direction: column; }
-  .search-input { width: 100%; }
+.status-dot.completed {
+  background: #22c55e;
+}
+.status-dot.processing {
+  background: #f59e0b;
+}
+.status-dot.pending {
+  background: #94a3b8;
+}
+.status-dot.failed {
+  background: #ef4444;
+}
+.kb-empty-row {
+  text-align: center;
+  padding: 40px 16px;
+  color: #94a3b8;
+  font-size: 14px;
 }
 </style>
