@@ -1,65 +1,83 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { useKnowledgeStore } from '../stores/knowledge'
 
 const router = useRouter()
 const userStore = useUserStore()
+const store = useKnowledgeStore()
 const isAdmin = computed(() => userStore.userInfo?.is_admin === true)
 
-// ---- Data ----
-const systemResources = ref([
-  { id: 's1', type: 'system', title: '十年级数学课程标准', desc: '代数官方课程指南与评估标准。', tags: ['数学', '课程'], time: '2天前更新', iconColor: '#2563EB', fileCount: 5, charCount: 12000 },
-  { id: 's2', type: 'system', title: '高中实验室安全规范', desc: '标准实验室安全清单与应急流程。', tags: ['科学', '安全'], time: '1个月前更新', iconColor: '#16A34A', fileCount: 3, charCount: 8500 },
-  { id: 's3', type: 'system', title: '文学论文评分标准', desc: '分析性文学论文的整体评分框架。', tags: ['语文', '评分'], time: '2周前更新', iconColor: '#7C3AED', fileCount: 2, charCount: 6200 }
-])
-
-const personalResources = ref([
-  { id: 'p1', type: 'personal', title: '第4周 - 几何入门笔记', desc: '文本文档 · 今日修改', tags: ['数学', '课堂笔记'], time: '今日修改', iconColor: '#F59E0B', fileCount: 1, charCount: 3200 },
-  { id: 'p2', type: 'personal', title: '文艺复兴艺术展示.pdf', desc: 'PDF文件 · 2.4 MB', tags: ['历史', '艺术'], time: '3天前更新', iconColor: '#EF4444', fileCount: 1, charCount: 15000 },
-  { id: 'p3', type: 'personal', title: '化学YouTube播放列表', desc: '外部链接 · 上周修改', tags: ['化学', '视频资源'], time: '上周更新', iconColor: '#06B6D4', fileCount: 0, charCount: 0 }
-])
-
 // ---- Filter state ----
-const activeFilter = ref('all') // 'all' | 'system' | 'personal'
+const activeFilter = ref('all')
 const searchQuery = ref('')
 const selectedTagFilter = ref('')
 
-// ---- All tags (global tag pool) ----
-const allTags = ref(['数学', '课程', '科学', '安全', '语文', '评分', '课堂笔记', '历史', '艺术', '化学', '视频资源'])
-
-// ---- Computed: merged + filtered list ----
-const allResources = computed(() => [
-  ...systemResources.value.map(r => ({ ...r, type: 'system' })),
-  ...personalResources.value.map(r => ({ ...r, type: 'personal' }))
-])
-
-function matchSearch(text, q) {
-  if (!q || !q.trim()) return true
-  return (text || '').toLowerCase().includes(q.trim().toLowerCase())
+// ---- Fetch data ----
+async function loadData() {
+  await Promise.all([
+    store.fetchLibraries({
+      scope: activeFilter.value,
+      search: searchQuery.value,
+      tag: selectedTagFilter.value,
+    }),
+    store.fetchUserTags(),
+  ])
 }
 
-const filteredResources = computed(() => {
-  return allResources.value.filter(r => {
-    // type filter
-    if (activeFilter.value === 'system' && r.type !== 'system') return false
-    if (activeFilter.value === 'personal' && r.type !== 'personal') return false
-    // tag filter
-    if (selectedTagFilter.value && !(r.tags || []).includes(selectedTagFilter.value)) return false
-    // search
-    const q = searchQuery.value
-    return matchSearch(r.title, q) || matchSearch(r.desc, q) || (r.tags || []).some(t => matchSearch(t, q))
+onMounted(loadData)
+
+// Debounced search
+let searchTimer = null
+watch(searchQuery, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    store.fetchLibraries({
+      scope: activeFilter.value,
+      search: searchQuery.value,
+      tag: selectedTagFilter.value,
+    })
+  }, 300)
+})
+
+watch(activeFilter, () => {
+  store.fetchLibraries({
+    scope: activeFilter.value,
+    search: searchQuery.value,
+    tag: selectedTagFilter.value,
   })
+})
+
+watch(selectedTagFilter, () => {
+  store.fetchLibraries({
+    scope: activeFilter.value,
+    search: searchQuery.value,
+    tag: selectedTagFilter.value,
+  })
+})
+
+// ---- Computed ----
+const filteredResources = computed(() => {
+  return store.libraries.map(lib => ({
+    id: lib.id,
+    type: lib.is_system ? 'system' : 'personal',
+    title: lib.name,
+    desc: lib.description || '',
+    tags: lib.tags || [],
+    time: lib.updated_at ? new Date(lib.updated_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) + '更新' : '',
+    iconColor: lib.is_system ? '#2563EB' : '#F59E0B',
+    fileCount: lib.asset_count || 0,
+    charCount: 0,
+    _raw: lib,
+  }))
 })
 
 // ---- Tag filter dropdown ----
 const showTagFilterDropdown = ref(false)
-const tagFilterRef = ref(null)
 
 const availableFilterTags = computed(() => {
-  const tagSet = new Set()
-  allResources.value.forEach(r => (r.tags || []).forEach(t => tagSet.add(t)))
-  return [...tagSet].sort()
+  return store.userTags || []
 })
 
 function selectTagFilter(tag) {
@@ -96,30 +114,32 @@ function toggleTagPopover(id, e) {
 
 const filteredTagOptions = computed(() => {
   const q = tagSearchQuery.value.trim().toLowerCase()
-  if (!q) return allTags.value
-  return allTags.value.filter(t => t.toLowerCase().includes(q))
+  if (!q) return store.userTags
+  return store.userTags.filter(t => t.toLowerCase().includes(q))
 })
 
-function addTagToResource(resource, tag) {
-  if (!resource.tags) resource.tags = []
-  if (!resource.tags.includes(tag)) {
-    resource.tags.push(tag)
-  }
+async function addTagToResource(resource, tag) {
+  const currentTags = [...(resource.tags || [])]
+  if (currentTags.includes(tag)) return
+  currentTags.push(tag)
+  await store.updateLibrary(resource.id, { tags: currentTags })
+  await loadData()
 }
 
-function createAndAddTag(resource) {
+async function createAndAddTag(resource) {
   const name = tagSearchQuery.value.trim()
   if (!name) return
-  if (!allTags.value.includes(name)) {
-    allTags.value.push(name)
-  }
-  addTagToResource(resource, name)
+  const currentTags = [...(resource.tags || [])]
+  if (!currentTags.includes(name)) currentTags.push(name)
+  await store.updateLibrary(resource.id, { tags: currentTags })
   tagSearchQuery.value = ''
+  await loadData()
 }
 
-function removeTagFromResource(resource, tag) {
-  if (!resource.tags) return
-  resource.tags = resource.tags.filter(t => t !== tag)
+async function removeTagFromResource(resource, tag) {
+  const currentTags = (resource.tags || []).filter(t => t !== tag)
+  await store.updateLibrary(resource.id, { tags: currentTags })
+  await loadData()
 }
 
 // ---- Tag Management Modal ----
@@ -130,8 +150,8 @@ const editingTagName = ref('')
 
 const filteredManagerTags = computed(() => {
   const q = tagManagerSearch.value.trim().toLowerCase()
-  if (!q) return allTags.value
-  return allTags.value.filter(t => t.toLowerCase().includes(q))
+  if (!q) return store.userTags
+  return store.userTags.filter(t => t.toLowerCase().includes(q))
 })
 
 function openTagManager() {
@@ -140,63 +160,45 @@ function openTagManager() {
   tagManagerSearch.value = ''
 }
 
-function deleteGlobalTag(tag) {
-  allTags.value = allTags.value.filter(t => t !== tag)
-  // remove from all resources
-  ;[...systemResources.value, ...personalResources.value].forEach(r => {
-    if (r.tags) r.tags = r.tags.filter(t => t !== tag)
-  })
-  if (selectedTagFilter.value === tag) selectedTagFilter.value = ''
-}
-
 function startRenameTag(tag) {
   editingTag.value = tag
   editingTagName.value = tag
 }
 
-function confirmRenameTag() {
+async function confirmRenameTag() {
   const oldName = editingTag.value
   const newName = editingTagName.value.trim()
-  if (!newName || newName === oldName) {
-    editingTag.value = null
-    return
-  }
-  const idx = allTags.value.indexOf(oldName)
-  if (idx !== -1) allTags.value[idx] = newName
-  ;[...systemResources.value, ...personalResources.value].forEach(r => {
-    if (r.tags) {
-      const ti = r.tags.indexOf(oldName)
-      if (ti !== -1) r.tags[ti] = newName
-    }
-  })
-  if (selectedTagFilter.value === oldName) selectedTagFilter.value = newName
   editingTag.value = null
+  if (!newName || newName === oldName) return
+  await store.renameTag(oldName, newName)
+  if (selectedTagFilter.value === oldName) selectedTagFilter.value = newName
+  await loadData()
+}
+
+async function deleteGlobalTag(tag) {
+  const libsWithTag = store.libraries.filter(lib => (lib.tags || []).includes(tag))
+  for (const lib of libsWithTag) {
+    const newTags = lib.tags.filter(t => t !== tag)
+    await store.updateLibrary(lib.id, { tags: newTags })
+  }
+  if (selectedTagFilter.value === tag) selectedTagFilter.value = ''
+  await loadData()
 }
 
 function createTagFromManager() {
-  const name = tagManagerSearch.value.trim()
-  if (!name || allTags.value.includes(name)) return
-  allTags.value.push(name)
   tagManagerSearch.value = ''
 }
 
-// ---- Add/Edit Modal (kept) ----
+// ---- Add/Edit Modal ----
 const showAddModal = ref(false)
-const addTarget = ref('system')
 const addForm = ref({ title: '', desc: '', tags: '' })
-const addModalFiles = ref([])
-const addModalFileInputRef = ref(null)
 const isEditMode = ref(false)
 const editingId = ref(null)
-const editingTarget = ref(null)
 
 function openAddModal() {
   isEditMode.value = false
   editingId.value = null
-  editingTarget.value = null
-  addTarget.value = isAdmin.value ? 'system' : 'personal'
   addForm.value = { title: '', desc: '', tags: '' }
-  addModalFiles.value = []
   showAddModal.value = true
 }
 
@@ -205,102 +207,69 @@ function openEditModal(resource, e) {
   activeMenuId.value = null
   isEditMode.value = true
   editingId.value = resource.id
-  editingTarget.value = resource.type
-  addTarget.value = resource.type
   addForm.value = {
     title: resource.title,
     desc: resource.desc || '',
     tags: (resource.tags || []).join(', ')
   }
-  addModalFiles.value = []
   showAddModal.value = true
 }
 
-function triggerAddModalFileSelect() {
-  addModalFileInputRef.value?.click()
-}
-
-function onAddModalFileChange(e) {
-  const files = e.target.files
-  if (files?.length) addModalFiles.value = Array.from(files)
-  e.target.value = ''
-}
-
-function submitAdd() {
+async function submitAdd() {
   const { title, desc, tags } = addForm.value
   if (!title.trim()) return
-  const fileNames = addModalFiles.value.map(f => f.name)
-  const descWithFiles = fileNames.length
-    ? (desc || '').trim() + (desc ? '；' : '') + '已选文件: ' + fileNames.join(', ')
-    : (desc || '').trim() || '—'
   const parsedTags = tags ? tags.split(/[,，\s]+/).filter(Boolean) : []
 
-  if (isEditMode.value && editingId.value != null) {
-    const list = editingTarget.value === 'system' ? systemResources.value : personalResources.value
-    const idx = list.findIndex(r => r.id === editingId.value)
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], title: title.trim(), desc: descWithFiles, tags: parsedTags }
-    }
-  } else {
-    const nextId = (prefix, arr) => prefix + (Math.max(0, ...arr.map(r => parseInt(r.id?.replace(/\D/g, '') || '0'))) + 1)
-    const newItem = {
-      id: addTarget.value === 'system' ? nextId('s', systemResources.value) : nextId('p', personalResources.value),
-      type: addTarget.value,
-      title: title.trim(),
-      desc: descWithFiles,
-      tags: parsedTags,
-      time: '刚刚',
-      iconColor: addTarget.value === 'system' ? '#2563EB' : '#F59E0B',
-      fileCount: addModalFiles.value.length,
-      charCount: 0
-    }
-    // Add new tags to global pool
-    parsedTags.forEach(t => { if (!allTags.value.includes(t)) allTags.value.push(t) })
-
-    if (addTarget.value === 'system') {
-      systemResources.value.unshift(newItem)
+  try {
+    if (isEditMode.value && editingId.value != null) {
+      await store.updateLibrary(editingId.value, {
+        name: title.trim(),
+        description: desc.trim() || null,
+        tags: parsedTags,
+      })
     } else {
-      personalResources.value.unshift(newItem)
+      await store.createLibrary({
+        name: title.trim(),
+        description: desc.trim() || null,
+        tags: parsedTags,
+      })
     }
+    showAddModal.value = false
+    await loadData()
+  } catch (e) {
+    alert(e.message || '操作失败')
   }
-  showAddModal.value = false
 }
 
-function deleteResource(resource, e) {
+async function deleteResource(resource, e) {
   if (e) e.stopPropagation()
   activeMenuId.value = null
-  if (resource.type === 'system') {
-    systemResources.value = systemResources.value.filter(r => r.id !== resource.id)
-  } else {
-    personalResources.value = personalResources.value.filter(r => r.id !== resource.id)
+  if (!confirm(`确定要删除知识库「${resource.title}」吗？`)) return
+  try {
+    await store.deleteLibrary(resource.id)
+    await loadData()
+  } catch (e) {
+    alert(e.message || '删除失败')
   }
 }
 
 function openDetail(resource) {
   router.push({
     path: `/knowledge-base/${resource.id}`,
-    query: { title: resource.title, target: resource.type }
+    query: { title: resource.title }
   })
 }
 
 // ---- Click outside handler ----
-function handleDocClick(e) {
-  // close menus/popovers when clicking outside
-  if (activeMenuId.value !== null) {
-    activeMenuId.value = null
-  }
-  if (activeTagPopoverId.value !== null) {
-    activeTagPopoverId.value = null
-  }
-  if (showTagFilterDropdown.value) {
-    showTagFilterDropdown.value = false
-  }
+function handleDocClick() {
+  if (activeMenuId.value !== null) activeMenuId.value = null
+  if (activeTagPopoverId.value !== null) activeTagPopoverId.value = null
+  if (showTagFilterDropdown.value) showTagFilterDropdown.value = false
 }
 
 onMounted(() => document.addEventListener('click', handleDocClick))
 onBeforeUnmount(() => document.removeEventListener('click', handleDocClick))
 
-// Icon first letter helper
 function getIconLetter(title) {
   return (title || 'K').charAt(0).toUpperCase()
 }
@@ -462,7 +431,7 @@ function getIconLetter(title) {
                   @click="addTagToResource(resource, t)"
                 >{{ t }}</button>
                 <button
-                  v-if="!allTags.includes(tagSearchQuery.trim())"
+                  v-if="!store.userTags.includes(tagSearchQuery.trim())"
                   class="tag-option create"
                   @click="createAndAddTag(resource)"
                 >
@@ -516,16 +485,6 @@ function getIconLetter(title) {
             <input id="kb-desc" v-model="addForm.desc" type="text" placeholder="选填" />
             <label for="kb-tags">标签（逗号分隔）</label>
             <input id="kb-tags" v-model="addForm.tags" type="text" placeholder="数学, 课程" />
-            <label>选择本地文件（选填）</label>
-            <input
-              ref="addModalFileInputRef"
-              type="file"
-              multiple
-              class="file-input-hidden"
-              @change="onAddModalFileChange"
-            />
-            <button type="button" class="select-file-btn" @click="triggerAddModalFileSelect">选择文件</button>
-            <span v-if="addModalFiles.length" class="selected-files">已选 {{ addModalFiles.length }} 个文件</span>
           </div>
           <div class="modal-actions">
             <button class="btn-cancel" @click="showAddModal = false">取消</button>
@@ -569,7 +528,7 @@ function getIconLetter(title) {
             </div>
             <div v-if="filteredManagerTags.length === 0 && !tagManagerSearch.trim()" class="tm-empty">暂无标签</div>
             <button
-              v-if="tagManagerSearch.trim() && !allTags.includes(tagManagerSearch.trim())"
+              v-if="tagManagerSearch.trim() && !store.userTags.includes(tagManagerSearch.trim())"
               class="tm-create-btn"
               @click="createTagFromManager"
             >
