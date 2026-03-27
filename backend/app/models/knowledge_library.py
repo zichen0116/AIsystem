@@ -2,7 +2,7 @@
 知识库模型
 """
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Boolean, Integer, Text
+from sqlalchemy import String, DateTime, ForeignKey, Boolean, Integer, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
 
@@ -28,9 +28,16 @@ class KnowledgeLibrary(Base):
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False, server_default="[]")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
         nullable=False
     )
 
