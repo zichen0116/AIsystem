@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 完善个人中心功能，后端新增用户资料字段和相关 API，前端与后端完整对接，实现个人资料保存、修改密码、修改手机号（短信验证）、修改邮箱（直接修改）、2FA（邮箱验证码开关）。
+**Goal:** 完善个人中心功能，后端新增用户资料字段和相关 API，前端与后端完整对接，实现个人资料保存、修改密码、修改手机号（短信验证）、修改邮箱（直接修改）、2FA 开关（邮箱验证码，默认关闭）、**登录时 2FA 二次验证**。
 
-**Architecture:** 后端扩展 User 模型（新增 email/subject/school/employee_id/bio/two_fa_enabled 字段），Alembic 迁移更新数据库，新增 PUT /profile、PUT /change-phone、PUT /change-email、POST /send-email-code、PUT /toggle-2fa 路由；前端 PersonalCenter.vue 绑定真实数据，user store 新增对应 actions，任教科目从 select 改为 input，注册默认 full_name 为 "user"。
+**Architecture:** 后端扩展 User 模型，Alembic 迁移，新增资料/安全/2FA 相关 API；登录接口支持 2FA 临时 token 流程；前端 PersonalCenter.vue + LoginView.vue 均与后端对接。
 
 **Tech Stack:** FastAPI, SQLAlchemy 2.0 async, Alembic, smtplib (QQ 邮箱 SMTP 587 STARTTLS), Pinia, Vue 3
 
@@ -14,16 +14,17 @@
 
 **后端 - 修改：**
 - `backend/app/models/user.py` — 新增 6 个字段
-- `backend/app/schemas/auth.py` — 扩展 UserResponse；新增 5 个 schema
-- `backend/app/api/auth.py` — 修改 register；新增 5 个路由；更新 import
+- `backend/app/schemas/auth.py` — 扩展 UserResponse；新增 UpdateProfile, ChangePhone, ChangeEmail, Toggle2FA, TwoFARequired, Login2FAVerify schema
+- `backend/app/api/auth.py` — 修改 register 默认名；修改 login 支持 2FA 流程；新增 6 个路由；更新 import
 - `backend/app/core/config.py` — 新增 5 个 SMTP 配置字段
 
 **后端 - 新建：**
 - `backend/app/services/email.py` — SMTP 邮件 + Redis 验证码
 
 **前端 - 修改：**
-- `teacher-platform/src/stores/user.js` — 新增 5 个 actions
-- `teacher-platform/src/views/PersonalCenter.vue` — 绑定真实数据，科目改 input，对接所有 API
+- `teacher-platform/src/stores/user.js` — 新增 updateProfile, changePhone, changeEmail, sendEmailCode, toggle2FA, verify2FALogin actions
+- `teacher-platform/src/views/PersonalCenter.vue` — 绑定真实数据，科目改 input，添加手机/邮箱/2FA modal，2FA 关闭二次确认
+- `teacher-platform/src/views/LoginView.vue` — 登录成功时检查 requires_2fa，展示 2FA 验证 modal
 
 ---
 
@@ -135,9 +136,16 @@ git commit -m "feat(db): add migration for user profile fields"
     # ========== 邮件服务（QQ 邮箱 SMTP）==========
     EMAIL_SMTP_HOST: str = "smtp.qq.com"
     EMAIL_SMTP_PORT: int = 587
-    EMAIL_SMTP_USER: str = "zzcn.leo@qq.com"
-    EMAIL_SMTP_PASSWORD: str = "qhwvhhocckzrfieg"
+    EMAIL_SMTP_USER: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
     EMAIL_FROM_NAME: str = "AI教学平台"
+```
+
+- [ ] **Step 2: 在 `backend/.env` 中追加邮件凭据**
+
+```env
+EMAIL_SMTP_USER=zzcn.leo@qq.com
+EMAIL_SMTP_PASSWORD=qhwvhhocckzrfieg
 ```
 
 - [ ] **Step 2: 创建 `backend/app/services/email.py`**
@@ -335,13 +343,14 @@ class ChangeEmail(BaseModel):
 
 
 class SendEmailCodeRequest(BaseModel):
-    """发送邮箱验证码请求（2FA 开启时使用）"""
-    email: str = Field(..., max_length=255)
+    """发送邮箱验证码请求（2FA 开启时使用，email 取自当前用户，不接受外部传入）"""
+    pass  # 无字段，服务端从 current_user.email 获取目标邮箱
 
 
 class Toggle2FA(BaseModel):
     """开启/关闭 2FA 请求"""
     enable: bool
+    code: str | None = Field(None, min_length=6, max_length=6, description="开启时必须提供的邮箱验证码")
 ```
 
 - [ ] **Step 2: 提交**
@@ -469,12 +478,16 @@ async def change_email(
 
 @router.post("/send-email-code", status_code=status.HTTP_200_OK)
 async def send_email_code_endpoint(
-    data: SendEmailCodeRequest,
     current_user: CurrentUser
 ):
-    """发送邮箱验证码（用于开启 2FA）"""
+    """发送邮箱验证码到当前用户绑定邮箱（用于开启 2FA）"""
+    if not current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请先绑定邮箱"
+        )
     try:
-        await send_email_code(data.email)
+        await send_email_code(current_user.email)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -513,12 +526,137 @@ async def toggle_2fa(
     return current_user
 ```
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 4: 在 auth.py 末尾追加登录 2FA 第二步路由**
+
+在 `toggle_2fa` 路由之后追加：
+
+```python
+@router.post("/login/2fa", response_model=LoginResponse)
+async def login_2fa(
+    data: Login2FAVerify,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """登录第二步：校验邮箱验证码，发放正式 access_token"""
+    from app.core.jwt import decode_2fa_pending_token
+    token_data = decode_2fa_pending_token(data.temp_token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="临时令牌无效或已过期"
+        )
+    result = await db.execute(select(User).where(User.id == token_data["user_id"]))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="用户不存在"
+        )
+    if not await verify_email_code(user.email, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证码错误或已过期"
+        )
+    access_token = create_access_token(user.id, user.token_version)
+    return LoginResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(user),
+    )
+```
+
+- [ ] **Step 5: 在 jwt.py 中新增 `create_2fa_pending_token` 和 `decode_2fa_pending_token`**
+
+在 `backend/app/core/jwt.py` 末尾追加：
+
+```python
+def create_2fa_pending_token(user_id: int) -> str:
+    """创建 2FA 临时令牌（5分钟有效，type=2fa_pending）"""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    to_encode = {
+        "sub": str(user_id),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "2fa_pending"
+    }
+    return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+def decode_2fa_pending_token(token: str) -> Optional[dict]:
+    """解码 2FA 临时令牌，返回 {user_id} 或 None"""
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("type") != "2fa_pending":
+            return None
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return {"user_id": int(user_id)}
+    except (JWTError, ValueError):
+        return None
+```
+
+- [ ] **Step 6: 修改 login 路由支持 2FA 流程**
+
+找到 `backend/app/api/auth.py` 中的 `login` 函数，在返回 `LoginResponse` 之前插入 2FA 判断：
+
+```python
+# 先导入（在文件顶部 imports 中加入）：
+from fastapi.responses import JSONResponse
+from app.core.jwt import create_access_token, create_2fa_pending_token, token_to_hash, get_token_expired_at
+from app.schemas.auth import (
+    ...,
+    TwoFARequired, Login2FAVerify,
+)
+```
+
+将 login 函数末尾：
+```python
+    # 生成令牌（带 token_version）
+    access_token = create_access_token(user.id, user.token_version)
+    return LoginResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(user),
+    )
+```
+
+替换为：
+
+```python
+    # 检查是否开启 2FA
+    if user.two_fa_enabled:
+        if not user.email:
+            # 邮箱丢失降级为直接登录
+            pass
+        else:
+            # 发送验证码，返回临时 token
+            try:
+                await send_email_code(user.email)
+            except ValueError:
+                pass  # 发送失败降级为直接登录
+            else:
+                temp_token = create_2fa_pending_token(user.id)
+                masked = user.email[:2] + "***@" + user.email.split("@")[-1]
+                return JSONResponse(
+                    status_code=202,
+                    content=TwoFARequired(
+                        requires_2fa=True,
+                        temp_token=temp_token,
+                        masked_email=masked
+                    ).model_dump()
+                )
+    # 无 2FA 或降级：正常发放 token
+    access_token = create_access_token(user.id, user.token_version)
+    return LoginResponse(
+        access_token=access_token,
+        user=UserResponse.model_validate(user),
+    )
+```
+
+- [ ] **Step 7: 提交**
 
 ```bash
 cd /d/Develop/Project/AIsystem
-git add backend/app/api/auth.py
-git commit -m "feat(api): add profile/phone/email/2fa endpoints, default full_name to user"
+git add backend/app/api/auth.py backend/app/core/jwt.py
+git commit -m "feat(api): add login 2FA challenge flow with temp token and /login/2fa endpoint"
 ```
 
 ---
@@ -542,10 +680,30 @@ export const useUserStore = defineStore('user', {
 
   actions: {
     async login(phone, password) {
-      const data = await apiRequest('/api/v1/auth/login', {
+      // 使用 fetch 直接处理，因为 202 会被 apiRequest 视为错误
+      const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '')
+      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, password }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
+      if (res.status === 202 && data.requires_2fa) {
+        // 需要 2FA 验证，返回特殊标记
+        return { requires2FA: true, tempToken: data.temp_token, maskedEmail: data.masked_email }
+      }
+      setToken(data.access_token)
+      this.isLoggedIn = true
+      this.userInfo = data.user
+      return data.user
+    },
+
+    async verify2FALogin(tempToken, code) {
+      const data = await apiRequest('/api/v1/auth/login/2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ temp_token: tempToken, code }),
       })
       setToken(data.access_token)
       this.isLoggedIn = true
@@ -638,11 +796,10 @@ export const useUserStore = defineStore('user', {
       if (this.userInfo) this.userInfo.email = newEmail
     },
 
-    async sendEmailCode(email) {
+    async sendEmailCode() {
+      // 不传 email，后端从 current_user.email 获取
       await apiRequest('/api/v1/auth/send-email-code', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
       })
     },
 
@@ -759,6 +916,14 @@ async function submitPasswordChange() {
 }
 ```
 
+在 `<script setup>` 的第一行 `import` 块中，新增对 apiRequest 的导入：
+
+```js
+import { apiRequest } from '../api/http'
+```
+
+（PersonalCenter.vue 目前未导入 apiRequest，需要新增这一行）
+
 - [ ] **Step 3: 添加修改手机号/邮箱/2FA 逻辑**
 
 在 `submitPasswordChange` 之后添加：
@@ -786,8 +951,78 @@ async function sendPhoneCode() {
     return
   }
   try {
-    await import('../api/http').then(({ apiRequest }) =>
-      apiRequest('/api/v1/auth/send-code', {
+    await apiRequest('/api/v1/auth/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: newPhone.value }),
+    })
+    phoneMsg.value = '验证码已发送'
+    phoneSendCooldown.value = 60
+    clearInterval(phoneTimer)
+    phoneTimer = setInterval(() => {
+      phoneSendCooldown.value--
+      if (phoneSendCooldown.value <= 0) clearInterval(phoneTimer)
+    }, 1000)
+  } catch (e) {
+    phoneMsg.value = e.message || '发送失败'
+  }
+}
+
+async function submitPhoneChange() {
+  phoneSaving.value = true
+  phoneMsg.value = ''
+  try {
+    await userStore.changePhone(newPhone.value, phoneCode.value)
+    phoneMsg.value = '手机号修改成功'
+    setTimeout(() => { showPhoneModal.value = false }, 1200)
+  } catch (e) {
+    phoneMsg.value = e.message || '修改失败'
+  } finally {
+    phoneSaving.value = false
+  }
+}
+
+// 修改邮箱
+const showEmailModal = ref(false)
+const newEmail = ref('')
+const emailSaving = ref(false)
+const emailMsg = ref('')
+
+function openEmailModal() {
+  showEmailModal.value = true
+  newEmail.value = userStore.userInfo?.email || ''
+  emailMsg.value = ''
+}
+
+async function submitEmailChange() {
+  emailSaving.value = true
+  emailMsg.value = ''
+  try {
+    await userStore.changeEmail(newEmail.value)
+    emailMsg.value = '邮箱修改成功'
+    setTimeout(() => { showEmailModal.value = false }, 1200)
+  } catch (e) {
+    emailMsg.value = e.message || '修改失败'
+  } finally {
+    emailSaving.value = false
+  }
+}
+
+// 2FA — 完整替换原 open2FAModal 函数，并新增状态和发送/验证函数
+const twoFASaving = ref(false)
+const twoFAMsg = ref('')
+const show2FAEmail = ref('')
+const show2FAStep = ref('send') // 'send' | 'verify'
+
+// 替换原有 open2FAModal 函数：
+function open2FAModal() {
+  show2FAModal.value = true
+  twoFACode.value = ['', '', '', '', '', '']
+  twoFAMsg.value = ''
+  show2FAEmail.value = userStore.userInfo?.email || ''
+  show2FAStep.value = 'send'
+  resendCountdown.value = 0
+}
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: newPhone.value }),
@@ -865,7 +1100,7 @@ async function send2FACode() {
     return
   }
   try {
-    await userStore.sendEmailCode(show2FAEmail.value)
+    await userStore.sendEmailCode()
     show2FAStep.value = 'verify'
     twoFAMsg.value = '验证码已发送到邮箱'
     resendCountdown.value = 60
@@ -898,6 +1133,8 @@ async function submit2FA() {
 }
 
 async function disable2FA() {
+  // 2FA 关闭需要二次确认弹窗
+  if (!confirm('确定要关闭双重认证吗？关闭后登录将不再需要邮箱验证码。')) return
   try {
     await userStore.toggle2FA(false)
   } catch (e) {
@@ -1109,8 +1346,8 @@ async function disable2FA() {
       type="text"
       maxlength="1"
       :value="digit"
-      @input="handleCodeInput($event, i)"
-      @keydown.backspace="handleCodeBackspace($event, i)"
+      @input="on2FACodeInput(i, $event)"
+      @keydown="on2FACodeKeydown(i, $event)"
     />
   </div>
   <p class="resend-text">
@@ -1153,6 +1390,175 @@ git commit -m "feat(ui): bind real data in PersonalCenter, add phone/email/2fa m
 
 ---
 
+### Task 7b: 改造 LoginView.vue 支持 2FA 登录二次验证
+
+**Files:**
+- Modify: `teacher-platform/src/views/LoginView.vue`
+
+- [ ] **Step 1: 在 `<script setup>` 中新增 2FA 状态**
+
+在 `const loading = ref(false)` 之后新增：
+
+```js
+// 2FA 登录二次验证状态
+const show2FAVerify = ref(false)
+const twoFATempToken = ref('')
+const twoFAMaskedEmail = ref('')
+const twoFACode = ref(['', '', '', '', '', ''])
+const twoFASaving = ref(false)
+const twoFAMsg = ref('')
+```
+
+- [ ] **Step 2: 修改 `handleSubmit` 中的 login 调用，处理 2FA 响应**
+
+找到 `handleSubmit` 中登录成功后的 `user = await userStore.login(...)` 这一行，改为：
+
+```js
+    if (isLogin.value) {
+      const result = await userStore.login(form.value.phone, form.value.password)
+      // 如果需要 2FA 验证
+      if (result && result.requires2FA) {
+        twoFATempToken.value = result.tempToken
+        twoFAMaskedEmail.value = result.maskedEmail
+        twoFACode.value = ['', '', '', '', '', '']
+        twoFAMsg.value = ''
+        show2FAVerify.value = true
+        loading.value = false
+        return
+      }
+      user = result
+```
+
+（注意：在 `if (isLogin.value)` 块末尾保留 `} else {` 分支的 register 调用不变）
+
+- [ ] **Step 3: 新增 2FA 验证函数**
+
+在 `goHome()` 函数之前新增：
+
+```js
+function on2FACodeInput(index, e) {
+  const val = e.target.value.replace(/\D/g, '').slice(-1)
+  const arr = [...twoFACode.value]
+  arr[index] = val
+  twoFACode.value = arr
+  if (val && index < 5) {
+    const next = e.target.nextElementSibling
+    if (next) next.focus()
+  }
+}
+
+function on2FACodeKeydown(index, e) {
+  if (e.key === 'Backspace' && !twoFACode.value[index] && index > 0) {
+    const prev = e.target.previousElementSibling
+    if (prev) prev.focus()
+  }
+}
+
+async function submit2FAVerify() {
+  const code = twoFACode.value.join('')
+  if (code.length !== 6) {
+    twoFAMsg.value = '请输入完整的 6 位验证码'
+    return
+  }
+  twoFASaving.value = true
+  twoFAMsg.value = ''
+  try {
+    const user = await userStore.verify2FALogin(twoFATempToken.value, code)
+    show2FAVerify.value = false
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    if (redirect) {
+      router.replace(redirect)
+    } else if (user.is_admin) {
+      router.replace('/admin')
+    } else {
+      router.replace('/lesson-prep')
+    }
+  } catch (e) {
+    twoFAMsg.value = e.message || '验证失败，请重试'
+  } finally {
+    twoFASaving.value = false
+  }
+}
+```
+
+- [ ] **Step 4: 在 `<template>` 末尾（`</div>` 关闭 `.auth-page` 之前）添加 2FA 验证 modal**
+
+```html
+<!-- 2FA 登录验证弹窗 -->
+<Teleport to="body">
+  <div v-if="show2FAVerify" class="twofa-overlay">
+    <div class="twofa-box">
+      <h3>邮箱双重验证</h3>
+      <p style="color:#64748b;font-size:0.9rem;margin-bottom:16px">
+        验证码已发送至 {{ twoFAMaskedEmail }}
+      </p>
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:16px">
+        <input
+          v-for="(digit, i) in twoFACode"
+          :key="i"
+          type="text"
+          inputmode="numeric"
+          maxlength="1"
+          :value="digit"
+          @input="on2FACodeInput(i, $event)"
+          @keydown="on2FACodeKeydown(i, $event)"
+          style="width:44px;height:48px;text-align:center;font-size:1.25rem;
+                 font-weight:600;border:1px solid #e2e8f0;border-radius:8px"
+        />
+      </div>
+      <p v-if="twoFAMsg" style="color:#ef4444;font-size:0.85rem;margin-bottom:8px">{{ twoFAMsg }}</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button @click="show2FAVerify = false"
+          style="padding:8px 16px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer">
+          取消
+        </button>
+        <button @click="submit2FAVerify" :disabled="twoFASaving"
+          style="padding:8px 16px;background:#3b82f6;color:#fff;border:none;
+                 border-radius:6px;cursor:pointer;font-weight:600">
+          {{ twoFASaving ? '验证中...' : '确认' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</Teleport>
+```
+
+- [ ] **Step 5: 在 `<style>` 中新增弹窗样式**
+
+```css
+.twofa-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.twofa-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px;
+  width: 340px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+}
+.twofa-box h3 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+```
+
+- [ ] **Step 6: 提交**
+
+```bash
+cd /d/Develop/Project/AIsystem
+git add teacher-platform/src/views/LoginView.vue
+git commit -m "feat(login): add 2FA email verification step on login"
+```
+
+---
+
 ### Task 8: 验证整体功能
 
 - [ ] **Step 1: 启动后端服务**
@@ -1172,7 +1578,9 @@ python run.py
 - `PUT /api/v1/auth/change-email`
 - `POST /api/v1/auth/send-email-code`
 - `PUT /api/v1/auth/toggle-2fa`
+- `POST /api/v1/auth/login/2fa`
 - `GET /api/v1/auth/me`（响应中包含 email, subject, school, employee_id, bio, two_fa_enabled）
+- `POST /api/v1/auth/login` 在 2FA 开启时返回 HTTP 202
 
 - [ ] **Step 3: 启动前端服务**
 
@@ -1211,6 +1619,21 @@ npm run dev
 2. 点击发送验证码，检查邮箱收到验证码
 3. 输入 6 位验证码，点击「确认开启」
 4. 确认 2FA 状态变为「已开启」，按钮切换为「关闭 2FA」
+
+- [ ] **Step 9: 手动测试 2FA 登录流程**
+
+1. 登出，重新登录
+2. 输入手机号和密码，点击登录
+3. 弹出 2FA 验证弹窗，展示 masked 邮箱
+4. 输入邮箱收到的 6 位验证码，点击确认
+5. 确认跳转到 lesson-prep 页面
+
+- [ ] **Step 10: 手动测试 2FA 关闭（二次确认）**
+
+1. 进入账号安全，点击「关闭 2FA」
+2. 出现 confirm 弹窗，点击确认
+3. 确认 2FA 状态切换为「未开启」
+4. 再次登录，确认不再弹出 2FA 验证
 
 - [ ] **Step 9: 最终提交**
 
