@@ -148,7 +148,7 @@ EMAIL_SMTP_USER=zzcn.leo@qq.com
 EMAIL_SMTP_PASSWORD=qhwvhhocckzrfieg
 ```
 
-- [ ] **Step 2: 创建 `backend/app/services/email.py`**
+- [ ] **Step 3: 创建 `backend/app/services/email.py`**
 
 ```python
 """
@@ -351,6 +351,19 @@ class Toggle2FA(BaseModel):
     """开启/关闭 2FA 请求"""
     enable: bool
     code: str | None = Field(None, min_length=6, max_length=6, description="开启时必须提供的邮箱验证码")
+
+
+class TwoFARequired(BaseModel):
+    """登录需要 2FA 时的中间响应"""
+    requires_2fa: bool = True
+    temp_token: str
+    masked_email: str
+
+
+class Login2FAVerify(BaseModel):
+    """2FA 登录第二步请求"""
+    temp_token: str
+    code: str = Field(..., min_length=6, max_length=6)
 ```
 
 - [ ] **Step 2: 提交**
@@ -407,7 +420,8 @@ from app.services.sms import send_sms_code, verify_sms_code
 from app.schemas.auth import (
     UserRegister, UserLogin, LoginResponse, UserResponse,
     ChangePassword, SendCodeRequest,
-    UpdateProfile, ChangePhone, ChangeEmail, SendEmailCodeRequest, Toggle2FA,
+    UpdateProfile, ChangePhone, ChangeEmail, Toggle2FA,
+    TwoFARequired, Login2FAVerify,
 )
 from app.services.sms import send_sms_code, verify_sms_code
 from app.services.email import send_email_code, verify_email_code
@@ -590,6 +604,40 @@ def decode_2fa_pending_token(token: str) -> Optional[dict]:
         if user_id is None:
             return None
         return {"user_id": int(user_id)}
+    except (JWTError, ValueError):
+        return None
+```
+
+**同时修改 `decode_access_token`，拒绝 2fa_pending token 访问正式接口：**
+
+找到 `decode_access_token` 函数，在 `return {"user_id": ..., "version": version}` 之前插入：
+
+```python
+        # 拒绝 2fa_pending 临时 token 访问正式接口
+        if payload.get("type") == "2fa_pending":
+            return None
+```
+
+完整修改后的 `decode_access_token` 关键段如下：
+
+```python
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        # 拒绝 2fa_pending 临时 token 访问正式接口
+        if payload.get("type") == "2fa_pending":
+            return None
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        version = payload.get("version", 1)
+        return {
+            "user_id": int(user_id),
+            "version": version
+        }
     except (JWTError, ValueError):
         return None
 ```
@@ -1015,76 +1063,6 @@ const show2FAEmail = ref('')
 const show2FAStep = ref('send') // 'send' | 'verify'
 
 // 替换原有 open2FAModal 函数：
-function open2FAModal() {
-  show2FAModal.value = true
-  twoFACode.value = ['', '', '', '', '', '']
-  twoFAMsg.value = ''
-  show2FAEmail.value = userStore.userInfo?.email || ''
-  show2FAStep.value = 'send'
-  resendCountdown.value = 0
-}
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: newPhone.value }),
-      })
-    )
-    phoneMsg.value = '验证码已发送'
-    phoneSendCooldown.value = 60
-    phoneTimer = setInterval(() => {
-      phoneSendCooldown.value--
-      if (phoneSendCooldown.value <= 0) clearInterval(phoneTimer)
-    }, 1000)
-  } catch (e) {
-    phoneMsg.value = e.message || '发送失败'
-  }
-}
-
-async function submitPhoneChange() {
-  phoneSaving.value = true
-  phoneMsg.value = ''
-  try {
-    await userStore.changePhone(newPhone.value, phoneCode.value)
-    phoneMsg.value = '手机号修改成功'
-    setTimeout(() => { showPhoneModal.value = false }, 1200)
-  } catch (e) {
-    phoneMsg.value = e.message || '修改失败'
-  } finally {
-    phoneSaving.value = false
-  }
-}
-
-// 修改邮箱
-const showEmailModal = ref(false)
-const newEmail = ref('')
-const emailSaving = ref(false)
-const emailMsg = ref('')
-
-function openEmailModal() {
-  showEmailModal.value = true
-  newEmail.value = userStore.userInfo?.email || ''
-  emailMsg.value = ''
-}
-
-async function submitEmailChange() {
-  emailSaving.value = true
-  emailMsg.value = ''
-  try {
-    await userStore.changeEmail(newEmail.value)
-    emailMsg.value = '邮箱修改成功'
-    setTimeout(() => { showEmailModal.value = false }, 1200)
-  } catch (e) {
-    emailMsg.value = e.message || '修改失败'
-  } finally {
-    emailSaving.value = false
-  }
-}
-
-// 2FA
-const twoFASaving = ref(false)
-const twoFAMsg = ref('')
-const show2FAEmail = ref('')
-const show2FAStep = ref('send') // 'send' | 'verify'
-
 function open2FAModal() {
   show2FAModal.value = true
   twoFACode.value = ['', '', '', '', '', '']
@@ -1635,7 +1613,7 @@ npm run dev
 3. 确认 2FA 状态切换为「未开启」
 4. 再次登录，确认不再弹出 2FA 验证
 
-- [ ] **Step 9: 最终提交**
+- [ ] **Step 11: 最终提交**
 
 ```bash
 cd /d/Develop/Project/AIsystem
