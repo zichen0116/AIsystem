@@ -81,7 +81,7 @@
 **临时 token 设计：**
 - JWT payload 中增加 `type: "2fa_pending"` 字段，正式 token 不带此字段
 - 过期时间 5 分钟
-- `get_current_user` 依赖仍只接受不含 `type` 字段（或 type 为空）的 token，2fa_pending token 无法访问其他接口
+- **隔离策略（唯一策略）：** 在 `decode_access_token`（`jwt.py`）中检查 `type` 字段，若等于 `"2fa_pending"` 直接返回 `None`。`get_current_user` 无需改动，天然拒绝无效 token。这样 2fa_pending token 无法通过任何需要认证的接口。
 
 **登录响应 Schema 变更：**
 - 正常登录（无 2FA）：返回 `LoginResponse { access_token, token_type, user }`（现有结构不变）
