@@ -17,6 +17,16 @@ const errorMsg = ref('')
 const codeCooldown = ref(0)
 let cooldownTimer = null
 
+// 2FA modal state
+const show2FAVerifyModal = ref(false)
+const twoFATempToken = ref('')
+const twoFAMaskedEmail = ref('')
+const twoFACode = ref(['', '', '', '', '', ''])
+const twoFALoading = ref(false)
+const twoFAError = ref('')
+const pendingRememberMe = ref(false)
+const pendingRedirect = ref('')
+
 const form = ref({
   phone: '',
   password: '',
@@ -104,19 +114,24 @@ async function handleSubmit() {
   try {
     let user
     if (isLogin.value) {
-      user = await userStore.login(form.value.phone, form.value.password)
+      const result = await userStore.login(form.value.phone, form.value.password)
+      // 2FA required
+      if (result && result.requires_2fa) {
+        twoFATempToken.value = result.temp_token
+        twoFAMaskedEmail.value = result.masked_email
+        twoFACode.value = ['', '', '', '', '', '']
+        twoFAError.value = ''
+        pendingRememberMe.value = rememberMe.value
+        pendingRedirect.value = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+        show2FAVerifyModal.value = true
+        loading.value = false
+        return
+      }
+      user = result
       if (rememberMe.value) {
-        try {
-          localStorage.setItem('eduprep_remember_login', '1')
-        } catch {
-          /* ignore */
-        }
+        try { localStorage.setItem('eduprep_remember_login', '1') } catch { /* ignore */ }
       } else {
-        try {
-          localStorage.removeItem('eduprep_remember_login')
-        } catch {
-          /* ignore */
-        }
+        try { localStorage.removeItem('eduprep_remember_login') } catch { /* ignore */ }
       }
     } else {
       user = await userStore.register(
@@ -137,9 +152,57 @@ async function handleSubmit() {
       router.replace('/lesson-prep')
     }
   } catch (e) {
-    errorMsg.value = e.message || '操作失败'
+    errorMsg.value = e.detail || e.message || '操作失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function submit2FAVerify() {
+  const code = twoFACode.value.join('')
+  if (code.length !== 6) {
+    twoFAError.value = '请输入完整的6位验证码'
+    return
+  }
+  twoFALoading.value = true
+  twoFAError.value = ''
+  try {
+    const user = await userStore.verify2FALogin(twoFATempToken.value, code)
+    show2FAVerifyModal.value = false
+    if (pendingRememberMe.value) {
+      try { localStorage.setItem('eduprep_remember_login', '1') } catch { /* ignore */ }
+    } else {
+      try { localStorage.removeItem('eduprep_remember_login') } catch { /* ignore */ }
+    }
+    if (pendingRedirect.value) {
+      router.replace(pendingRedirect.value)
+    } else if (user.is_admin) {
+      router.replace('/admin')
+    } else {
+      router.replace('/lesson-prep')
+    }
+  } catch (e) {
+    twoFAError.value = e.detail || e.message || '验证失败'
+  } finally {
+    twoFALoading.value = false
+  }
+}
+
+function on2FACodeInput(index, e) {
+  const val = e.target.value.replace(/\D/g, '').slice(-1)
+  const arr = [...twoFACode.value]
+  arr[index] = val
+  twoFACode.value = arr
+  if (val && index < 5) {
+    const next = e.target.nextElementSibling
+    if (next) next.focus()
+  }
+}
+
+function on2FACodeKeydown(index, e) {
+  if (e.key === 'Backspace' && !twoFACode.value[index] && index > 0) {
+    const prev = e.target.previousElementSibling
+    if (prev) prev.focus()
   }
 }
 
@@ -327,6 +390,42 @@ function goHome() {
         </div>
       </section>
     </div>
+
+    <!-- 2FA 验证弹框 -->
+    <Teleport to="body">
+      <div v-if="show2FAVerifyModal" class="twofa-overlay" @click.self="show2FAVerifyModal = false">
+        <div class="twofa-box">
+          <div class="twofa-header">
+            <h3>双重身份验证</h3>
+            <button class="twofa-close" @click="show2FAVerifyModal = false">×</button>
+          </div>
+          <div class="twofa-body">
+            <div class="twofa-icon">✉️</div>
+            <p class="twofa-desc">验证码已发送至 <strong>{{ twoFAMaskedEmail }}</strong>，请在 5 分钟内输入。</p>
+            <div class="twofa-inputs">
+              <input
+                v-for="(_, i) in 6"
+                :key="i"
+                :value="twoFACode[i]"
+                type="text"
+                inputmode="numeric"
+                maxlength="1"
+                class="twofa-digit"
+                @input="on2FACodeInput(i, $event)"
+                @keydown="on2FACodeKeydown(i, $event)"
+              />
+            </div>
+            <p v-if="twoFAError" class="twofa-error">{{ twoFAError }}</p>
+          </div>
+          <div class="twofa-footer">
+            <button class="twofa-cancel" @click="show2FAVerifyModal = false">取消</button>
+            <button class="twofa-confirm" :disabled="twoFALoading" @click="submit2FAVerify">
+              {{ twoFALoading ? '验证中...' : '确认验证' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -887,5 +986,123 @@ function goHome() {
   .form-header {
     margin-bottom: 24px;
   }
+}
+
+.twofa-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.twofa-box {
+  background: #fff;
+  border-radius: 16px;
+  width: 360px;
+  max-width: 92vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
+.twofa-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
+.twofa-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.twofa-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: #94a3b8;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.twofa-body {
+  padding: 20px 24px;
+  text-align: center;
+}
+
+.twofa-icon {
+  font-size: 2rem;
+  margin-bottom: 12px;
+}
+
+.twofa-desc {
+  font-size: 0.9rem;
+  color: #475569;
+  margin-bottom: 20px;
+}
+
+.twofa-inputs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.twofa-digit {
+  width: 44px;
+  height: 48px;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  outline: none;
+}
+
+.twofa-digit:focus {
+  border-color: #3b82f6;
+}
+
+.twofa-error {
+  color: #ef4444;
+  font-size: 0.85rem;
+  margin-top: 8px;
+}
+
+.twofa-footer {
+  display: flex;
+  gap: 12px;
+  padding: 0 24px 20px;
+  justify-content: flex-end;
+}
+
+.twofa-cancel {
+  padding: 8px 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.twofa-confirm {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.twofa-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>
