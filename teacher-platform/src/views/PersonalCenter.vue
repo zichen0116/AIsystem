@@ -3,6 +3,7 @@ import { ref, computed, inject, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { useCoursewareStore } from '../stores/courseware'
+import { apiRequest } from '../api/http'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -13,24 +14,268 @@ const sidebarCollapsed = inject('sidebarCollapsed', ref(false))
 const favoriteFilter = ref('all')
 const viewMode = ref('grid')
 const currentPage = ref(1)
-const itemsPerPage = 8 // 4列 x 2行
+const itemsPerPage = 8
+
+// ---- Profile form ----
+const profileForm = ref({
+  full_name: '',
+  subject: '',
+  school: '',
+  employee_id: '',
+  bio: '',
+})
+const profileSaving = ref(false)
+const profileMsg = ref('')
+
+function initProfileForm() {
+  const u = userStore.userInfo
+  if (!u) return
+  profileForm.value = {
+    full_name: u.full_name || '',
+    subject: u.subject || '',
+    school: u.school || '',
+    employee_id: u.employee_id || '',
+    bio: u.bio || '',
+  }
+}
+initProfileForm()
+watch(() => userStore.userInfo, initProfileForm)
+
+async function saveProfile() {
+  profileSaving.value = true
+  profileMsg.value = ''
+  try {
+    await userStore.updateProfile(profileForm.value)
+    profileMsg.value = '保存成功'
+  } catch (e) {
+    profileMsg.value = e?.message || e?.detail || '保存失败'
+  } finally {
+    profileSaving.value = false
+  }
+}
+
+function resetProfile() {
+  initProfileForm()
+  profileMsg.value = ''
+}
+
+// ---- Password modal ----
 const showPasswordModal = ref(false)
-const show2FAModal = ref(false)
 const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
 const showCurrentPwd = ref(false)
 const showNewPwd = ref(false)
 const showConfirmPwd = ref(false)
-const twoFACode = ref(['', '', '', '', '', ''])
-const resendCountdown = ref(59)
-const showLogoutConfirm = ref(false)
+const passwordMsg = ref('')
+const passwordSaving = ref(false)
 
-const sideItems = [
-  { id: 'profile', label: '个人信息', icon: '👤' },
-  { id: 'security', label: '账号安全', icon: '🔒' },
-  { id: 'favorites', label: '我的收藏', icon: '❤️' }
-]
+const passwordStrength = computed(() => {
+  const p = newPassword.value
+  if (!p) return { level: 0, label: '弱' }
+  let score = 0
+  if (p.length >= 8) score++
+  if (/[a-z]/.test(p) && /[A-Z]/.test(p)) score++
+  if (/\d/.test(p)) score++
+  if (/[^a-zA-Z0-9]/.test(p)) score++
+  if (p.length >= 12) score++
+  const labels = ['弱', '弱', '中', '强', '强']
+  return { level: Math.min(score, 4), label: labels[Math.min(score, 4)] }
+})
+
+function openPasswordModal() {
+  showPasswordModal.value = true
+  currentPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  passwordMsg.value = ''
+}
+
+async function submitChangePassword() {
+  if (newPassword.value !== confirmPassword.value) {
+    passwordMsg.value = '两次密码不一致'
+    return
+  }
+  passwordSaving.value = true
+  passwordMsg.value = ''
+  try {
+    await apiRequest('/api/v1/auth/change-password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: currentPassword.value, new_password: newPassword.value }),
+    })
+    showPasswordModal.value = false
+    await userStore.logout()
+    router.push('/')
+  } catch (e) {
+    passwordMsg.value = e?.message || e?.detail || '修改失败'
+  } finally {
+    passwordSaving.value = false
+  }
+}
+
+// ---- Phone modal ----
+const showPhoneModal = ref(false)
+const newPhone = ref('')
+const phoneCode = ref('')
+const phoneMsg = ref('')
+const phoneSaving = ref(false)
+const phoneSendCooldown = ref(0)
+let phoneTimer = null
+
+function openPhoneModal() {
+  showPhoneModal.value = true
+  newPhone.value = ''
+  phoneCode.value = ''
+  phoneMsg.value = ''
+  phoneSendCooldown.value = 0
+}
+
+async function sendPhoneCode() {
+  if (!newPhone.value || newPhone.value.length < 11) {
+    phoneMsg.value = '请输入正确的手机号'
+    return
+  }
+  try {
+    await apiRequest('/api/v1/auth/send-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: newPhone.value }),
+    })
+    phoneSendCooldown.value = 60
+    phoneTimer = setInterval(() => {
+      phoneSendCooldown.value--
+      if (phoneSendCooldown.value <= 0) clearInterval(phoneTimer)
+    }, 1000)
+    phoneMsg.value = ''
+  } catch (e) {
+    phoneMsg.value = e?.message || e?.detail || '发送失败'
+  }
+}
+
+async function submitChangePhone() {
+  phoneSaving.value = true
+  phoneMsg.value = ''
+  try {
+    await userStore.changePhone(newPhone.value, phoneCode.value)
+    showPhoneModal.value = false
+  } catch (e) {
+    phoneMsg.value = e?.message || e?.detail || '修改失败'
+  } finally {
+    phoneSaving.value = false
+  }
+}
+
+// ---- Email modal ----
+const showEmailModal = ref(false)
+const newEmail = ref('')
+const emailMsg = ref('')
+const emailSaving = ref(false)
+
+function openEmailModal() {
+  showEmailModal.value = true
+  newEmail.value = ''
+  emailMsg.value = ''
+}
+
+async function submitChangeEmail() {
+  emailSaving.value = true
+  emailMsg.value = ''
+  try {
+    await userStore.changeEmail(newEmail.value)
+    showEmailModal.value = false
+  } catch (e) {
+    emailMsg.value = e?.message || e?.detail || '修改失败'
+  } finally {
+    emailSaving.value = false
+  }
+}
+
+// ---- 2FA modal ----
+const show2FAModal = ref(false)
+const twoFACode = ref(['', '', '', '', '', ''])
+const twoFASending = ref(false)
+const twoFASaving = ref(false)
+const twoFAMsg = ref('')
+const twoFACooldown = ref(0)
+let twoFATimer = null
+
+// 2FA close confirm
+const show2FACloseConfirm = ref(false)
+
+function open2FAModal() {
+  show2FAModal.value = true
+  twoFACode.value = ['', '', '', '', '', '']
+  twoFAMsg.value = ''
+  twoFACooldown.value = 0
+}
+
+async function send2FACode() {
+  twoFASending.value = true
+  twoFAMsg.value = ''
+  try {
+    await userStore.sendEmailCode()
+    twoFACooldown.value = 60
+    twoFATimer = setInterval(() => {
+      twoFACooldown.value--
+      if (twoFACooldown.value <= 0) clearInterval(twoFATimer)
+    }, 1000)
+  } catch (e) {
+    twoFAMsg.value = e?.message || e?.detail || '发送失败'
+  } finally {
+    twoFASending.value = false
+  }
+}
+
+async function confirm2FAEnable() {
+  const code = twoFACode.value.join('')
+  if (code.length !== 6) {
+    twoFAMsg.value = '请输入完整的6位验证码'
+    return
+  }
+  twoFASaving.value = true
+  twoFAMsg.value = ''
+  try {
+    await userStore.toggle2FA(true, code)
+    show2FAModal.value = false
+  } catch (e) {
+    twoFAMsg.value = e?.message || e?.detail || '验证失败'
+  } finally {
+    twoFASaving.value = false
+  }
+}
+
+function request2FADisable() {
+  show2FACloseConfirm.value = true
+}
+
+async function confirm2FADisable() {
+  try {
+    await userStore.toggle2FA(false, null)
+  } catch (e) {
+    // ignore
+  } finally {
+    show2FACloseConfirm.value = false
+  }
+}
+
+function on2FACodeInput(index, e) {
+  const val = e.target.value.replace(/\D/g, '').slice(-1)
+  const arr = [...twoFACode.value]
+  arr[index] = val
+  twoFACode.value = arr
+  if (val && index < 5) {
+    const next = e.target.nextElementSibling
+    if (next) next.focus()
+  }
+}
+
+function on2FACodeKeydown(index, e) {
+  if (e.key === 'Backspace' && !twoFACode.value[index] && index > 0) {
+    const prev = e.target.previousElementSibling
+    if (prev) prev.focus()
+  }
+}
 
 const favoritesList = computed(() => coursewareStore.favoritedList)
 
@@ -97,6 +342,9 @@ const loginHistory = [
   { device: 'Windows PC / Edge', location: '芝加哥，美国', ip: '10.0.42.115', time: '昨天 14:20', status: '成功' }
 ]
 
+// ---- Logout ----
+const showLogoutConfirm = ref(false)
+
 function logout() {
   showLogoutConfirm.value = true
 }
@@ -111,49 +359,11 @@ function cancelLogout() {
   showLogoutConfirm.value = false
 }
 
-const passwordStrength = computed(() => {
-  const p = newPassword.value
-  if (!p) return { level: 0, label: '弱' }
-  let score = 0
-  if (p.length >= 8) score++
-  if (/[a-z]/.test(p) && /[A-Z]/.test(p)) score++
-  if (/\d/.test(p)) score++
-  if (/[^a-zA-Z0-9]/.test(p)) score++
-  if (p.length >= 12) score++
-  const labels = ['弱', '弱', '中', '强', '强']
-  return { level: Math.min(score, 4), label: labels[Math.min(score, 4)] }
-})
-
-function openPasswordModal() {
-  showPasswordModal.value = true
-  currentPassword.value = ''
-  newPassword.value = ''
-  confirmPassword.value = ''
-}
-
-function open2FAModal() {
-  show2FAModal.value = true
-  twoFACode.value = ['', '', '', '', '', '']
-  resendCountdown.value = 59
-}
-
-function on2FACodeInput(index, e) {
-  const val = e.target.value.replace(/\D/g, '').slice(-1)
-  const arr = [...twoFACode.value]
-  arr[index] = val
-  twoFACode.value = arr
-  if (val && index < 5) {
-    const next = e.target.nextElementSibling
-    if (next) next.focus()
-  }
-}
-
-function on2FACodeKeydown(index, e) {
-  if (e.key === 'Backspace' && !twoFACode.value[index] && index > 0) {
-    const prev = e.target.previousElementSibling
-    if (prev) prev.focus()
-  }
-}
+const sideItems = [
+  { id: 'profile', label: '个人信息', icon: '👤' },
+  { id: 'security', label: '账号安全', icon: '🔒' },
+  { id: 'favorites', label: '我的收藏', icon: '❤️' }
+]
 </script>
 
 <template>
@@ -213,11 +423,11 @@ function on2FACodeKeydown(index, e) {
 
             <div class="profile-header-row">
               <div class="profile-avatar">
-                {{ userStore.userInfo?.name?.[0] || '用' }}
+                {{ userStore.userInfo?.full_name?.[0] || '用' }}
               </div>
               <div class="profile-info">
-                <h2 class="profile-name">{{ userStore.userInfo?.name || userStore.userInfo?.phone || '用户' }}</h2>
-                <p class="profile-title">高级数学教师 | 10-12年级</p>
+                <h2 class="profile-name">{{ userStore.userInfo?.full_name || userStore.userInfo?.phone || '用户' }}</h2>
+                <p class="profile-title">{{ userStore.userInfo?.subject || '' }}{{ userStore.userInfo?.school ? ' | ' + userStore.userInfo.school : '' }}</p>
               </div>
               <button class="change-photo-btn">📷 更换照片</button>
             </div>
@@ -225,44 +435,40 @@ function on2FACodeKeydown(index, e) {
             <div class="form-grid">
               <div class="form-group">
                 <label>姓名</label>
-                <input type="text" :value="userStore.userInfo?.name || userStore.userInfo?.phone || '未设置'" />
+                <input type="text" v-model="profileForm.full_name" placeholder="请输入姓名" />
               </div>
               <div class="form-group">
                 <label>任教科目</label>
-                <select>
-                  <option>数学</option>
-                  <option>物理</option>
-                  <option>化学</option>
-                  <option>语文</option>
-                </select>
+                <input type="text" v-model="profileForm.subject" placeholder="请输入任教科目" />
               </div>
               <div class="form-group">
                 <label>学校名称</label>
-                <input type="text" value="北景国际学院" />
+                <input type="text" v-model="profileForm.school" placeholder="请输入学校名称" />
               </div>
               <div class="form-group">
                 <label>邮箱</label>
-                <input type="text" :value="userStore.userInfo?.email || '未绑定'" />
+                <input type="text" :value="userStore.userInfo?.email || '未绑定'" readonly class="readonly" />
               </div>
               <div class="form-group">
                 <label>手机号</label>
-                <input type="text" :value="userStore.userInfo?.phone || '未绑定'" />
+                <input type="text" :value="userStore.userInfo?.phone || '未绑定'" readonly class="readonly" />
               </div>
               <div class="form-group">
                 <label>工号</label>
-                <input type="text" value="EDU-94823" readonly class="readonly" />
+                <input type="text" v-model="profileForm.employee_id" placeholder="请输入工号" />
               </div>
             </div>
 
             <div class="form-group full">
               <label>专业简介</label>
-              <textarea rows="4">专注数学教育15年，主攻高等微积分与统计建模。目前负责 STEM 课程数字化转型。</textarea>
+              <textarea rows="4" v-model="profileForm.bio" placeholder="请输入专业简介"></textarea>
             </div>
 
             <div class="action-buttons">
-              <button class="cancel-btn">取消</button>
-              <button class="save-btn">保存修改</button>
+              <button class="cancel-btn" @click="resetProfile" :disabled="profileSaving">取消</button>
+              <button class="save-btn" @click="saveProfile" :disabled="profileSaving">{{ profileSaving ? '保存中...' : '保存修改' }}</button>
             </div>
+            <p v-if="profileMsg" class="profile-msg">{{ profileMsg }}</p>
           </div>
 
           <!-- 账号安全 -->
@@ -284,13 +490,13 @@ function on2FACodeKeydown(index, e) {
                 <div class="contact-row">
                   <div class="contact-item">
                     <span class="contact-label">邮箱</span>
-                    <span class="contact-value">j.smith@northview.edu</span>
-                    <a href="#" class="link-btn primary">更换</a>
+                    <span class="contact-value">{{ userStore.userInfo?.email || '未绑定' }}</span>
+                    <a href="#" class="link-btn primary" @click.prevent="openEmailModal">更换</a>
                   </div>
                   <div class="contact-item">
                     <span class="contact-label">手机号</span>
-                    <span class="contact-value">+1 (555) ....78</span>
-                    <a href="#" class="link-btn primary">管理</a>
+                    <span class="contact-value">{{ userStore.userInfo?.phone || '未绑定' }}</span>
+                    <a href="#" class="link-btn primary" @click.prevent="openPhoneModal">管理</a>
                   </div>
                 </div>
               </div>
@@ -299,10 +505,11 @@ function on2FACodeKeydown(index, e) {
             <div class="setting-block setting-block-row">
               <div class="block-icon">🛡️</div>
               <div class="block-content">
-                <h4>双重认证 (2FA) <span class="disabled-tag">未开启</span></h4>
+                <h4>双重认证 (2FA) <span :class="userStore.userInfo?.two_fa_enabled ? 'enabled-tag' : 'disabled-tag'">{{ userStore.userInfo?.two_fa_enabled ? '已开启' : '未开启' }}</span></h4>
                 <p>通过邮箱验证码为账号增加一层安全保护。</p>
               </div>
-              <button class="primary-btn" @click="open2FAModal">开启 2FA</button>
+              <button v-if="!userStore.userInfo?.two_fa_enabled" class="primary-btn" @click="open2FAModal">开启 2FA</button>
+              <button v-else class="outline-btn" @click="request2FADisable">关闭 2FA</button>
             </div>
 
             <div class="setting-block">
@@ -455,9 +662,10 @@ function on2FACodeKeydown(index, e) {
             </div>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click="showPasswordModal = false">取消</button>
-            <button class="save-btn">更新密码</button>
+            <button class="cancel-btn" @click="showPasswordModal = false" :disabled="passwordSaving">取消</button>
+            <button class="save-btn" @click="submitChangePassword" :disabled="passwordSaving">{{ passwordSaving ? '更新中...' : '更新密码' }}</button>
           </div>
+          <p v-if="passwordMsg" class="modal-msg">{{ passwordMsg }}</p>
         </div>
       </div>
 
@@ -471,7 +679,7 @@ function on2FACodeKeydown(index, e) {
           <div class="modal-body">
             <div class="twofa-icon">✉️ ✓</div>
             <h4 class="twofa-title">请查收您的邮件</h4>
-            <p class="twofa-desc">验证码已发送到您注册的邮箱 (t***@school.edu)</p>
+            <p class="twofa-desc">验证码将发送到您注册的邮箱 ({{ userStore.userInfo?.email || '' }})</p>
             <div class="code-inputs">
               <input
                 v-for="(_, i) in 6"
@@ -487,13 +695,80 @@ function on2FACodeKeydown(index, e) {
             </div>
             <p class="resend-text">
               未收到验证码？
-              <a href="#" class="resend-link">重新发送验证码</a>
-              <span class="countdown">(0:{{ String(resendCountdown).padStart(2, '0') }})</span>
+              <a href="#" class="resend-link" :class="{ disabled: twoFACooldown > 0 }" @click.prevent="send2FACode">{{ twoFASending ? '发送中...' : '发送验证码' }}</a>
+              <span v-if="twoFACooldown > 0" class="countdown">({{ twoFACooldown }}s)</span>
             </p>
+            <p v-if="twoFAMsg" class="modal-msg">{{ twoFAMsg }}</p>
           </div>
           <div class="modal-footer">
-            <button class="cancel-btn" @click="show2FAModal = false">返回</button>
-            <button class="save-btn">验证并启用 →</button>
+            <button class="cancel-btn" @click="show2FAModal = false" :disabled="twoFASaving">返回</button>
+            <button class="save-btn" @click="confirm2FAEnable" :disabled="twoFASaving">{{ twoFASaving ? '验证中...' : '验证并启用 →' }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 关闭 2FA 确认弹窗 -->
+      <div v-if="show2FACloseConfirm" class="modal-overlay" @click.self="show2FACloseConfirm = false">
+        <div class="modal-box confirm-modal">
+          <div class="modal-header">
+            <h3>关闭双重认证</h3>
+            <button class="modal-close" @click="show2FACloseConfirm = false">×</button>
+          </div>
+          <div class="modal-body">
+            <p>确定要关闭双重认证吗？关闭后账号安全性将降低。</p>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click="show2FACloseConfirm = false">取消</button>
+            <button class="save-btn" @click="confirm2FADisable">确认关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 修改手机号弹窗 -->
+      <div v-if="showPhoneModal" class="modal-overlay" @click.self="showPhoneModal = false">
+        <div class="modal-box password-modal">
+          <div class="modal-header">
+            <h3>修改手机号</h3>
+            <button class="modal-close" @click="showPhoneModal = false">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>新手机号</label>
+              <input type="text" v-model="newPhone" placeholder="请输入新手机号" />
+            </div>
+            <div class="form-group">
+              <label>验证码</label>
+              <div class="input-wrap">
+                <input type="text" v-model="phoneCode" placeholder="请输入验证码" />
+                <button type="button" class="eye-btn" :disabled="phoneSendCooldown > 0" @click="sendPhoneCode">{{ phoneSendCooldown > 0 ? phoneSendCooldown + 's' : '发送' }}</button>
+              </div>
+            </div>
+            <p v-if="phoneMsg" class="modal-msg">{{ phoneMsg }}</p>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click="showPhoneModal = false" :disabled="phoneSaving">取消</button>
+            <button class="save-btn" @click="submitChangePhone" :disabled="phoneSaving">{{ phoneSaving ? '保存中...' : '确认修改' }}</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 修改邮箱弹窗 -->
+      <div v-if="showEmailModal" class="modal-overlay" @click.self="showEmailModal = false">
+        <div class="modal-box password-modal">
+          <div class="modal-header">
+            <h3>修改邮箱</h3>
+            <button class="modal-close" @click="showEmailModal = false">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>新邮箱</label>
+              <input type="email" v-model="newEmail" placeholder="请输入新邮箱" />
+            </div>
+            <p v-if="emailMsg" class="modal-msg">{{ emailMsg }}</p>
+          </div>
+          <div class="modal-footer">
+            <button class="cancel-btn" @click="showEmailModal = false" :disabled="emailSaving">取消</button>
+            <button class="save-btn" @click="submitChangeEmail" :disabled="emailSaving">{{ emailSaving ? '保存中...' : '确认修改' }}</button>
           </div>
         </div>
       </div>
@@ -955,6 +1230,25 @@ function on2FACodeKeydown(index, e) {
   font-size: 0.9rem;
   font-weight: 400;
   color: #94a3b8;
+}
+
+.enabled-tag {
+  font-size: 0.9rem;
+  font-weight: 400;
+  color: #22c55e;
+}
+
+.profile-msg {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #3b82f6;
+}
+
+.modal-msg {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #ef4444;
+  text-align: center;
 }
 
 .outline-btn {

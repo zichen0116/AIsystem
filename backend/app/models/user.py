@@ -31,6 +31,24 @@ class User(Base):
         nullable=False,
         comment="Token 版本号，修改密码时+1使所有旧token失效"
     )
+    email: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True, index=True
+    )
+    subject: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, comment="任教科目"
+    )
+    school: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, comment="学校名称"
+    )
+    employee_id: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, comment="工号"
+    )
+    bio: Mapped[str | None] = mapped_column(
+        String(1000), nullable=True, comment="专业简介"
+    )
+    two_fa_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, comment="是否启用2FA邮箱验证"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
