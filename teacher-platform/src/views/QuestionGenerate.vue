@@ -432,7 +432,7 @@ async function handleExportPdf() {
 <template>
   <div class="question-page">
     <!-- 左侧：保存记录（风格对齐教案页历史侧栏） -->
-    <div class="sidebar-outer">
+    <div class="sidebar-outer" :class="{ 'is-collapsed': sidebarCollapsed }">
       <Transition name="sidebar-slide">
         <aside v-if="!sidebarCollapsed" class="saved-sidebar">
           <div class="sidebar-header">
@@ -605,7 +605,7 @@ async function handleExportPdf() {
         </div>
       </div>
 
-      <div class="field">
+      <div class="field field--source">
         <div class="label-row">
           <label class="label">来源材料 / 知识点</label>
           <button
@@ -874,72 +874,90 @@ async function handleExportPdf() {
 
 <style scoped>
 .question-page {
+  --qp-base: clamp(13px, 1.05vw, 16px);
+  font-size: var(--qp-base);
   display: flex;
   flex: 1;
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
   align-items: stretch;
+  overflow-x: hidden;
+  box-sizing: border-box;
   background: linear-gradient(180deg, #f3f8ff 0%, #f9fbff 100%);
 }
 
 .sidebar-outer {
   position: relative;
-  flex-shrink: 0;
+  flex: 0 0 24%;
+  min-width: 0;
+  max-width: 30%;
   z-index: 2;
   align-self: stretch;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  box-sizing: border-box;
+}
+
+.sidebar-outer.is-collapsed {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
 }
 
 .saved-sidebar {
-  width: 248px;
-  min-width: 248px;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
   background: #fff;
   border-right: 1px solid #eaedf0;
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
-  flex: 1;
+  padding: 4% 3.5%;
   min-height: 0;
   box-sizing: border-box;
 }
 
 .sidebar-header {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 4%;
+  margin-bottom: 6%;
   align-items: flex-start;
 }
 
 .sidebar-title-block {
   flex: 1;
   min-width: 0;
-  padding: 2px 4px 0 0;
+  padding: 0.15em 0.25em 0 0;
 }
 
 .sidebar-title {
-  font-size: 16px;
+  font-size: 112.5%;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.3;
 }
 
 .sidebar-title-desc {
-  margin: 6px 0 0;
-  font-size: 12px;
+  margin: 4% 0 0;
+  font-size: 81.25%;
   color: #64748b;
   line-height: 1.45;
 }
 
 .collapse-btn {
-  width: 36px;
+  width: 14%;
+  min-width: 32px;
+  max-width: 40px;
+  aspect-ratio: 1;
   flex-shrink: 0;
   background: #f7f8fa;
   border: 1px solid #e0e3e8;
   border-radius: 8px;
   cursor: pointer;
   color: #999;
-  font-size: 18px;
+  font-size: 112.5%;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -960,10 +978,10 @@ async function handleExportPdf() {
 }
 
 .empty-state {
-  padding: 24px 8px;
+  padding: 10% 4%;
   text-align: center;
   color: #94a3b8;
-  font-size: 13px;
+  font-size: 87.5%;
 }
 
 .history-item {
@@ -971,13 +989,13 @@ async function handleExportPdf() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 6px;
-  padding: 10px 10px;
+  gap: 3%;
+  padding: 5% 5%;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 87.5%;
   color: #334155;
   cursor: pointer;
-  margin-bottom: 4px;
+  margin-bottom: 3%;
   transition: background 0.2s;
 }
 
@@ -1003,9 +1021,9 @@ async function handleExportPdf() {
 }
 
 .history-meta {
-  font-size: 11px;
+  font-size: 75%;
   color: #94a3b8;
-  margin-top: 4px;
+  margin-top: 3%;
   line-height: 1.35;
 }
 
@@ -1015,13 +1033,15 @@ async function handleExportPdf() {
 
 .delete-btn {
   opacity: 0;
-  width: 24px;
-  height: 24px;
+  width: 10%;
+  min-width: 28px;
+  max-width: 32px;
+  aspect-ratio: 1;
   border: none;
   border-radius: 4px;
   background: #e0e7ff;
   color: #6366f1;
-  font-size: 16px;
+  font-size: 100%;
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
@@ -1043,11 +1063,14 @@ async function handleExportPdf() {
 
 .sidebar-expand {
   position: sticky;
-  top: 16px;
+  top: 2%;
   left: 0;
-  width: 28px;
-  height: 44px;
-  margin: 16px 0 0 0;
+  width: 10%;
+  min-width: 26px;
+  max-width: 32px;
+  height: auto;
+  aspect-ratio: 7 / 11;
+  margin: 6% 0 0 0;
   background: #fff;
   border: 1px solid #eaedf0;
   border-left: none;
@@ -1057,7 +1080,7 @@ async function handleExportPdf() {
   align-items: center;
   justify-content: center;
   color: #94a3b8;
-  font-size: 14px;
+  font-size: 87.5%;
   box-shadow: 2px 0 8px rgba(15, 23, 42, 0.06);
 }
 
@@ -1078,12 +1101,16 @@ async function handleExportPdf() {
 }
 
 .page-wrap {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  padding: 24px 32px 32px;
+  width: 0;
+  max-width: 100%;
+  /* 纵向用 em，避免侧栏收起后主区变宽时 padding 随「宽度」变大 */
+  padding-block: 1.25em;
+  padding-inline: 2.5%;
   display: flex;
-  gap: 20px;
+  gap: 2%;
   align-items: stretch;
   justify-content: center;
   box-sizing: border-box;
@@ -1100,56 +1127,87 @@ async function handleExportPdf() {
 
 .page-wrap.preview-from-record .preview-card {
   flex: 1 1 auto;
-  max-width: min(1000px, 100%);
+  max-width: 96%;
   width: 100%;
+  min-width: 0;
 }
 
 .config-card {
-  width: 720px;
-  max-width: 800px;
+  width: 100%;
+  max-width: 78%;
   background: #ffffff;
-  border-radius: 18px;
-  padding: 28px 28px 32px;
+  border-radius: 1.1em;
+  padding-block: 1.75em;
+  padding-inline: 4%;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
   border: 1px solid #e2e8f0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  flex: 1 1 auto;
+  box-sizing: border-box;
+}
+
+.page-wrap:not(.with-preview) .config-card {
+  margin: 0 auto;
+  flex: 1 1 0;
+  align-self: stretch;
+  min-height: 0;
 }
 
 .page-wrap.with-preview .config-card {
   width: auto;
-  flex: 0 0 420px;
-  max-width: 460px;
+  flex: 0 0 40%;
+  min-width: 0;
+  max-width: 44%;
   align-self: stretch;
 }
 
+.config-card > .header,
+.config-card > .field:not(.field--source) {
+  flex-shrink: 0;
+}
+
+.field--source {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.field--source .label-row,
+.field--source .upload-hint {
+  flex-shrink: 0;
+}
+
 .header {
-  margin-bottom: 20px;
+  margin-bottom: 1.25em;
 }
 
 .title {
-  margin: 0 0 6px;
-  font-size: 26px;
+  margin: 0 0 0.5em;
+  font-size: 162.5%;
   font-weight: 700;
   color: #0f172a;
+  line-height: 1.25;
+  word-break: break-word;
 }
 
 .subtitle {
   margin: 0;
-  font-size: 14px;
+  font-size: 93.75%;
   color: #64748b;
+  line-height: 1.5;
 }
 
 .field {
-  margin-bottom: 16px;
+  margin-bottom: 1em;
 }
 
 .label {
   display: block;
-  margin-bottom: 6px;
-  font-size: 14px;
+  margin-bottom: 0.35em;
+  font-size: 100%;
   font-weight: 500;
   color: #4b5563;
 }
@@ -1157,42 +1215,45 @@ async function handleExportPdf() {
 .subject-input {
   display: flex;
   align-items: center;
-  padding: 10px 12px;
+  padding-block: 0.65em;
+  padding-inline: 3%;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
   background: #f9fafb;
-  gap: 10px;
+  gap: 2%;
 }
 
 .subject-icon {
-  font-size: 18px;
+  font-size: 112.5%;
 }
 
 .subject-text {
   flex: 1;
   border: none;
   background: transparent;
-  font-size: 15px;
+  font-size: 106.25%;
   outline: none;
 }
 
 .subject-chevron {
-  font-size: 10px;
+  font-size: 62.5%;
   color: #9ca3af;
 }
 
 .pill-group {
   display: inline-flex;
-  padding: 3px;
+  flex-wrap: wrap;
+  padding: 0.2em;
   border-radius: 999px;
   background: #eef2ff;
+  max-width: 100%;
 }
 
 .pill-btn {
   border: none;
   background: transparent;
-  padding: 6px 18px;
-  font-size: 14px;
+  padding: 0.4em 1.1em;
+  font-size: 93.75%;
   color: #6b7280;
   border-radius: 999px;
   cursor: pointer;
@@ -1207,28 +1268,31 @@ async function handleExportPdf() {
 .type-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  row-gap: 0.5em;
+  column-gap: 2%;
 }
 
 .type-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  gap: 2%;
+  padding-block: 0.55em;
+  padding-inline: 2.5%;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
   background: #ffffff;
-  font-size: 14px;
+  font-size: 93.75%;
   color: #4b5563;
   cursor: pointer;
 }
 
 .type-btn .box {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 1em;
+  height: 1em;
+  border-radius: 0.25em;
   border: 1px solid #d1d5db;
   background: #ffffff;
+  flex-shrink: 0;
 }
 
 .type-btn.active {
@@ -1244,18 +1308,25 @@ async function handleExportPdf() {
 
 .label-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 0.5em 3%;
+  flex-wrap: wrap;
+}
+
+.label-row > div:first-child {
+  flex: 1 1 48%;
+  min-width: 0;
 }
 
 .link-btn {
   border: 1px solid rgba(37, 99, 235, 0.25);
   background: rgba(37, 99, 235, 0.08);
   color: #1d4ed8;
-  font-size: 13px;
+  font-size: 87.5%;
   font-weight: 600;
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 0.45em 0.85em;
   border-radius: 999px;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
@@ -1274,83 +1345,110 @@ async function handleExportPdf() {
 
 .source-input {
   width: 100%;
-  margin-top: 6px;
-  padding: 10px 12px;
+  flex: 1 1 0;
+  min-height: 8em;
+  margin-top: 0.5em;
+  padding-block: 0.65em;
+  padding-inline: 3%;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  font-size: 14px;
+  font-size: 93.75%;
   resize: vertical;
-  min-height: 120px;
   outline: none;
+  box-sizing: border-box;
+}
+
+.upload-hint {
+  margin: 0.5em 0 0;
+  font-size: 81.25%;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.error-text {
+  margin: 0 0 0.75em;
+  font-size: 87.5%;
+  color: #dc2626;
+  line-height: 1.45;
+  flex-shrink: 0;
 }
 
 .primary-btn {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 0.65em;
+  flex-shrink: 0;
   border: none;
   border-radius: 12px;
   background: #2563eb;
   color: #ffffff;
-  font-size: 16px;
+  font-size: 106.25%;
   font-weight: 600;
-  padding: 12px 16px;
+  padding: 0.65em 1em;
   cursor: pointer;
   box-shadow: 0 12px 24px rgba(37, 99, 235, 0.4);
+  box-sizing: border-box;
 }
 
 .primary-btn.small {
   width: auto;
   box-shadow: none;
-  padding-inline: 18px;
+  padding-inline: 1.1em;
 }
 
 .count-wrap {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  min-width: 180px;
-  margin-left: 12px;
+  min-width: 0;
+  flex: 0 1 38%;
+  margin-left: 0;
 }
 
 .label.small-label {
-  margin-bottom: 4px;
+  margin-bottom: 0.25em;
 }
 
 .number-input {
   width: 100%;
-  max-width: 260px;
-  padding: 9px 12px;
+  max-width: 100%;
+  padding: 0.5em 0.75em;
   border-radius: 12px;
   border: 1px solid #e2e8f0;
-  font-size: 14px;
+  font-size: 93.75%;
   outline: none;
+  box-sizing: border-box;
 }
 
 .preview-card {
-  flex: 1;
+  flex: 1 1 56%;
   min-height: 0;
+  min-width: 0;
+  width: 0;
+  max-width: 100%;
   background: #ffffff;
-  border-radius: 18px;
-  padding: 20px 22px 24px;
+  border-radius: 1.1em;
+  padding: 3% 3.5% 3.5%;
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
   display: flex;
   flex-direction: column;
-  min-width: 0;
   align-self: stretch;
+  box-sizing: border-box;
 }
 
 .preview-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  gap: 2%;
+  margin-bottom: 3%;
+  flex-wrap: wrap;
 }
 
 .preview-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2%;
   flex-shrink: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -1358,7 +1456,7 @@ async function handleExportPdf() {
 
 .preview-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 118.75%;
   font-weight: 600;
   color: #0f172a;
 }
@@ -1367,9 +1465,9 @@ async function handleExportPdf() {
   border-radius: 999px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  font-size: 13px;
+  font-size: 87.5%;
   color: #4b5563;
-  padding: 6px 14px;
+  padding: 0.45em 0.9em;
   cursor: pointer;
 }
 
@@ -1377,7 +1475,7 @@ async function handleExportPdf() {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 0.15em;
   /* 隐藏滚动条但保留滚动能力 */
   scrollbar-width: none; /* Firefox */
 }
@@ -1399,8 +1497,8 @@ async function handleExportPdf() {
 
 .question-block {
   position: relative;
-  margin-bottom: 18px;
-  padding: 12px 14px 14px;
+  margin-bottom: 4.5%;
+  padding: 3% 3.5% 3.5%;
   border-radius: 12px;
   background: #f9fafb;
 }
@@ -1414,8 +1512,8 @@ async function handleExportPdf() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
+  gap: 3%;
+  margin-bottom: 2.5%;
 }
 
 .question-block-toolbar .q-tag {
@@ -1426,22 +1524,22 @@ async function handleExportPdf() {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 8px;
+  gap: 2%;
 }
 
 .q-edit-btn {
   border-radius: 999px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  font-size: 12px;
+  font-size: 81.25%;
   color: #475569;
-  padding: 5px 12px;
+  padding: 0.35em 0.75em;
   cursor: pointer;
   transition: all 0.15s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 0.35em;
 }
 
 .q-edit-btn:hover {
@@ -1451,9 +1549,9 @@ async function handleExportPdf() {
 
 /* 题目卡片上的「编辑」：更醒目（描边 + 浅蓝底 + 图标） */
 .q-edit-btn-edit {
-  font-size: 13px;
+  font-size: 87.5%;
   font-weight: 700;
-  padding: 8px 16px;
+  padding: 0.5em 1em;
   color: #1d4ed8;
   background: linear-gradient(180deg, #f0f7ff 0%, #e0edff 100%);
   border: 2px solid #93c5fd;
@@ -1487,14 +1585,14 @@ async function handleExportPdf() {
 .edit-fields {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0.5em;
 }
 
 .edit-label {
-  font-size: 12px;
+  font-size: 81.25%;
   font-weight: 600;
   color: #64748b;
-  margin-top: 4px;
+  margin-top: 0.25em;
 }
 
 .edit-textarea,
@@ -1502,9 +1600,9 @@ async function handleExportPdf() {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 14px;
+  border-radius: 0.65em;
+  padding: 0.5em 0.65em;
+  font-size: 93.75%;
   color: #111827;
   background: #fff;
   font-family: inherit;
@@ -1512,33 +1610,33 @@ async function handleExportPdf() {
 
 .edit-textarea {
   resize: vertical;
-  min-height: 72px;
+  min-height: 4.5em;
 }
 
 .edit-option-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 6px;
+  gap: 2%;
+  margin-bottom: 0.35em;
 }
 
 .edit-opt-label {
   font-weight: 700;
   color: #1d4ed8;
-  min-width: 22px;
+  min-width: 1.4em;
 }
 
 .edit-option-row .edit-input {
-  flex: 1 1 160px;
+  flex: 1 1 40%;
   min-width: 0;
 }
 
 .edit-radio {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: 0.25em;
+  font-size: 81.25%;
   color: #64748b;
   cursor: pointer;
   white-space: nowrap;
@@ -1551,7 +1649,7 @@ async function handleExportPdf() {
 
 .tf-edit-row {
   display: flex;
-  gap: 10px;
+  gap: 2.5%;
   flex-wrap: wrap;
 }
 
@@ -1559,8 +1657,8 @@ async function handleExportPdf() {
   border-radius: 999px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  padding: 8px 18px;
-  font-size: 13px;
+  padding: 0.5em 1.1em;
+  font-size: 87.5%;
   font-weight: 600;
   color: #4b5563;
   cursor: pointer;
@@ -1574,13 +1672,13 @@ async function handleExportPdf() {
 
 .q-tag {
   display: inline-flex;
-  padding: 2px 10px;
+  padding: 0.15em 0.65em;
   border-radius: 999px;
   background: #e0edff;
   color: #1d4ed8;
-  font-size: 11px;
+  font-size: 75%;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 2%;
 }
 
 .q-tag.yellow {
@@ -1589,8 +1687,8 @@ async function handleExportPdf() {
 }
 
 .q-text {
-  margin: 0 0 8px;
-  font-size: 14px;
+  margin: 0 0 2%;
+  font-size: 93.75%;
   color: #111827;
 }
 
@@ -1601,12 +1699,12 @@ async function handleExportPdf() {
 }
 
 .option {
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 0.5em 0.65em;
+  border-radius: 0.5em;
   background: #ffffff;
-  font-size: 13px;
+  font-size: 87.5%;
   color: #111827;
-  margin-bottom: 6px;
+  margin-bottom: 0.35em;
 }
 
 .option.active {
@@ -1615,18 +1713,18 @@ async function handleExportPdf() {
 }
 
 .answer-hint {
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  margin-top: 2.5%;
+  padding: 2.5% 3%;
+  border-radius: 0.65em;
   background: #ffffff;
   border: 1px dashed #e5e7eb;
 }
 
 .tf-wrap {
-  margin-top: 10px;
+  margin-top: 2.5%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2%;
   flex-wrap: wrap;
 }
 
@@ -1634,12 +1732,12 @@ async function handleExportPdf() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 12px;
+  padding: 0.4em 0.75em;
   border-radius: 999px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
   color: #4b5563;
-  font-size: 13px;
+  font-size: 87.5%;
   font-weight: 600;
 }
 
@@ -1650,47 +1748,47 @@ async function handleExportPdf() {
 }
 
 .tf-answer {
-  font-size: 13px;
+  font-size: 87.5%;
   color: #6b7280;
 }
 
 .hint-text {
-  margin-top: 8px;
+  margin-top: 2%;
 }
 
 .hint-k {
-  font-size: 12px;
+  font-size: 81.25%;
   font-weight: 700;
   color: #6b7280;
-  margin-bottom: 2px;
+  margin-bottom: 0.15em;
 }
 
 .hint-v {
-  font-size: 13px;
+  font-size: 87.5%;
   color: #111827;
   white-space: pre-wrap;
   line-height: 1.6;
 }
 
 .hint-title {
-  font-size: 12px;
+  font-size: 81.25%;
   font-weight: 600;
   color: #6b7280;
-  margin-bottom: 4px;
+  margin-bottom: 0.25em;
 }
 
 .hint-list {
   margin: 0;
-  padding-left: 18px;
-  font-size: 12px;
+  padding-left: 1.15em;
+  font-size: 81.25%;
   color: #4b5563;
 }
 
 .preview-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 10px;
+  gap: 2%;
+  margin-top: 2.5%;
 }
 
 /* 保存试卷弹窗 */
@@ -1702,50 +1800,54 @@ async function handleExportPdf() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 5%;
+  --qp-base: clamp(13px, 1.05vw, 16px);
+  font-size: var(--qp-base);
+  box-sizing: border-box;
 }
 
 .save-modal-box {
   width: 100%;
-  max-width: 420px;
+  max-width: min(92%, 26em);
   background: #fff;
-  border-radius: 16px;
-  padding: 22px 24px 20px;
+  border-radius: 1em;
+  padding: 1.4em 1.5em 1.25em;
   box-shadow: 0 24px 48px rgba(15, 23, 42, 0.2);
   border: 1px solid #e2e8f0;
+  box-sizing: border-box;
 }
 
 .save-modal-heading {
-  margin: 0 0 8px;
-  font-size: 18px;
+  margin: 0 0 0.5em;
+  font-size: 118.75%;
   font-weight: 700;
   color: #0f172a;
 }
 
 .save-modal-tip {
-  margin: 0 0 16px;
-  font-size: 13px;
+  margin: 0 0 1em;
+  font-size: 87.5%;
   color: #64748b;
   line-height: 1.5;
 }
 
 .save-modal-label {
   display: block;
-  font-size: 13px;
+  font-size: 87.5%;
   font-weight: 600;
   color: #475569;
-  margin-bottom: 6px;
+  margin-bottom: 0.35em;
 }
 
 .save-modal-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 0.65em 0.75em;
+  border-radius: 0.65em;
   border: 1px solid #e2e8f0;
-  font-size: 14px;
+  font-size: 93.75%;
   outline: none;
-  margin-bottom: 20px;
+  margin-bottom: 1.25em;
 }
 
 .save-modal-input:focus {
@@ -1756,13 +1858,13 @@ async function handleExportPdf() {
 .save-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 2.5%;
 }
 
 .save-modal-btn {
-  padding: 9px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: 0.55em 1.1em;
+  border-radius: 0.65em;
+  font-size: 93.75%;
   font-weight: 600;
   cursor: pointer;
   border: none;
@@ -1783,6 +1885,14 @@ async function handleExportPdf() {
   color: #fff;
 }
 
+@media (max-width: 1200px) {
+  .page-wrap.with-preview .config-card {
+    flex: 0 1 42%;
+    min-width: 0;
+    max-width: 48%;
+  }
+}
+
 @media (max-width: 900px) {
   .question-page {
     flex-direction: column;
@@ -1799,7 +1909,7 @@ async function handleExportPdf() {
 
   .sidebar-expand {
     position: fixed;
-    top: 72px;
+    top: max(12px, env(safe-area-inset-top, 0px));
     left: 0;
     z-index: 20;
     margin: 0;
@@ -1807,16 +1917,58 @@ async function handleExportPdf() {
 
   .page-wrap {
     flex-direction: column;
+    align-items: stretch;
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  .page-wrap.with-preview .config-card {
+    flex: none;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
   }
 
   .config-card {
     flex: none;
     width: 100%;
+    max-width: none;
+  }
+
+  .page-wrap:not(.with-preview) .config-card {
+    flex: 1 1 0;
+    min-height: 0;
   }
 
   .preview-card {
-    flex: none;
+    flex: 1 1 auto;
     width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .label-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .count-wrap {
+    width: 100%;
+  }
+
+  .number-input {
+    max-width: none;
+    width: 100%;
+  }
+
+  .type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pill-btn {
+    padding: 0.45em 0.9em;
+    font-size: 87.5%;
   }
 }
 </style>
