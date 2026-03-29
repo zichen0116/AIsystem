@@ -44,6 +44,9 @@ def decode_access_token(token: str) -> Optional[dict]:
             settings.JWT_SECRET_KEY,
             algorithms=[settings.JWT_ALGORITHM]
         )
+        # 拒绝 2FA 临时 token 作为正式访问令牌
+        if payload.get("type") == "2fa_pending":
+            return None
         user_id = payload.get("sub")
         if user_id is None:
             return None
@@ -52,6 +55,44 @@ def decode_access_token(token: str) -> Optional[dict]:
             "user_id": int(user_id),
             "version": version
         }
+    except (JWTError, ValueError):
+        return None
+
+
+def create_2fa_pending_token(user_id: int) -> str:
+    """创建 2FA 临时 token（5 分钟有效，不可用于正常访问）"""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    to_encode = {
+        "sub": str(user_id),
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "2fa_pending"
+    }
+    return jwt.encode(
+        to_encode,
+        settings.JWT_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM
+    )
+
+
+def decode_2fa_pending_token(token: str) -> Optional[dict]:
+    """解码 2FA 临时 token，仅接受 type=2fa_pending 的 token
+
+    Returns:
+        {"user_id": int} 或 None
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        if payload.get("type") != "2fa_pending":
+            return None
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return {"user_id": int(user_id)}
     except (JWTError, ValueError):
         return None
 

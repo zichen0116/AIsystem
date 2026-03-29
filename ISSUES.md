@@ -1,29 +1,18 @@
-Review Findings（按严重级别）
-
-高 上传接口的依赖注入写法会导致 FastAPI 路由声明错误。
-计划里写的是 current_user: CurrentUser = Depends()，但 CurrentUser 本身已经是 Annotated[..., Depends(get_current_user)]，这里再写空 Depends() 是错误用法。
-参考: 2026-03-27-knowledge-base-integration.md:375, auth.py:75
-
-高 Task 10 的“只替换 script + 仅删文件上传块”会让 KnowledgeBase.vue 出现未定义方法，页面编译失败。
-新 script 没有 deleteGlobalTag / createTagFromManager，但模板里这些点击事件仍存在；计划步骤也没要求删掉这些绑定。
-参考: 2026-03-27-knowledge-base-integration.md:1205, 2026-03-27-knowledge-base-integration.md:1470, KnowledgeBase.vue:564, KnowledgeBase.vue:574
-
-高 文件类型链路不闭环：计划允许 .mp3 上传，但后端解析器不支持音频，任务会稳定失败。
-计划里把 mp3 映射到 audio 且前端 accept 了 mp3；但 ParserFactory 没有音频 parser，process_knowledge_asset 会进入失败状态。
-参考: 2026-03-27-knowledge-base-integration.md:225, 2026-03-27-knowledge-base-integration.md:1660, factory.py:51, tasks.py:115
-
-高 标签筛选 SQL 方案大概率在 PostgreSQL 上出错。
-计划里用 @> 但字段定义是 JSON；该操作符通常用于 jsonb，当前写法风险很高。
-参考: 2026-03-27-knowledge-base-integration.md:630, 2026-03-27-knowledge-base-integration.md:152, knowledge_library.py:26
-
-中 验收文档地址写错：计划要求看 /docs，但项目实际是 /doc.html。
-会导致按计划验收时误判“服务异常”。
-参考: 2026-03-27-knowledge-base-integration.md:1746, main.py:32
-
-中 多处命令是 Unix 风格，在当前 Windows PowerShell 环境不可直接执行。
-比如 head / tail 出现在关键验证步骤。
-参考: 2026-03-27-knowledge-base-integration.md:171, 2026-03-27-knowledge-base-integration.md:1490, 2026-03-27-knowledge-base-integration.md:1729
-
-中 OSS 临时文件清理只放在成功路径，异常路径会残留 temp 文件。
-计划把清理代码加在流程尾部，但不是 finally，解析失败/向量化失败时不会执行。
-参考: 2026-03-27-knowledge-base-integration.md:979, 2026-03-27-knowledge-base-integration.md:983
+严重：2FA 临时 token 的隔离假设与现有鉴权实现不一致，存在越权风险
+设计文档要求 2fa_pending token 不能访问其他接口（design.md#L84）。
+但当前鉴权链路里，decode_access_token 并不校验 type，且缺少 version 时默认 1（jwt.py#L50）；get_current_user 直接信任该结果（auth.py#L27）。
+实现文档也未要求改 decode_access_token/get_current_user 去拒绝 type=2fa_pending（plan 只新增 create/decode_2fa_pending_token，见 plan.md#L566）。
+2fa_pending token 被“硬拒绝”在 decode_access_token，还是在 get_current_user 里拒绝（两种都可，但需明确唯一策略）
+高：实现文档中的 schema 定义不完整，后续步骤会引用未定义类型
+实现文档 Task4 的 auth.py schema 示例到 Toggle2FA 就结束（plan.md#L350）。
+但后续又要求在登录 2FA 流程中使用 TwoFARequired / Login2FAVerify（plan.md#L607, plan.md#L536）。
+设计文档明确这两个 schema 应存在（design.md#L117）。
+高：Task 7 的代码块存在污染/重复，按文档复制会产生无效代码
+从 open2FAModal 后开始出现不完整重复片段（如孤立的 method: 'POST'），并整段重复手机号/邮箱/2FA 逻辑（plan.md#L1026, plan.md#L1042, plan.md#L1056）。
+这会直接降低可执行性，且容易引入重复声明。
+中：实现文档有轻微漂移/可维护性问题
+send-email-code 已改成仅 current_user，但 imports 仍包含 SendEmailCodeRequest（plan.md#L410, plan.md#L480）。
+这不是阻塞问题，但会误导执行者。
+低：步骤编号有重复，执行追踪容易混乱
+Task3 出现两个 Step 2（plan.md#L144, plan.md#L151）。
+Task8 在 Step 10 后又回到 Step 9（plan.md#L1631, plan.md#L1638）。
