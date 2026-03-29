@@ -406,6 +406,8 @@ function handleAvatarClick() {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto; /* 只滚页面内容，不滚导航 */
   scrollbar-width: none; /* Firefox */
   -ms-overflow-style: none; /* IE/Edge legacy */
