@@ -13,7 +13,30 @@
       "Bash(git:*)",
       "Bash(wc -l /d/Develop/Project/AIsystem/teacher-platform/src/views/*.vue | sort -rn | head -20)",
       "WebSearch",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "Read(//c/Users/lzc/.claude/plugins/marketplaces/ui-ux-pro-max-skill/**)",
+      "Bash(python3 scripts/search.py \"education SaaS knowledge base dashboard modern clean\" --design-system -p \"AI Teaching Platform\")",
+      "Bash(python scripts/search.py \"education SaaS knowledge base dashboard modern clean\" --design-system -p \"AI Teaching Platform\")",
+      "Bash(python \"src/ui-ux-pro-max/scripts/search.py\" \"education SaaS knowledge base dashboard modern clean\" --design-system -p \"AI Teaching Platform\")",
+      "Bash(python \"src/ui-ux-pro-max/scripts/search.py\" \"card grid knowledge dashboard\" --stack vue)",
+      "Bash(python -c \"import pathlib; lines=pathlib.Path\\(''alembic/versions/20260319_add_question_papers.py''\\).read_text\\(\\).splitlines\\(\\)[:12]; print\\(''\\\\n''.join\\(lines\\)\\)\")",
+      "Bash(python -c \"from app.services.oss_service import upload_file, delete_file, download_to_temp; print\\(''OK''\\)\")",
+      "Bash(alembic upgrade:*)",
+      "Bash(python -m alembic upgrade head)",
+      "Bash(pip install:*)",
+      "Bash(pip show:*)",
+      "Bash(/d/DevelopTools/Python/Python3.12.5/python -c \"import oss2; print\\('oss2 ok'\\)\")",
+      "Read(//d/DevelopTools/Python//**)",
+      "Read(//d/DevelopTools/Python/Python3.12.5/Scripts//**)",
+      "Bash(/d/DevelopTools/Python/Python3.12.5/Scripts/pip install:*)",
+      "Bash(python -m pip show fastapi)",
+      "Bash(python -m site --user-site)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(python:*)",
+      "Bash(/d/DevelopTools/anaconda/python -c \"import oss2; import fastapi; print\\(''''both ok''''\\)\")",
+      "Bash(/d/DevelopTools/anaconda/python -c \"from app.services.oss_service import upload_file, delete_file, download_to_temp; print\\(''OK''\\)\")",
+      "Bash(npm run:*)",
+      "Bash(conda run:*)"
     ]
   }
 }

@@ -104,77 +104,93 @@ class KnowledgeAssetProcessor:
             )
             db.commit()
 
-            file_path = Path(asset.file_path)
-            if not file_path.exists():
-                raise ValueError(f"文件不存在: {file_path}")
+            file_path_str = asset.file_path
+            temp_file = None
 
-            # 2. 解析文件
-            logger.info(f"解析文件: {file_path}")
-            parse_result = asyncio.run(ParserFactory.parse_file(file_path))
+            try:
+                # If file_path is an OSS URL, download to temp first
+                if file_path_str.startswith("http"):
+                    from app.services.oss_service import download_to_temp
+                    temp_file = download_to_temp(file_path_str)
+                    file_path = Path(temp_file)
+                else:
+                    file_path = Path(file_path_str)
+                    if not file_path.exists():
+                        raise ValueError(f"文件不存在: {file_path}")
 
-            if not parse_result or not parse_result.chunks:
-                raise ValueError("文件解析失败或无内容")
+                # 2. 解析文件
+                logger.info(f"解析文件: {file_path}")
+                parse_result = asyncio.run(ParserFactory.parse_file(file_path))
 
-            image_count = len(parse_result.images)
-            logger.info(f"解析完成: {len(parse_result.chunks)} 个文本块, {image_count} 张图片")
+                if not parse_result or not parse_result.chunks:
+                    raise ValueError("文件解析失败或无内容")
 
-            # 3. 文本切片（语义分块 - Semantic Chunking）
-            logger.info("执行语义切片...")
-            # 优先使用语义分块，保持语义完整性
-            split_chunks = split_documents_semantic(
-                parse_result.chunks,
-                breakpoint_threshold_type="percentile",
-                breakpoint_threshold_amount=0.95,
-                min_chunk_size=100
-            )
-            # 如果语义分块失败，回退到递归分块
-            if not split_chunks or len(split_chunks) < 2:
-                logger.warning("语义分块结果不佳，回退到递归分块")
-                split_chunks = split_documents(
+                image_count = len(parse_result.images)
+                logger.info(f"解析完成: {len(parse_result.chunks)} 个文本块, {image_count} 张图片")
+
+                # 3. 文本切片（语义分块 - Semantic Chunking）
+                logger.info("执行语义切片...")
+                split_chunks = split_documents_semantic(
                     parse_result.chunks,
-                    chunk_size=800,
-                    chunk_overlap=150
+                    breakpoint_threshold_type="percentile",
+                    breakpoint_threshold_amount=0.95,
+                    min_chunk_size=100
                 )
-            logger.info(f"切片完成: {len(split_chunks)} 个切片")
+                if not split_chunks or len(split_chunks) < 2:
+                    logger.warning("语义分块结果不佳，回退到递归分块")
+                    split_chunks = split_documents(
+                        parse_result.chunks,
+                        chunk_size=800,
+                        chunk_overlap=150
+                    )
+                logger.info(f"切片完成: {len(split_chunks)} 个切片")
 
-            # 4. 存储到向量库
-            logger.info(f"存储到向量库: {len(split_chunks)} 个切片")
-            vectorstore = VectorStore()
-            doc_count = vectorstore.add_documents(
-                split_chunks,
-                user_id=user_id,
-                library_id=library_id,
-                asset_id=asset_id
-            )
-
-            # 5. 更新数据库状态
-            db.execute(
-                update(KnowledgeAsset)
-                .where(KnowledgeAsset.id == asset_id)
-                .values(
-                    vector_status="completed",
-                    chunk_count=len(split_chunks),
-                    image_count=image_count
+                # 4. 存储到向量库
+                logger.info(f"存储到向量库: {len(split_chunks)} 个切片")
+                vectorstore = VectorStore()
+                doc_count = vectorstore.add_documents(
+                    split_chunks,
+                    user_id=user_id,
+                    library_id=library_id,
+                    asset_id=asset_id
                 )
-            )
-            db.commit()
 
-            logger.info(
-                f"知识资产处理完成: asset_id={asset_id}, "
-                f"原始chunks={len(parse_result.chunks)}, "
-                f"切片后={len(split_chunks)}, "
-                f"images={image_count}, "
-                f"vectors={doc_count}"
-            )
+                # 5. 更新数据库状态
+                db.execute(
+                    update(KnowledgeAsset)
+                    .where(KnowledgeAsset.id == asset_id)
+                    .values(
+                        vector_status="completed",
+                        chunk_count=len(split_chunks),
+                        image_count=image_count
+                    )
+                )
+                db.commit()
 
-            return {
-                "status": "success",
-                "asset_id": asset_id,
-                "original_chunks": len(parse_result.chunks),
-                "split_chunks": len(split_chunks),
-                "images": image_count,
-                "vectors": doc_count
-            }
+                logger.info(
+                    f"知识资产处理完成: asset_id={asset_id}, "
+                    f"原始chunks={len(parse_result.chunks)}, "
+                    f"切片后={len(split_chunks)}, "
+                    f"images={image_count}, "
+                    f"vectors={doc_count}"
+                )
+
+                return {
+                    "status": "success",
+                    "asset_id": asset_id,
+                    "original_chunks": len(parse_result.chunks),
+                    "split_chunks": len(split_chunks),
+                    "images": image_count,
+                    "vectors": doc_count
+                }
+
+            finally:
+                # Clean up temp file if downloaded from OSS (always runs, even on failure)
+                if temp_file:
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
 
         finally:
             db.close()
@@ -339,11 +355,15 @@ def cleanup_library(self, library_id: int):
         )
         assets = result.scalars().all()
 
-        # 3. 删除本地文件
+        # 3. 删除文件（OSS 或本地）
+        from app.services.oss_service import delete_file as oss_delete
         for asset in assets:
             try:
-                if asset.file_path and os.path.exists(asset.file_path):
-                    os.remove(asset.file_path)
+                if asset.file_path:
+                    if asset.file_path.startswith("http"):
+                        oss_delete(asset.file_path)
+                    elif os.path.exists(asset.file_path):
+                        os.remove(asset.file_path)
             except Exception as e:
                 logger.warning(f"删除文件失败: {asset.file_path}, {e}")
 

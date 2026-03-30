@@ -18,7 +18,7 @@
             class="search-item"
             @click="selectNode(node)"
           >
-            <span class="search-dot" :style="{ backgroundColor: node._color }"></span>
+            <span class="search-dot" :style="{ backgroundColor: node._color, boxShadow: `0 0 4px ${node._color}` }"></span>
             <span>{{ node.name }}</span>
             <span class="search-cat">{{ node.category }}</span>
           </div>
@@ -37,7 +37,6 @@ const query = ref('')
 const results = ref([])
 const searchInput = ref(null)
 
-// 注入 graphData 从父组件
 const graphData = inject('graphData', { value: { nodes: [] } })
 const getCategoryColor = inject('getCategoryColor', () => '#fff')
 
@@ -77,33 +76,34 @@ onMounted(() => {
 .search-popover {
   position: fixed;
   bottom: 80px;
-  right: 26%;
-  background: rgba(10, 15, 30, 0.92);
-  border: 1px solid rgba(100, 116, 139, 0.3);
-  border-radius: 10px;
-  padding: 10px;
-  backdrop-filter: blur(12px);
-  min-width: 240px;
+  right: 24%;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+  backdrop-filter: blur(16px);
+  min-width: 260px;
 }
 
 .search-input {
   width: 100%;
-  background: rgba(30, 41, 59, 0.6);
-  border: 1px solid rgba(71, 85, 105, 0.4);
-  border-radius: 6px;
-  padding: 8px 12px;
-  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 9px 14px;
+  color: #f0f0f0;
   font-size: 13px;
   outline: none;
   box-sizing: border-box;
+  transition: border-color 0.2s;
 }
 
 .search-input::placeholder {
-  color: rgba(100, 116, 139, 0.6);
+  color: rgba(255, 255, 255, 0.3);
 }
 
 .search-input:focus {
-  border-color: rgba(96, 165, 250, 0.5);
+  border-color: rgba(255, 107, 74, 0.5);
 }
 
 .search-results {
@@ -117,28 +117,28 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  padding: 7px 10px;
+  border-radius: 6px;
   cursor: pointer;
-  color: rgba(203, 213, 225, 0.9);
+  color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
   transition: background 0.2s;
 }
 
 .search-item:hover {
-  background: rgba(51, 65, 85, 0.4);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .search-dot {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .search-cat {
   margin-left: auto;
-  color: rgba(100, 116, 139, 0.6);
+  color: rgba(255, 255, 255, 0.3);
   font-size: 11px;
 }
 </style>

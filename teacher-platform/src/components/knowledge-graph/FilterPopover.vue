@@ -14,7 +14,7 @@
               :checked="!hiddenCategories.has(cat.name)"
               @change="$emit('toggle', cat.name)"
             />
-            <span class="filter-dot" :style="{ backgroundColor: cat.color }"></span>
+            <span class="filter-dot" :style="{ backgroundColor: cat.color, boxShadow: `0 0 4px ${cat.color}` }"></span>
             <span class="filter-name">{{ cat.name }}</span>
           </label>
         </div>
@@ -44,16 +44,16 @@ defineEmits(['toggle', 'close'])
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(10, 15, 30, 0.92);
-  border: 1px solid rgba(100, 116, 139, 0.3);
-  border-radius: 10px;
-  padding: 12px 16px;
-  backdrop-filter: blur(12px);
-  min-width: 200px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 14px 18px;
+  backdrop-filter: blur(16px);
+  min-width: 220px;
 }
 
 .filter-title {
-  color: rgba(226, 232, 240, 0.9);
+  color: rgba(255, 255, 255, 0.85);
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 10px;
@@ -70,17 +70,17 @@ defineEmits(['toggle', 'close'])
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
   transition: background 0.2s;
 }
 
 .filter-item:hover {
-  background: rgba(51, 65, 85, 0.3);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .filter-item input[type="checkbox"] {
-  accent-color: #60a5fa;
+  accent-color: #ff6b4a;
   width: 14px;
   height: 14px;
 }
@@ -92,7 +92,7 @@ defineEmits(['toggle', 'close'])
 }
 
 .filter-name {
-  color: rgba(203, 213, 225, 0.9);
+  color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
 }
 </style>

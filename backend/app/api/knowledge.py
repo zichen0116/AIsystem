@@ -71,10 +71,30 @@ async def list_knowledge_assets(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100)
 ):
-    """列出知识资产，可按知识库过滤。"""
-    conditions = [KnowledgeAsset.user_id == current_user.id]
+    """列出知识资产，可按知识库过滤。系统公开库对所有用户可见。"""
+    conditions = []
+
     if library_id is not None:
-        conditions.append(KnowledgeAsset.library_id == library_id)
+        # Check if it's a system public library
+        lib_result = await db.execute(
+            select(KnowledgeLibrary).where(
+                KnowledgeLibrary.id == library_id,
+                KnowledgeLibrary.is_deleted == False,
+            )
+        )
+        library = lib_result.scalar_one_or_none()
+        if not library:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识库不存在")
+
+        if library.is_system and library.is_public:
+            # System public library: all users can see assets
+            conditions.append(KnowledgeAsset.library_id == library_id)
+        else:
+            # Personal library: only owner can see
+            conditions.append(KnowledgeAsset.library_id == library_id)
+            conditions.append(KnowledgeAsset.user_id == current_user.id)
+    else:
+        conditions.append(KnowledgeAsset.user_id == current_user.id)
 
     count_result = await db.execute(
         select(func.count()).select_from(KnowledgeAsset).where(*conditions)
@@ -97,146 +117,100 @@ async def list_knowledge_assets(
 async def get_knowledge_graph(
     current_user: CurrentUser,
     library_id: str | None = None,
-    limit: int = 50,
+    limit: int = Query(100, ge=1, le=300),
 ):
-    """返回知识图谱 mock 数据（宋代词人关系网络）"""
-    poets = [
-        {"id": "1", "name": "苏轼", "category": "豪放派"},
-        {"id": "2", "name": "辛弃疾", "category": "豪放派"},
-        {"id": "3", "name": "李清照", "category": "婉约派"},
-        {"id": "4", "name": "柳永", "category": "婉约派"},
-        {"id": "5", "name": "秦观", "category": "婉约派"},
-        {"id": "6", "name": "欧阳修", "category": "文学领袖"},
-        {"id": "7", "name": "王安石", "category": "文学领袖"},
-        {"id": "8", "name": "黄庭坚", "category": "江西诗派"},
-        {"id": "9", "name": "晏殊", "category": "婉约派"},
-        {"id": "10", "name": "晏几道", "category": "婉约派"},
-        {"id": "11", "name": "周邦彦", "category": "格律派"},
-        {"id": "12", "name": "姜夔", "category": "格律派"},
-        {"id": "13", "name": "吴文英", "category": "格律派"},
-        {"id": "14", "name": "陆游", "category": "豪放派"},
-        {"id": "15", "name": "范仲淹", "category": "文学领袖"},
-        {"id": "16", "name": "司马光", "category": "文学领袖"},
-        {"id": "17", "name": "梅尧臣", "category": "江西诗派"},
-        {"id": "18", "name": "苏辙", "category": "豪放派"},
-        {"id": "19", "name": "苏洵", "category": "文学领袖"},
-        {"id": "20", "name": "曾巩", "category": "文学领袖"},
-        {"id": "21", "name": "张先", "category": "婉约派"},
-        {"id": "22", "name": "贺铸", "category": "婉约派"},
-        {"id": "23", "name": "张元干", "category": "豪放派"},
-        {"id": "24", "name": "张孝祥", "category": "豪放派"},
-        {"id": "25", "name": "陈亮", "category": "豪放派"},
-        {"id": "26", "name": "刘克庄", "category": "豪放派"},
-        {"id": "27", "name": "史达祖", "category": "格律派"},
-        {"id": "28", "name": "王沂孙", "category": "格律派"},
-        {"id": "29", "name": "周密", "category": "格律派"},
-        {"id": "30", "name": "蒋捷", "category": "格律派"},
-        {"id": "31", "name": "文天祥", "category": "豪放派"},
-        {"id": "32", "name": "岳飞", "category": "豪放派"},
-        {"id": "33", "name": "李煜", "category": "南唐遗韵"},
-        {"id": "34", "name": "温庭筠", "category": "南唐遗韵"},
-        {"id": "35", "name": "韦庄", "category": "南唐遗韵"},
-        {"id": "36", "name": "冯延巳", "category": "南唐遗韵"},
-        {"id": "37", "name": "朱敦儒", "category": "婉约派"},
-        {"id": "38", "name": "李之仪", "category": "婉约派"},
-        {"id": "39", "name": "陈与义", "category": "江西诗派"},
-        {"id": "40", "name": "吕本中", "category": "江西诗派"},
-        {"id": "41", "name": "郭祥正", "category": "江西诗派"},
-        {"id": "42", "name": "范成大", "category": "田园诗派"},
-        {"id": "43", "name": "杨万里", "category": "田园诗派"},
-        {"id": "44", "name": "刘辰翁", "category": "格律派"},
-        {"id": "45", "name": "张炎", "category": "格律派"},
-        {"id": "46", "name": "刘过", "category": "豪放派"},
-        {"id": "47", "name": "戴复古", "category": "豪放派"},
-        {"id": "48", "name": "叶梦得", "category": "豪放派"},
-        {"id": "49", "name": "赵佶", "category": "南唐遗韵"},
-        {"id": "50", "name": "林逋", "category": "隐逸派"},
-    ]
+    """返回唐宋元明清诗人 mock 图谱数据（总计 100 节点）"""
+    poets_by_dynasty = {
+        "唐": [
+            "李白", "杜甫", "白居易", "王维", "孟浩然", "李商隐", "杜牧", "王昌龄", "岑参", "高适",
+            "韩愈", "柳宗元", "刘禹锡", "元稹", "王勃", "骆宾王", "陈子昂", "贺知章", "张九龄", "李贺",
+        ],
+        "宋": [
+            "苏轼", "辛弃疾", "李清照", "柳永", "秦观", "欧阳修", "王安石", "黄庭坚", "晏殊", "晏几道",
+            "周邦彦", "姜夔", "吴文英", "陆游", "范仲淹", "司马光", "梅尧臣", "苏辙", "苏洵", "曾巩",
+        ],
+        "元": [
+            "元好问", "马致远", "白朴", "关汉卿", "郑光祖", "乔吉", "张可久", "虞集", "揭傒斯", "杨载",
+            "范梈", "萨都剌", "王冕", "赵孟頫", "倪瓒", "顾瑛", "张养浩", "睢景臣", "张鸣善", "鲜于枢",
+        ],
+        "明": [
+            "高启", "杨慎", "于谦", "唐寅", "文征明", "祝允明", "李梦阳", "何景明", "徐祯卿", "王世贞",
+            "李攀龙", "袁宏道", "袁中道", "袁宗道", "归有光", "汤显祖", "戚继光", "刘基", "陈子龙", "杨基",
+        ],
+        "清": [
+            "纳兰性德", "龚自珍", "黄景仁", "袁枚", "郑燮", "王士祯", "查慎行", "纪昀", "赵翼", "蒋士铨",
+            "吴伟业", "钱谦益", "陈维崧", "朱彝尊", "厉鹗", "张问陶", "林则徐", "秋瑾", "谭嗣同", "黄遵宪",
+        ],
+    }
 
-    links = [
-        # 苏轼的核心关系网
-        {"source": "1", "target": "6", "relation": "受知于"},
-        {"source": "1", "target": "7", "relation": "政治对立"},
-        {"source": "1", "target": "8", "relation": "师生"},
-        {"source": "1", "target": "5", "relation": "师生"},
-        {"source": "1", "target": "18", "relation": "兄弟"},
-        {"source": "1", "target": "19", "relation": "父子"},
-        {"source": "1", "target": "16", "relation": "政治同僚"},
-        {"source": "1", "target": "17", "relation": "文学交游"},
-        {"source": "1", "target": "9", "relation": "文学传承"},
-        {"source": "1", "target": "14", "relation": "风格相近"},
-        {"source": "1", "target": "2", "relation": "词风继承"},
-        {"source": "1", "target": "41", "relation": "文学交游"},
-        # 辛弃疾关系网
-        {"source": "2", "target": "25", "relation": "政治同盟"},
-        {"source": "2", "target": "14", "relation": "风格相近"},
-        {"source": "2", "target": "24", "relation": "词风相近"},
-        {"source": "2", "target": "23", "relation": "词风相近"},
-        {"source": "2", "target": "26", "relation": "师生"},
-        {"source": "2", "target": "46", "relation": "交游"},
-        {"source": "2", "target": "32", "relation": "精神继承"},
-        # 婉约派关系
-        {"source": "3", "target": "4", "relation": "同派"},
-        {"source": "3", "target": "5", "relation": "同派"},
-        {"source": "3", "target": "9", "relation": "词风传承"},
-        {"source": "3", "target": "10", "relation": "词风相近"},
-        {"source": "3", "target": "11", "relation": "词风影响"},
-        {"source": "4", "target": "11", "relation": "词法影响"},
-        {"source": "4", "target": "5", "relation": "同期"},
-        {"source": "4", "target": "21", "relation": "词风相近"},
-        {"source": "5", "target": "9", "relation": "受知于"},
-        {"source": "5", "target": "22", "relation": "同期"},
-        # 文学领袖关系
-        {"source": "6", "target": "7", "relation": "政治对立"},
-        {"source": "6", "target": "9", "relation": "文学交游"},
-        {"source": "6", "target": "17", "relation": "诗文革新"},
-        {"source": "6", "target": "20", "relation": "师生"},
-        {"source": "6", "target": "15", "relation": "政治同僚"},
-        {"source": "7", "target": "16", "relation": "政治对立"},
-        {"source": "7", "target": "20", "relation": "文学交游"},
-        # 格律派关系
-        {"source": "11", "target": "12", "relation": "词法传承"},
-        {"source": "11", "target": "13", "relation": "词法传承"},
-        {"source": "12", "target": "13", "relation": "同派"},
-        {"source": "12", "target": "27", "relation": "词风影响"},
-        {"source": "12", "target": "28", "relation": "词风影响"},
-        {"source": "12", "target": "29", "relation": "交游"},
-        {"source": "12", "target": "45", "relation": "词法传承"},
-        {"source": "13", "target": "27", "relation": "同派"},
-        {"source": "13", "target": "44", "relation": "词风影响"},
-        {"source": "28", "target": "29", "relation": "交游"},
-        {"source": "29", "target": "30", "relation": "同期"},
-        {"source": "45", "target": "30", "relation": "同期"},
-        # 晏氏父子
-        {"source": "9", "target": "10", "relation": "父子"},
-        {"source": "9", "target": "6", "relation": "政治同僚"},
-        # 江西诗派
-        {"source": "8", "target": "39", "relation": "同派"},
-        {"source": "8", "target": "40", "relation": "诗派传承"},
-        {"source": "8", "target": "41", "relation": "同派"},
-        {"source": "39", "target": "40", "relation": "同派"},
-        # 南唐遗韵
-        {"source": "33", "target": "34", "relation": "词风影响"},
-        {"source": "33", "target": "35", "relation": "同期"},
-        {"source": "33", "target": "36", "relation": "同期"},
-        {"source": "34", "target": "35", "relation": "同期"},
-        # 田园诗派
-        {"source": "42", "target": "43", "relation": "同期同派"},
-        {"source": "42", "target": "14", "relation": "交游"},
-        # 豪放派补充
-        {"source": "14", "target": "15", "relation": "精神继承"},
-        {"source": "31", "target": "32", "relation": "精神相通"},
-        {"source": "31", "target": "2", "relation": "精神传承"},
-        {"source": "23", "target": "48", "relation": "同期"},
-        {"source": "26", "target": "47", "relation": "同期"},
-        # 隐逸派
-        {"source": "50", "target": "17", "relation": "文学交游"},
-        {"source": "50", "target": "6", "relation": "受知于"},
-        # 跨派交流
-        {"source": "37", "target": "3", "relation": "同期"},
-        {"source": "38", "target": "1", "relation": "文学交游"},
-        {"source": "49", "target": "11", "relation": "赏识"},
+    poets = []
+    dynasty_ids: dict[str, list[str]] = {}
+    name_to_id: dict[str, str] = {}
+    next_id = 1
+
+    for dynasty in ["唐", "宋", "元", "明", "清"]:
+        ids = []
+        for poet_name in poets_by_dynasty[dynasty]:
+            node_id = str(next_id)
+            next_id += 1
+            poets.append({
+                "id": node_id,
+                "name": poet_name,
+                "category": f"{dynasty}代",
+            })
+            ids.append(node_id)
+            name_to_id[poet_name] = node_id
+        dynasty_ids[dynasty] = ids
+
+    links = []
+    edge_seen = set()
+
+    def add_link(a: str, b: str, relation: str):
+        if a == b:
+            return
+        key = (a, b) if a < b else (b, a)
+        if key in edge_seen:
+            return
+        edge_seen.add(key)
+        links.append({"source": a, "target": b, "relation": relation})
+
+    # 每个朝代内部：中心辐射 + 相邻连接 + 次邻连接
+    for dynasty, ids in dynasty_ids.items():
+        hub = ids[0]
+        for i, node_id in enumerate(ids):
+            if i > 0:
+                add_link(hub, node_id, "同代诗坛")
+            if i + 1 < len(ids):
+                add_link(node_id, ids[i + 1], "同代唱和")
+            if i + 2 < len(ids):
+                add_link(node_id, ids[i + 2], "风格影响")
+
+    # 朝代之间的传承主链
+    dynasty_order = ["唐", "宋", "元", "明", "清"]
+    for i in range(len(dynasty_order) - 1):
+        src_dynasty = dynasty_order[i]
+        tgt_dynasty = dynasty_order[i + 1]
+        src_ids = dynasty_ids[src_dynasty]
+        tgt_ids = dynasty_ids[tgt_dynasty]
+        add_link(src_ids[0], tgt_ids[0], "诗学传承")
+        for idx in [2, 6, 10, 14, 18]:
+            add_link(src_ids[idx], tgt_ids[idx], "跨代影响")
+
+    # 一组明确的跨代名家关系
+    explicit_relations = [
+        ("李白", "苏轼", "豪放源流"),
+        ("杜甫", "黄庭坚", "江西诗派渊源"),
+        ("白居易", "袁枚", "性灵诗风"),
+        ("王维", "倪瓒", "诗画同源"),
+        ("韩愈", "欧阳修", "古文传统"),
+        ("柳宗元", "归有光", "散文传承"),
+        ("苏轼", "元好问", "诗文兼擅"),
+        ("辛弃疾", "陈子龙", "家国词风"),
+        ("李清照", "纳兰性德", "婉约传响"),
+        ("陆游", "龚自珍", "爱国诗脉"),
     ]
+    for src_name, tgt_name, relation in explicit_relations:
+        add_link(name_to_id[src_name], name_to_id[tgt_name], relation)
 
     selected_poets = poets[:limit]
     node_ids = {p["id"] for p in selected_poets}
@@ -256,8 +230,6 @@ async def get_knowledge_graph(
     ]
 
     return {"nodes": nodes, "links": filtered_links}
-
-
 @router.get("/{asset_id}/status", response_model=KnowledgeAssetStatusResponse)
 async def get_asset_status(
     asset_id: int,
@@ -319,8 +291,16 @@ async def delete_knowledge_asset(
         vs = VectorStore()
         vs.delete_asset_documents(asset_id=asset_id, library_id=asset.library_id)
     except Exception:
-        pass  # 向量删除失败不阻断 DB 删除
+        pass
+
+    # 删除 OSS 文件
+    try:
+        from app.services.oss_service import delete_file
+        delete_file(asset.file_path)
+    except Exception:
+        pass
 
     await db.delete(asset)
     await db.commit()
     return None
+

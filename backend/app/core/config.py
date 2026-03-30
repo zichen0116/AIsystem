@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     HTML_LLM_MODEL: str = ""
     HTML_UPLOAD_DIR: str = "uploads"
 
+    # ========== 邮件服务（QQ SMTP）==========
+    EMAIL_SMTP_HOST: str = "smtp.qq.com"
+    EMAIL_SMTP_PORT: int = 587
+    EMAIL_SMTP_USER: str = ""
+    EMAIL_SMTP_PASSWORD: str = ""
+    EMAIL_FROM_NAME: str = "AI教学平台"
+
     # ========== 数据分析（Excel -> 图表）==========
     # 上传的 Excel 存放目录（相对于 backend/ 运行目录）
     DATA_ANALYSIS_UPLOAD_DIR: str = "media/data_analysis/uploads"

@@ -41,7 +41,7 @@ const topNodes = computed(() => {
 // 加载数据
 async function loadGraphData() {
   try {
-    const data = await apiRequest('/api/v1/knowledge/graph?limit=50')
+    const data = await apiRequest('/api/v1/knowledge/graph?limit=100')
     kg.initGraph(data)
   } catch (err) {
     console.error('Failed to load knowledge graph:', err)
@@ -70,7 +70,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #050510;
+  background: #000000;
   overflow: hidden;
 }
 

@@ -77,6 +77,9 @@ seaborn>=0.13.0
 PyPDF2==3.0.1
 python-pptx==0.6.23
 
+# 阿里云 OSS
+oss2>=2.18.0
+
 # 知识图谱
 lightrag-hku
 neo4j>=5.0.0

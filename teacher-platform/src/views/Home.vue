@@ -1,11 +1,50 @@
 <script setup>
-import { inject } from 'vue'
+import { computed, inject } from 'vue'
+import { useRouter } from 'vue-router'
+import { useUserStore } from '../stores/user'
 import LottiePlayer from '../components/LottiePlayer.vue'
+
 const openLoginModal = inject('openLoginModal', null)
+const router = useRouter()
+const userStore = useUserStore()
+
+const userInitial = computed(() => {
+  const raw = userStore.userInfo?.name || userStore.userInfo?.phone || ''
+  const s = String(raw).trim()
+  if (!s) return '用'
+  const ch = s[0]
+  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : ch
+})
+
+/** 未登录先去登录页并带回跳；已登录进教师端对应页 */
+function goTeacherPath(path) {
+  if (userStore.isLoggedIn) {
+    router.push(path)
+  } else {
+    router.push({ path: '/login', query: { redirect: path } })
+  }
+}
+
+function goLessonPrep() {
+  goTeacherPath('/lesson-prep')
+}
+
+function handleAvatarClick() {
+  if (!userStore.isLoggedIn) {
+    openLoginModal?.()
+    return
+  }
+  if (userStore.userInfo?.is_admin) {
+    router.push('/admin/profile')
+  } else {
+    router.push('/personal-center')
+  }
+}
 
 const featureCards = [
   {
     id: 'lesson-prep',
+    path: '/lesson-prep',
     icon: '✏️',
     title: '智能备课',
     desc: '借助AI辅助设计完整教案。根据您的教学目标，秒级生成测验、摘要和活动创意。',
@@ -14,6 +53,7 @@ const featureCards = [
   },
   {
     id: 'courseware',
+    path: '/courseware',
     icon: '📁',
     title: '课件管理',
     desc: '在结构化资源库中管理所有教学材料。支持拖拽上传、版本控制，一键分享给学生或同事。',
@@ -22,6 +62,7 @@ const featureCards = [
   },
   {
     id: 'knowledge-base',
+    path: '/knowledge-base',
     icon: '📚',
     title: '知识库',
     desc: '访问海量学术资源、标准化题库和互动教材。用经过验证的教育内容丰富您的课堂。',
@@ -44,8 +85,22 @@ const stats = [
         <span class="logo-icon">📖</span>
         <h1 class="logo">EduPrep</h1>
       </div>
-      <button class="login-btn" type="button" @click="openLoginModal?.()">
+      <button
+        v-if="!userStore.isLoggedIn"
+        class="login-btn"
+        type="button"
+        @click="openLoginModal?.()"
+      >
         <span class="login-btn-text">登录</span>
+      </button>
+      <button
+        v-else
+        type="button"
+        class="user-avatar-btn"
+        :title="(userStore.userInfo?.name || userStore.userInfo?.phone || '个人中心') + ' — 点击进入'"
+        @click="handleAvatarClick"
+      >
+        <span class="avatar-initial">{{ userInitial }}</span>
       </button>
     </header>
 
@@ -62,7 +117,7 @@ const stats = [
               创建精彩内容、管理课程体系，借助AI取回您最宝贵的时间资源。
             </p>
             <div class="hero-btns">
-              <button class="hero-btn-primary" type="button" @click="openLoginModal?.()">
+              <button class="hero-btn-primary" type="button" @click="goLessonPrep">
                 <span class="hero-btn-text">立即备课</span>
               </button>
             </div>
@@ -83,11 +138,19 @@ const stats = [
           <h3 class="section-title">核心功能</h3>
           <p class="section-subtitle">全方位满足您的所有备课需求</p>
           <div class="feature-cards">
-            <div v-for="card in featureCards" :key="card.id" class="feature-card" @click="openLoginModal?.()">
+            <div
+              v-for="card in featureCards"
+              :key="card.id"
+              class="feature-card"
+              role="link"
+              tabindex="0"
+              @click="goTeacherPath(card.path)"
+              @keydown.enter.prevent="goTeacherPath(card.path)"
+            >
               <div class="card-icon" :class="card.color">{{ card.icon }}</div>
               <h4 class="card-title">{{ card.title }}</h4>
               <p class="card-desc">{{ card.desc }}</p>
-              <a class="card-link" :class="card.color">{{ card.link }}</a>
+              <span class="card-link" :class="card.color">{{ card.link }}</span>
             </div>
           </div>
         </section>
@@ -171,6 +234,40 @@ const stats = [
   position: relative;
   z-index: 1;
   letter-spacing: 0.02em;
+}
+
+.user-avatar-btn {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 2px solid rgba(37, 99, 235, 0.22);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #2563eb, #3b82f6);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.32);
+}
+
+.user-avatar-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.38);
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+.user-avatar-btn:active {
+  transform: translateY(0);
+}
+
+.avatar-initial {
+  line-height: 1;
+  user-select: none;
 }
 
 .content-area {
