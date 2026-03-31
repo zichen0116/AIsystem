@@ -11,7 +11,7 @@ celery_app = Celery(
     "ai_teaching",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.tasks"]
+    include=["app.tasks", "app.generators.ppt.celery_tasks"]
 )
 
 # Celery 配置
@@ -24,4 +24,9 @@ celery_app.conf.update(
     task_track_started=True,
     task_time_limit=30 * 60,  # 30 分钟超时
     task_soft_time_limit=25 * 60,
+    task_routes={
+        "app.tasks.*": {"queue": "default"},
+        "banana-slides.*": {"queue": "default"},
+        "app.generators.ppt.celery_tasks.*": {"queue": "default"},
+    },
 )

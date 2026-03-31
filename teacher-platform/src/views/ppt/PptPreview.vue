@@ -2,10 +2,11 @@
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import {
-  getExportUrl, exportEditablePptx, generateImages,
+  exportEditablePptx, generateImages,
   editPageImage, getImageVersions, setCurrentVersion,
   getTask, getExportTaskStatus
 } from '@/api/ppt'
+import { authFetch } from '@/api/http'
 
 const pptStore = usePptStore()
 
@@ -179,10 +180,26 @@ async function handleRegenerateCurrentPage() {
 
 async function handleExport(type) {
   if (!pptStore.projectId) return
-  isExporting.value = false
+  isExporting.value = true
   showExportMenu.value = false
-  const url = getExportUrl(pptStore.projectId, type)
-  window.open(url, '_blank')
+  try {
+    const res = await authFetch(`/api/v1/ppt/projects/${pptStore.projectId}/export/${type}`)
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body?.detail || `导出失败 ${res.status}`)
+    }
+    const blob = await res.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${pptStore.projectData?.title || 'presentation'}.${type}`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000)
+  } catch (e) {
+    console.error(`导出${type}失败:`, e)
+    alert(`导出失败：${e.message}`)
+  } finally {
+    isExporting.value = false
+  }
 }
 
 function handleExportAll() {
@@ -469,8 +486,9 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
           </button>
 
           <div v-if="showExportMenu" class="export-menu">
-            <button class="export-menu-item" @click="handleExportAll">
+            <button class="export-menu-item" :disabled="isExporting" @click="handleExportAll">
               导出 PPTX
+              <span v-if="isExporting" class="export-tag">下载中...</span>
             </button>
             <button class="export-menu-item" @click="handleExportEditable">
               导出可编辑 PPTX（Beta）
@@ -478,8 +496,9 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
               <span v-else-if="editableExportStatus === 'done'" class="export-tag done">✓ 完成</span>
               <span v-else-if="editableExportStatus === 'error'" class="export-tag err">失败</span>
             </button>
-            <button class="export-menu-item" @click="handleExportPdf">
+            <button class="export-menu-item" :disabled="isExporting" @click="handleExportPdf">
               导出 PDF
+              <span v-if="isExporting" class="export-tag">下载中...</span>
             </button>
             <button class="export-menu-item" @click="handleExportImages">
               导出图片（ZIP）

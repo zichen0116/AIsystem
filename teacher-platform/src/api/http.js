@@ -58,6 +58,10 @@ export async function authFetch(path, options = {}) {
 export async function apiRequest(path, { method = 'GET', headers = {}, body } = {}) {
   const url = `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
   const finalHeaders = getAuthHeaders(headers)
+  // 自动为字符串body添加Content-Type（避免FormData需要手动设置）
+  if (typeof body === 'string' && body && !finalHeaders['Content-Type']) {
+    finalHeaders['Content-Type'] = 'application/json'
+  }
 
   const res = await fetch(url, { method, headers: finalHeaders, body })
 

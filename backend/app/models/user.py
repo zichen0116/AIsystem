@@ -76,6 +76,11 @@ class User(Base):
         back_populates="owner",
         cascade="all, delete-orphan"
     )
+    ppt_projects: Mapped[list["PPTProject"]] = relationship(
+        "PPTProject",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<User(id={self.id}, phone={self.phone})>"

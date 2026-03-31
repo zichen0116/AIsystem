@@ -1,11 +1,31 @@
-version: '3.8'
-
 services:
+  # 前端 Vite 应用
+  frontend:
+    build:
+      context: ../teacher-platform
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    environment:
+      # 浏览器访问后端地址
+      - VITE_API_BASE=http://localhost:8000
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - ai-teaching-network
+
   # FastAPI 应用
   app:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        PIP_TRUSTED_HOST: pypi.tuna.tsinghua.edu.cn
+        PIP_RETRIES: "10"
+        PIP_TIMEOUT: "120"
+    image: ai-teaching-backend:dev
     ports:
       - "8000:8000"
     environment:
@@ -64,9 +84,8 @@ services:
 
   # Celery Worker 异步任务处理
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ai-teaching-backend:dev
+    pull_policy: never
     command: celery -A app.celery worker --loglevel=info
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/ai_teaching
@@ -77,6 +96,7 @@ services:
     volumes:
       - media_files:/app/media
     depends_on:
+      - app
       - cache
       - db
     restart: unless-stopped
