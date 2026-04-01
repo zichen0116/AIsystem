@@ -142,36 +142,63 @@ class BananaAIService:
         page: dict,
         theme: Optional[str],
         language: str,
-        detail_level: str
+        detail_level: str,
+        extra_fields_config: Optional[list[dict]] = None
     ) -> str:
         """构建描述生成提示词"""
         title = page.get("title", "")
         points = page.get("points", [])
         points_text = "\n".join(f"- {p}" for p in points)
+        extra_fields_config = extra_fields_config or []
+        extra_field_lines = []
+        extra_output_lines = []
+        for field in extra_fields_config:
+            label = str(field.get("label") or "").strip()
+            key = str(field.get("key") or "").strip()
+            if not label or not key:
+                continue
+            if key == "notes":
+                extra_field_lines.append(f"- {label}：补充给老师看的讲解提醒或表达建议，控制在1句。")
+            else:
+                extra_field_lines.append(f"- {label}：只写该页最关键的1条信息，不要展开。")
+            extra_output_lines.append(f"{label}：...")
 
         theme_hint = f"\n风格主题：{theme}" if theme else ""
 
         detail_instruction = {
-            "concise": "简洁明了，突出核心信息",
-            "default": "适中详细，包含关键细节",
-            "detailed": "详尽全面，包含所有重要内容"
-        }.get(detail_level, "")
+            "concise": "尽量短，每个字段只保留核心信息。",
+            "default": "保持简洁和结构化，每个字段只写1到3条关键信息。",
+            "detailed": "在保持结构化的前提下补充必要信息，每个字段不要超过4条。"
+        }.get(detail_level, "保持简洁和结构化。")
 
-        prompt = f"""为以下PPT页面生成描述内容：
+        prompt = f"""请为这个 PPT 页面生成简洁、结构化的中文页面描述。
 
 页面标题：{title}
 页面要点：
-{points_text}
+{points_text or "- 无"}
 {theme_hint}
-语言：{language}
+输出语言：{language}
 详细程度：{detail_instruction}
 
-请生成一段适合用于AI生成PPT图片的描述文字，包含：
-1. 页面整体布局建议
-2. 视觉元素描述
-3. 配色建议（如适用）
+要求：
+1. 输出必须简洁、结构化，方便逐页阅读和人工编辑。
+2. 不要写成长段，不要堆砌镜头、材质、光影、配色等冗长提示词。
+3. 优先围绕当前页真正要展示的内容，而不是泛泛描述设计感。
+4. 如果是封面页，可以突出标题、副标题和整体气质；普通内容页突出核心知识点与讲解顺序。
+5. 不要返回 JSON，不要加解释开头或结尾。
+6. 每个字段必须独立成段，字段名和冒号必须单独出现，不能把多个字段写到同一行。
 
-直接返回描述文字，不需要JSON格式。"""
+请严格按下面格式输出：
+页面主题内容：
+- 要点1
+- 要点2
+- 要点3
+"""
+
+        if extra_field_lines:
+            prompt += "\n\n额外字段要求：\n" + "\n".join(extra_field_lines)
+            prompt += "\n请在“页面主题内容”后继续输出以下字段（字段名必须完全一致）：\n"
+            prompt += "\n".join(extra_output_lines)
 
         return prompt
 
@@ -187,7 +214,8 @@ class BananaAIService:
         page: dict,
         theme: Optional[str] = None,
         language: str = "zh",
-        detail_level: str = "default"
+        detail_level: str = "default",
+        extra_fields_config: Optional[list[dict]] = None
     ) -> str:
         """
         为单个页面生成描述
@@ -201,7 +229,13 @@ class BananaAIService:
         Returns:
             页面描述文字
         """
-        prompt = self._build_description_prompt(page, theme, language, detail_level)
+        prompt = self._build_description_prompt(
+            page,
+            theme,
+            language,
+            detail_level,
+            extra_fields_config=extra_fields_config,
+        )
         try:
             response = await self._chat(prompt)
             return self._extract_description(response)

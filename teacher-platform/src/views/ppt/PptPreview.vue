@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted, nextTick } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import {
   exportEditablePptx, generateImages,
@@ -65,6 +65,8 @@ const presetTemplates = ref([])
 const userTemplatesList = ref([])
 const templatesLoading = ref(false)
 const currentTemplateUrl = computed(() => pptStore.projectSettings?.template_image_url || null)
+let settingsBtnEl = null
+let refreshBtnEl = null
 
 // -------- 在线编辑 context_images --------
 const contextUseTemplate = ref(false)
@@ -76,10 +78,10 @@ const isRenovationMode = computed(() => pptStore.creationType === 'renovation')
 
 onMounted(async () => {
   if (pptStore.projectId) {
-    await pptStore.fetchPages(pptStore.projectId)
-    syncPages()
-    await loadMaterials()
+    await reloadPreviewData({ includeMaterials: true })
   }
+  await nextTick()
+  bindHeaderQuickActions()
 })
 
 watch(() => pptStore.outlinePages, () => {
@@ -94,8 +96,69 @@ function syncPages() {
     description: p.description,
     imageUrl: p.imageUrl,
     thumbnail: p.imageUrl || null,
-    status: p.imageUrl ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending')
+    status: p.isImageGenerating ? 'generating' : (p.imageUrl ? 'completed' : 'pending')
   }))
+}
+
+function markPagesGenerating(targetPageIds = null) {
+  const targetSet = targetPageIds?.length ? new Set(targetPageIds) : null
+  pages.value = pages.value.map(page => {
+    if (targetSet && !targetSet.has(page.id)) {
+      return page
+    }
+    return {
+      ...page,
+      status: 'generating'
+    }
+  })
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function reloadPreviewData({ includeMaterials = false } = {}) {
+  if (!pptStore.projectId) return
+  await pptStore.fetchPages(pptStore.projectId)
+  syncPages()
+  if (includeMaterials) {
+    await loadMaterials()
+  }
+}
+
+async function waitForImageTask(taskId) {
+  if (!pptStore.projectId || !taskId) return
+  const deadline = Date.now() + 8 * 60 * 1000
+
+  while (Date.now() < deadline) {
+    const task = await getTask(pptStore.projectId, taskId)
+    if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+      await reloadPreviewData()
+      const failureCount = task?.result?.failure_count || 0
+      const failedPages = task?.result?.failed_pages || []
+      if (task.status === 'FAILED' || failureCount > 0) {
+        const firstError = failedPages[0]?.error
+        const baseMsg = task.status === 'FAILED'
+          ? (task?.result?.error || '图片生成失败')
+          : `部分页面生成失败（${failureCount} 页）`
+        throw new Error(firstError ? `${baseMsg}: ${firstError}` : baseMsg)
+      }
+      return
+    }
+
+    await sleep(2500)
+  }
+
+  throw new Error('图片生成超时，请稍后点击刷新查看结果')
+}
+
+async function startImageGeneration(pageIds = null) {
+  if (!pptStore.projectId) return
+  const res = await generateImages(pptStore.projectId, pageIds)
+  markPagesGenerating(pageIds)
+  if (res?.task_id) {
+    await waitForImageTask(res.task_id)
+  }
 }
 
 const completedCount = computed(() => {
@@ -112,6 +175,30 @@ const missingImageCount = computed(() => {
 
 function goToDescription() {
   pptStore.setPhase('description')
+}
+
+function bindHeaderQuickActions() {
+  const headerIconButtons = document.querySelectorAll('.header-right > .icon-btn')
+  settingsBtnEl = headerIconButtons?.[0] || null
+  refreshBtnEl = headerIconButtons?.[2] || null
+
+  if (settingsBtnEl) {
+    settingsBtnEl.addEventListener('click', openProjectSettingsModal)
+  }
+  if (refreshBtnEl) {
+    refreshBtnEl.addEventListener('click', handleRefreshPreview)
+  }
+}
+
+function unbindHeaderQuickActions() {
+  if (settingsBtnEl) {
+    settingsBtnEl.removeEventListener('click', openProjectSettingsModal)
+    settingsBtnEl = null
+  }
+  if (refreshBtnEl) {
+    refreshBtnEl.removeEventListener('click', handleRefreshPreview)
+    refreshBtnEl = null
+  }
 }
 
 function toggleMultiSelectMode() {
@@ -144,38 +231,34 @@ function deselectAllPages() {
 }
 
 async function handleGenerateAll() {
-  if (!pptStore.projectId) return
+  if (!pptStore.projectId || isGenerating.value) return
 
   isGenerating.value = true
   try {
     const pageIds = isMultiSelectMode.value && selectedPageIds.value.size > 0
       ? Array.from(selectedPageIds.value)
       : null
-    await generateImages(pptStore.projectId, pageIds)
-    // Refresh pages after generation
-    await pptStore.fetchPages(pptStore.projectId)
-    syncPages()
+    await startImageGeneration(pageIds)
   } catch (error) {
     console.error('生成图片失败:', error)
+    alert(error?.message || '生成图片失败，请稍后重试')
   } finally {
     isGenerating.value = false
   }
 }
 
 async function handleGeneratePage(index) {
-  if (!pptStore.projectId) return
+  if (!pptStore.projectId || isGenerating.value) return
 
   const page = pages.value[index]
   if (!page || !page.id) return
 
   isGenerating.value = true
   try {
-    await generateImages(pptStore.projectId, [page.id])
-    // Refresh pages after generation
-    await pptStore.fetchPages(pptStore.projectId)
-    syncPages()
+    await startImageGeneration([page.id])
   } catch (error) {
     console.error('生成页面图片失败:', error)
+    alert(error?.message || '生成页面图片失败，请稍后重试')
   } finally {
     isGenerating.value = false
   }
@@ -191,18 +274,50 @@ function handleEditCurrentPage() {
 }
 
 async function handleRegenerateCurrentPage() {
-  if (!pptStore.projectId || !currentPage.value) return
+  if (!pptStore.projectId || !currentPage.value || isGenerating.value) return
 
   isGenerating.value = true
   try {
-    await generateImages(pptStore.projectId, [currentPage.value.id])
-    // Refresh pages after generation
-    await pptStore.fetchPages(pptStore.projectId)
-    syncPages()
+    await startImageGeneration([currentPage.value.id])
   } catch (error) {
     console.error('重新生成页面图片失败:', error)
+    alert(error?.message || '重新生成页面图片失败，请稍后重试')
   } finally {
     isGenerating.value = false
+  }
+}
+
+async function handleRefreshPreview() {
+  if (!pptStore.projectId) return
+  try {
+    await reloadPreviewData({ includeMaterials: true })
+  } catch (error) {
+    console.error('refresh preview failed:', error)
+    alert('刷新失败，请稍后重试')
+  }
+}
+
+async function openProjectSettingsModal() {
+  if (!pptStore.projectId) return
+  const currentAspectRatio = pptStore.projectSettings?.aspect_ratio || '16:9'
+  const input = window.prompt(
+    '设置图片比例（可选：16:9、4:3、1:1、9:16、3:4）',
+    currentAspectRatio
+  )
+  if (!input) return
+  const value = input.trim()
+  const allowed = ['16:9', '4:3', '1:1', '9:16', '3:4']
+  if (!allowed.includes(value)) {
+    alert('比例无效，请输入 16:9、4:3、1:1、9:16 或 3:4')
+    return
+  }
+  try {
+    await updateProjectSettings(pptStore.projectId, { aspect_ratio: value })
+    pptStore.projectSettings = { ...pptStore.projectSettings, aspect_ratio: value }
+    alert('项目设置已保存')
+  } catch (error) {
+    console.error('save preview settings failed:', error)
+    alert('保存设置失败，请稍后重试')
   }
 }
 
@@ -444,6 +559,7 @@ onUnmounted(() => {
   clearInterval(editableExportPollTimer)
   clearInterval(imagesExportPollTimer)
   clearInterval(materialPollTimer)
+  unbindHeaderQuickActions()
 })
 
 // -------- 模板切换逻辑 --------
@@ -465,8 +581,13 @@ async function openTemplateModal() {
 async function selectTemplate(templateUrl) {
   if (!pptStore.projectId || !templateUrl) return
   try {
-    await updateProjectSettings(pptStore.projectId, { template_image_url: templateUrl })
-    pptStore.projectSettings = { ...pptStore.projectSettings, template_image_url: templateUrl }
+    await updateProjectSettings(pptStore.projectId, {
+      template_image_url: templateUrl,
+      template_oss_key: null
+    })
+    const nextSettings = { ...pptStore.projectSettings, template_image_url: templateUrl }
+    delete nextSettings.template_oss_key
+    pptStore.projectSettings = nextSettings
     showTemplateModal.value = false
   } catch (e) {
     console.error('设置模板失败:', e)
@@ -478,7 +599,11 @@ async function handleUploadTemplate(file) {
   if (!pptStore.projectId || !file) return
   try {
     const res = await uploadProjectTemplate(pptStore.projectId, file)
-    pptStore.projectSettings = { ...pptStore.projectSettings, template_image_url: res.url }
+    pptStore.projectSettings = {
+      ...pptStore.projectSettings,
+      template_image_url: res.template_url || res.url,
+      template_oss_key: res.oss_key || pptStore.projectSettings?.template_oss_key
+    }
     // reload template lists
     await openTemplateModal()
   } catch (e) {

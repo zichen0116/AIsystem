@@ -27,6 +27,11 @@ from app.generators.ppt.banana_models import (
     PPTProject, PPTPage, PPTTask, PPTMaterial,
     PPTReferenceFile, PPTSession, UserTemplate, PageImageVersion
 )
+from app.generators.ppt.page_utils import (
+    extract_page_points,
+    get_active_extra_fields_config,
+    split_generated_description,
+)
 from app.generators.ppt.banana_schemas import (
     PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse,
     PPTPageCreate, PPTPageUpdate, PPTPageResponse,
@@ -109,6 +114,37 @@ def _parse_page_ids_param(page_ids: Optional[str]) -> Optional[list[int]]:
         except ValueError:
             raise HTTPException(status_code=400, detail=f"无效的 page_id: {item}")
     return ids or None
+
+
+def _extract_page_points(page: PPTPage) -> list[str]:
+    return extract_page_points(page)
+
+
+def _get_active_extra_fields_config(project: PPTProject) -> list[dict]:
+    return get_active_extra_fields_config(project.settings or {})
+
+
+def _apply_generated_description(page: PPTPage, generated_text: str, extra_fields_config: list[dict]) -> None:
+    parsed = split_generated_description(generated_text, extra_fields_config)
+    page.description = parsed["description"] or generated_text
+
+    config = dict(page.config or {})
+    stored_extra_fields = dict(config.get("extra_fields") or {})
+    managed_keys = [
+        str(field.get("key") or "").strip()
+        for field in extra_fields_config
+        if str(field.get("key") or "").strip() and str(field.get("key") or "").strip() != "notes"
+    ]
+    for key in managed_keys:
+        if key in parsed["extra_fields"]:
+            stored_extra_fields[key] = parsed["extra_fields"][key]
+        else:
+            stored_extra_fields.pop(key, None)
+    config["extra_fields"] = stored_extra_fields
+    page.config = config
+
+    if any(str(field.get("key") or "").strip() == "notes" for field in extra_fields_config):
+        page.notes = parsed["notes"] or None
 
 
 def _download_image_urls_to_local_paths(image_urls: list[str]) -> tuple[str, list[str]]:
@@ -404,10 +440,10 @@ async def update_project_settings(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    settings = dict(project.settings) if project.settings else {}
+    from app.generators.ppt.template_settings import merge_project_settings
+
     update_data = data.model_dump(exclude_unset=True)
-    settings.update(update_data)
-    project.settings = settings
+    project.settings = merge_project_settings(project.settings, update_data)
 
     await db.commit()
     await db.refresh(project)
@@ -432,14 +468,11 @@ async def create_page(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    import json as _json
-    # 如果前端传了 points，序列化为 description
     description = data.description
-    if data.points is not None and description is None:
-        description = _json.dumps(data.points, ensure_ascii=False)
 
-    # 如果前端传了 part，合并进 config
     config = dict(data.config or {})
+    if data.points is not None:
+        config["points"] = data.points
     if data.part is not None:
         config["part"] = data.part
 
@@ -501,19 +534,22 @@ async def update_page(
 
     update_data = data.model_dump(exclude_unset=True)
 
-    # 处理 points 字段：序列化为 description
     if "points" in update_data:
         points = update_data.pop("points")
-        if points is not None and "description" not in update_data:
-            import json as _json
-            update_data["description"] = _json.dumps(points, ensure_ascii=False)
+        config = dict(update_data.get("config") or page.config or {})
+        if points is not None:
+            config["points"] = points
+        else:
+            config.pop("points", None)
+        update_data["config"] = config
 
-    # 处理 part 字段：合并进 config
     if "part" in update_data:
         part = update_data.pop("part")
-        config = dict(page.config or {})
+        config = dict(update_data.get("config") or page.config or {})
         if part is not None:
             config["part"] = part
+        else:
+            config.pop("part", None)
         update_data["config"] = config
 
     for field, value in update_data.items():
@@ -711,21 +747,54 @@ Constraints:
                         existing = await db.execute(select(PPTPage).where(PPTPage.project_id == project_id))
                         for ep in existing.scalars().all():
                             await db.delete(ep)
+                        await db.commit()
+                        yield f"event: message\ndata: {json.dumps({'type': 'reset_pages'})}\n\n"
+
+                        total_pages = len(pages_data)
                         for i, page_data in enumerate(pages_data):
                             cfg = {}
                             if page_data.get("part"):
                                 cfg["part"] = page_data["part"]
+                            if page_data.get("points") is not None:
+                                cfg["points"] = page_data.get("points", [])
+
                             page = PPTPage(
                                 project_id=project_id,
                                 page_number=i + 1,
                                 title=page_data.get("title", f"第{i+1}页"),
-                                description=json.dumps(page_data.get("points", []), ensure_ascii=False),
                                 config=cfg
                             )
                             db.add(page)
-                        await db.commit()
-                except Exception:
-                    pass  # 解析失败不影响流式返回
+                            await db.commit()
+                            await db.refresh(page)
+
+                            page_event = {
+                                "type": "page",
+                                "page": {
+                                    "id": page.id,
+                                    "page_number": page.page_number,
+                                    "title": page.title,
+                                    "points": cfg.get("points", []),
+                                    "part": cfg.get("part", "")
+                                }
+                            }
+                            yield f"event: message\ndata: {json.dumps(page_event, ensure_ascii=False)}\n\n"
+
+                            progress_event = {
+                                "type": "progress",
+                                "current": i + 1,
+                                "total": total_pages
+                            }
+                            yield f"event: message\ndata: {json.dumps(progress_event)}\n\n"
+                    else:
+                        error_data = json.dumps({"type": "error", "message": "AI返回的大纲格式无法解析，请重试"})
+                        yield f"event: message\ndata: {error_data}\n\n"
+                        return
+                except Exception as parse_err:
+                    logger.warning("大纲JSON解析失败: %s\n内容: %s", parse_err, outline_content[:500])
+                    error_data = json.dumps({"type": "error", "message": f"大纲解析失败: {str(parse_err)}"})
+                    yield f"event: message\ndata: {error_data}\n\n"
+                    return
 
             yield f"event: message\ndata: {json.dumps({'type': 'done'})}\n\n"
 
@@ -741,6 +810,7 @@ Constraints:
 @router.post("/projects/{project_id}/descriptions/generate")
 async def generate_descriptions(
     project_id: int,
+    page_ids: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -757,35 +827,42 @@ async def generate_descriptions(
 
     banana_svc = get_banana_service()
     language = "zh"
+    parsed_page_ids = _parse_page_ids_param(page_ids)
+    extra_fields_config = _get_active_extra_fields_config(project)
 
-    # 获取页面列表
-    result = await db.execute(
+    query = (
         select(PPTPage)
         .where(PPTPage.project_id == project_id)
         .order_by(PPTPage.page_number)
     )
+    if parsed_page_ids:
+        query = query.where(PPTPage.id.in_(parsed_page_ids))
+
+    result = await db.execute(query)
     pages = result.scalars().all()
 
     for page in pages:
+        page.is_description_generating = True
+    await db.commit()
+
+    for page in pages:
         try:
-            # Read points from description JSON field
-            points = []
-            if page.description:
-                try:
-                    parsed = json.loads(page.description)
-                    if isinstance(parsed, list):
-                        points = parsed
-                except (json.JSONDecodeError, ValueError):
-                    pass
-            page_data = {"id": page.id, "title": page.title or "", "points": points}
+            page_data = {
+                "id": page.id,
+                "title": page.title or "",
+                "points": _extract_page_points(page),
+            }
             description = await banana_svc.generate_description(
                 page_data,
                 theme=project.theme,
-                language=language
+                language=language,
+                extra_fields_config=extra_fields_config,
             )
-            page.description = description
+            _apply_generated_description(page, description, extra_fields_config)
         except Exception as e:
             page.description = f"描述生成失败: {str(e)}"
+        finally:
+            page.is_description_generating = False
 
     await db.commit()
     return {"status": "completed", "pages": len(pages)}
@@ -812,46 +889,44 @@ async def generate_descriptions_stream(
     banana_svc = get_banana_service()
     language = data.language or "zh"
     detail_level = data.detail_level or "default"
+    page_ids = data.page_ids or []
+    extra_fields_config = _get_active_extra_fields_config(project)
 
     async def event_generator():
-        # 获取页面列表
-        result = await db.execute(
+        query = (
             select(PPTPage)
             .where(PPTPage.project_id == project_id)
             .order_by(PPTPage.page_number)
         )
+        if page_ids:
+            query = query.where(PPTPage.id.in_(page_ids))
+
+        result = await db.execute(query)
         pages = result.scalars().all()
         total = len(pages)
 
+        for page in pages:
+            page.is_description_generating = True
+        await db.commit()
+
         for idx, page in enumerate(pages):
             try:
-                # Read points from description JSON field
-                points = []
-                if page.description:
-                    try:
-                        parsed_pts = json.loads(page.description)
-                        if isinstance(parsed_pts, list):
-                            points = parsed_pts
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-
-                # 构建页面数据
                 page_data = {
                     "id": page.id,
                     "title": page.title or "",
-                    "points": points
+                    "points": _extract_page_points(page)
                 }
 
-                # 调用 banana_service 生成描述
                 description = await banana_svc.generate_description(
                     page_data,
                     theme=project.theme,
                     language=language,
-                    detail_level=detail_level
+                    detail_level=detail_level,
+                    extra_fields_config=extra_fields_config,
                 )
 
-                # 更新数据库
-                page.description = description
+                _apply_generated_description(page, description, extra_fields_config)
+                page.is_description_generating = False
                 await db.commit()
 
                 event_data = json.dumps({
@@ -864,6 +939,8 @@ async def generate_descriptions_stream(
                 yield f"event: message\ndata: {event_data}\n\n"
 
             except Exception as e:
+                page.is_description_generating = False
+                await db.commit()
                 event_data = json.dumps({
                     "type": "error",
                     "page_id": page.id,
@@ -905,8 +982,9 @@ async def generate_images(
     db.add(task)
     await db.commit()
 
-    from app.generators.ppt.celery_tasks import generate_images_task
-    generate_images_task.delay(project_id=project_id, page_ids=parsed_page_ids, task_id_str=task_id)
+    from app.generators.ppt.celery_tasks import generate_images_async
+    import asyncio
+    asyncio.create_task(generate_images_async(project_id=project_id, page_ids=parsed_page_ids, task_id_str=task_id))
 
     return {"task_id": task_id, "status": "processing"}
 
@@ -944,15 +1022,11 @@ async def refine_outline(
 
     outline_pages = []
     for p in pages:
-        points = []
-        if p.description:
-            try:
-                parsed_pts = json.loads(p.description)
-                if isinstance(parsed_pts, list):
-                    points = parsed_pts
-            except (json.JSONDecodeError, ValueError):
-                pass
-        outline_pages.append({"id": p.id, "title": p.title or "", "points": points})
+        outline_pages.append({
+            "id": p.id,
+            "title": p.title or "",
+            "points": _extract_page_points(p),
+        })
 
     try:
         # 调用 AI 修改大纲
@@ -968,7 +1042,9 @@ async def refine_outline(
                 if page.id == refined.get("id"):
                     page.title = refined.get("title", page.title)
                     if "points" in refined:
-                        page.description = json.dumps(refined["points"], ensure_ascii=False)
+                        config = dict(page.config or {})
+                        config["points"] = refined["points"] or []
+                        page.config = config
                     break
 
         await db.commit()
@@ -1897,11 +1973,14 @@ async def generate_outline_from_dialog(
         # 创建页面
         pages = outline_data.get("pages", [])
         for i, page_data in enumerate(pages):
+            config = {}
+            if page_data.get("points") is not None:
+                config["points"] = page_data.get("points", [])
             page = PPTPage(
                 project_id=project_id,
                 page_number=i + 1,
                 title=page_data.get("title", f"第{i+1}页"),
-                description=json.dumps(page_data.get("points", []), ensure_ascii=False)
+                config=config
             )
             db.add(page)
 

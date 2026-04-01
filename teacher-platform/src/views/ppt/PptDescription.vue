@@ -136,11 +136,13 @@ function syncPages() {
       title: p.title,
       description: displayDesc,
       status: displayDesc ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending'),
+      config: p.config || {},
       extraFields: {
-        visual_element: p.visual_element || '',
-        visual_focus: p.visual_focus || '',
-        layout: p.layout || '',
-        notes: p.notes || ''
+        visual_element: p.extraFields?.visual_element || '',
+        visual_focus: p.extraFields?.visual_focus || '',
+        layout: p.extraFields?.layout || '',
+        notes: p.notes || p.extraFields?.notes || '',
+        ...(p.extraFields || {})
       }
     }
   })
@@ -224,9 +226,16 @@ async function saveCard(pageIndex) {
   // Save to backend
   if (pptStore.projectId && page.id <= 1000000000) {
     try {
+      const nextConfig = {
+        ...(page.config || {}),
+        extra_fields: Object.fromEntries(
+          Object.entries(editExtraFields.value || {}).filter(([key]) => key !== 'notes')
+        )
+      }
       await pptStore.updatePage(pptStore.projectId, page.id, {
         description: editDescription.value,
-        ...editExtraFields.value
+        notes: editExtraFields.value?.notes || '',
+        config: nextConfig
       })
     } catch (e) {
       console.error('保存描述失败:', e)
@@ -263,6 +272,47 @@ function exportOutline(pageIndex) {
   URL.revokeObjectURL(url)
 }
 
+function exportAllDescriptions() {
+  if (!pages.value.length) return
+
+  const activeFields = extraFields.value.filter(field => field.active)
+  const timestamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19)
+  const lines = [
+    '# 页面描述导出',
+    '',
+    `导出时间：${new Date().toLocaleString()}`,
+    `总页数：${pages.value.length}`,
+    ''
+  ]
+
+  for (const page of pages.value) {
+    lines.push(`## 第${page.pageNumber}页 ${page.title || ''}`.trim())
+    lines.push('')
+    lines.push('### 页面主题内容')
+    lines.push('')
+    lines.push(page.description || '（暂无描述）')
+    lines.push('')
+
+    for (const field of activeFields) {
+      lines.push(`### ${field.label}`)
+      lines.push('')
+      lines.push(page.extraFields?.[field.key] || '（未设置）')
+      lines.push('')
+    }
+  }
+
+  const markdown = lines.join('\n')
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `页面描述_${timestamp}.md`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 async function regeneratePage(pageIndex) {
   const page = pages.value[pageIndex]
   if (!page || !page.id || !pptStore.projectId) return
@@ -271,7 +321,8 @@ async function regeneratePage(pageIndex) {
   try {
     await pptStore.generateDescriptionsStream(pptStore.projectId, {
       language: 'zh',
-      detail_level: detailLevel.value
+      detail_level: detailLevel.value,
+      page_ids: [page.id]
     })
     await pptStore.fetchPages(pptStore.projectId)
     syncPages()
@@ -483,12 +534,12 @@ function getFieldIcon(iconType) {
           </div>
         </div>
 
-        <button class="action-btn secondary">
+        <button class="action-btn secondary" :disabled="pages.length === 0" @click="exportAllDescriptions">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
           </svg>
-          导入/导出
+          导出描述
         </button>
 
         <span class="page-count">{{ completedCount }} / {{ pages.length }} 页已完成</span>
@@ -1266,6 +1317,8 @@ function getFieldIcon(iconType) {
   font-size: 13px;
   line-height: 1.6;
   color: #64748b;
+  white-space: pre-line;
+  word-break: break-word;
 }
 
 .desc-content p {

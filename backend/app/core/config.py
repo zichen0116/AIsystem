@@ -7,6 +7,10 @@ from pathlib import Path
 import os
 
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE_PATH = BACKEND_ROOT / ".env"
+
+
 class Settings(BaseSettings):
     """应用配置"""
 
@@ -44,7 +48,7 @@ class Settings(BaseSettings):
 
     # 使用 model_config 替代 class Config，并设置 extra="ignore"
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_FILE_PATH),
         env_file_encoding="utf-8",
         extra="ignore"
     )

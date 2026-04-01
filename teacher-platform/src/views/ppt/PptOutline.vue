@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { usePptStore } from '@/stores/ppt'
-import { generateOutlineStream, createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
+import { createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
 
 const pptStore = usePptStore()
 
@@ -12,6 +12,8 @@ const isRefining = ref(false)
 const selectedCardId = ref(null)
 const showRequirements = ref(false)
 const requirements = ref('')
+const generateError = ref('')
+const refineSuccess = ref(false)
 const isPanelOpen = ref(true)
 const isInputDirty = ref(false)
 const saveTimer = ref(null)
@@ -108,15 +110,27 @@ function buildIntentPrompt(intent) {
 }
 
 async function handleGenerateOutline(prompt) {
-  if (!prompt || !prompt.trim()) return
+  generateError.value = ''
+  // 追加 requirements 额外约束
+  const extra = requirements.value.trim()
+  const fullPrompt = extra ? `${prompt}\n补充要求：${extra}` : prompt
+
+  if (!fullPrompt.trim()) {
+    generateError.value = '请先输入PPT构想或在对话阶段完成意图确认'
+    return
+  }
 
   isGenerating.value = true
   try {
-    await pptStore.generateOutlineStream(pptStore.projectId, prompt)
+    await pptStore.generateOutlineStream(pptStore.projectId, fullPrompt)
     await pptStore.fetchPages(pptStore.projectId)
     syncOutlinePages()
+    if (outlinePages.value.length === 0) {
+      generateError.value = 'AI未能生成大纲，请检查构想内容后重试'
+    }
   } catch (error) {
     console.error('生成大纲失败:', error)
+    generateError.value = error.message || '生成大纲失败，请重试'
   } finally {
     isGenerating.value = false
   }
@@ -126,10 +140,14 @@ async function handleRefineOutline() {
   if (!topAiPrompt.value.trim()) return
 
   isRefining.value = true
+  refineSuccess.value = false
   try {
     await refineOutline(pptStore.projectId, topAiPrompt.value)
     await pptStore.fetchPages(pptStore.projectId)
     syncOutlinePages()
+    topAiPrompt.value = ''
+    refineSuccess.value = true
+    setTimeout(() => { refineSuccess.value = false }, 3000)
   } catch (error) {
     console.error('优化大纲失败:', error)
   } finally {
@@ -241,6 +259,64 @@ async function saveChanges() {
   } catch (e) {
     console.error('重排页面失败:', e)
   }
+}
+
+function applyActiveEditDraft() {
+  if (!editingCardId.value) return
+  const idx = outlinePages.value.findIndex(p => p.id === editingCardId.value)
+  if (idx === -1) return
+  const points = editPoints.value.split('\n').filter(p => p.trim())
+  outlinePages.value[idx].title = editTitle.value
+  outlinePages.value[idx].points = points
+  outlinePages.value[idx].part = editPart.value
+  outlinePages.value[idx].outline_content = { title: editTitle.value, points }
+  editingCardId.value = null
+}
+
+async function exportOutline() {
+  applyActiveEditDraft()
+  await saveChanges()
+
+  if (!outlinePages.value.length) return
+
+  const lines = [
+    '# PPT大纲导出',
+    '',
+    `导出时间：${new Date().toLocaleString()}`,
+    `总页数：${outlinePages.value.length}`,
+    ''
+  ]
+
+  for (const group of groupedPages.value) {
+    if (group.part) {
+      lines.push(`## ${group.part}`)
+      lines.push('')
+    }
+
+    for (const page of group.pages) {
+      lines.push(`### 第${page.pageNumber}页 ${page.title || '未命名'}`)
+      if (Array.isArray(page.points) && page.points.length > 0) {
+        for (const point of page.points) {
+          lines.push(`- ${point}`)
+        }
+      } else {
+        lines.push('- （暂无要点）')
+      }
+      lines.push('')
+    }
+  }
+
+  const markdown = lines.join('\n')
+  const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const safeTitle = (pptStore.projectData?.title || '大纲').replace(/[<>:"/\\|?*]/g, '')
+  link.href = url
+  link.download = `${safeTitle}_大纲.md`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }
 
 // Drag and drop
@@ -355,6 +431,16 @@ async function saveCard(index) {
           </div>
         </div>
 
+        <!-- AI优化成功提示 -->
+        <Transition name="fade-toast">
+          <div v-if="refineSuccess" class="refine-success-toast">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            AI优化完成
+          </div>
+        </Transition>
+
         <!-- 右侧：下一步按钮 -->
         <div class="header-right">
           <button class="next-btn" @click="goToDescription">
@@ -379,19 +465,19 @@ async function saveCard(index) {
         <button
           class="action-btn secondary"
           :disabled="isGenerating"
-          @click="outlinePages.length === 0 ? handleGenerateOutline(buildIntentPrompt(pptStore.confirmedIntent || {})) : handleGenerateOutline(topAiPrompt || ideaPrompt)"
+          @click="handleGenerateOutline(topAiPrompt || buildIntentPrompt(pptStore.confirmedIntent || {}) || ideaPrompt)"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
           </svg>
           {{ isGenerating ? '生成中...' : outlinePages.length === 0 ? '自动生成大纲' : '重新生成' }}
         </button>
-        <button class="action-btn secondary" @click="saveChanges">
+        <button class="action-btn secondary" :disabled="outlinePages.length === 0 || isGenerating" @click="exportOutline">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
           </svg>
-          保存
+          导出大纲
         </button>
         <span class="page-count">{{ pageCount }} 页</span>
       </div>
@@ -482,7 +568,22 @@ async function saveCard(index) {
 
       <!-- 右侧大纲列表 -->
       <div class="right-panel">
-        <div v-if="outlinePages.length === 0 && !isGenerating" class="empty-state">
+        <!-- 错误提示 -->
+        <div v-if="generateError" class="generate-error-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          <span>{{ generateError }}</span>
+          <button class="error-close-btn" @click="generateError = ''">✕</button>
+        </div>
+
+        <!-- 生成中状态（无页面时） -->
+        <div v-if="isGenerating && outlinePages.length === 0" class="generating-state">
+          <div class="generating-spinner"></div>
+          <p>AI 正在生成大纲，请稍候...</p>
+        </div>
+
+        <div v-else-if="outlinePages.length === 0" class="empty-state">
           <div class="empty-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="40" height="40">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -494,6 +595,9 @@ async function saveCard(index) {
         </div>
 
         <div v-else class="outline-list">
+          <div v-if="isGenerating" class="streaming-progress">
+            正在逐页生成大纲：{{ Math.max(pptStore.generationProgress.completed || 0, outlinePages.length) }} / {{ pptStore.generationProgress.total || '?' }}
+          </div>
           <template v-for="group in groupedPages" :key="group.part || 'no-part'">
             <!-- 分组标题 -->
             <div v-if="group.part" class="part-header">{{ group.part }}</div>
@@ -1075,6 +1179,16 @@ async function saveCard(index) {
   gap: 12px;
 }
 
+.streaming-progress {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  color: #4338ca;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 .outline-card {
   background: white;
   border-radius: 12px;
@@ -1336,6 +1450,81 @@ async function saveCard(index) {
 
 .save-btn:hover {
   background: #2563eb;
+}
+
+/* Error Banner */
+.generate-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #dc2626;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.generate-error-banner span {
+  flex: 1;
+}
+
+.error-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #dc2626;
+  font-size: 14px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+/* Refine Success Toast */
+.refine-success-toast {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #16a34a;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.fade-toast-enter-active,
+.fade-toast-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.fade-toast-enter-from,
+.fade-toast-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* Generating State */
+.generating-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #64748b;
+}
+
+.generating-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Empty State */

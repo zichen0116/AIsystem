@@ -13,6 +13,8 @@ import io
 import re
 import logging
 import asyncio
+import urllib.request
+import base64
 from abc import ABC, abstractmethod
 from typing import Optional, List, Generator, AsyncGenerator
 
@@ -30,6 +32,47 @@ def strip_think_tags(text: str) -> str:
     if not text:
         return text
     return re.sub(r'<think>.*?</think>\s*', '', text, flags=re.DOTALL).strip()
+
+
+def _decode_data_uri_image(data_uri: str) -> Optional[bytes]:
+    """Decode data:image/...;base64,... URI into bytes."""
+    if not data_uri or not data_uri.startswith("data:image/"):
+        return None
+    try:
+        _, b64_data = data_uri.split(",", 1)
+        return base64.b64decode(b64_data)
+    except Exception:
+        return None
+
+
+def _download_http_bytes(url: str) -> Optional[bytes]:
+    """Download bytes from a HTTP/HTTPS URL."""
+    if not url or not (url.startswith("http://") or url.startswith("https://")):
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return resp.read()
+    except Exception:
+        return None
+
+
+def _extract_image_url_from_text(text: str) -> Optional[str]:
+    """Extract image URL or data URI from text/markdown."""
+    if not text:
+        return None
+
+    md_match = re.search(r"!\[[^\]]*\]\(([^)]+)\)", text)
+    if md_match:
+        return md_match.group(1).strip()
+
+    data_uri_match = re.search(r"(data:image/[^;]+;base64,[A-Za-z0-9+/=]+)", text)
+    if data_uri_match:
+        return data_uri_match.group(1).strip()
+
+    url_match = re.search(r"(https?://[^\s)\"']+)", text)
+    if url_match:
+        return url_match.group(1).strip()
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -228,9 +271,10 @@ class GenAIImageProvider(ImageProvider):
             "response_modalities": ["IMAGE", "TEXT"],
         }
         ar = _ASPECT_RATIO_MAP.get(aspect_ratio, "16:9")
-        config_params["image_generation_config"] = types.ImageGenerationConfig(
+        image_size = resolution if resolution in _RESOLUTION_MAP else "2K"
+        config_params["image_config"] = types.ImageConfig(
             aspect_ratio=ar,
-            number_of_images=1,
+            image_size=image_size,
         )
         if enable_thinking and thinking_budget > 0:
             config_params["thinking_config"] = types.ThinkingConfig(thinking_budget=thinking_budget)
@@ -241,26 +285,113 @@ class GenAIImageProvider(ImageProvider):
             config=types.GenerateContentConfig(**config_params),
         )
 
-        last_image: Optional[PILImage.Image] = None
-        for part in (response.parts or []):
+        image_bytes = self._extract_image_from_generate_content_response(response)
+        if image_bytes:
+            return image_bytes
+
+        # 某些模型/中转会通过 generate_images 返回结构，作为兼容回退
+        # 注意：该接口不支持参考图，因此仅在纯文生图时回退。
+        if not ref_images:
             try:
-                if hasattr(part, 'inline_data') and part.inline_data and part.inline_data.data:
-                    img = PILImage.open(io.BytesIO(part.inline_data.data))
-                    last_image = img
-                elif hasattr(part, 'file_data') and part.file_data:
-                    import base64
-                    raw = base64.b64decode(part.file_data.file_uri)
-                    img = PILImage.open(io.BytesIO(raw))
-                    last_image = img
+                gen_images_resp = self.client.models.generate_images(
+                    model=self.model,
+                    prompt=prompt,
+                    config=types.GenerateImagesConfig(
+                        aspect_ratio=ar,
+                        image_size=image_size,
+                        number_of_images=1,
+                    ),
+                )
+                image_bytes = self._extract_image_from_generate_images_response(gen_images_resp)
+                if image_bytes:
+                    return image_bytes
             except Exception as e:
-                logger.warning(f"GenAI 图片解析失败: {e}")
+                logger.warning("GenAI generate_images 回退失败 model=%s: %s", self.model, e)
 
-        if last_image is None:
-            raise ValueError("GenAI 响应中未找到图片")
+        text_preview = ((getattr(response, "text", None) or "")[:240]).replace("\n", " ")
+        raise ValueError(f"GenAI响应中未找到图片（model={self.model}，text={text_preview}）")
 
-        buf = io.BytesIO()
-        last_image.save(buf, format="PNG")
-        return buf.getvalue()
+    def _extract_image_from_generate_content_response(self, response) -> Optional[bytes]:
+        # 1) response.parts
+        response_parts = list(response.parts or [])
+        # 2) response.candidates[].content.parts
+        if not response_parts:
+            for candidate in (response.candidates or []):
+                candidate_content = getattr(candidate, "content", None)
+                response_parts.extend(getattr(candidate_content, "parts", None) or [])
+
+        last_image_bytes = None
+        for part in response_parts:
+            image_bytes = self._extract_image_from_part(part)
+            if image_bytes:
+                last_image_bytes = image_bytes
+
+        if last_image_bytes:
+            return last_image_bytes
+
+        # 3) 从文本中提取 url/data-uri
+        text = getattr(response, "text", None) or ""
+        text_image_url = _extract_image_url_from_text(text)
+        if text_image_url:
+            return _decode_data_uri_image(text_image_url) or _download_http_bytes(text_image_url)
+
+        return None
+
+    def _extract_image_from_part(self, part) -> Optional[bytes]:
+        from PIL import Image as PILImage
+
+        # as_image() 在新版 SDK 中可直接取图
+        if hasattr(part, "as_image"):
+            try:
+                maybe_image = part.as_image()
+                if maybe_image is not None:
+                    if isinstance(maybe_image, PILImage.Image):
+                        buf = io.BytesIO()
+                        maybe_image.save(buf, format="PNG")
+                        return buf.getvalue()
+                    image_bytes = getattr(maybe_image, "image_bytes", None)
+                    if image_bytes:
+                        return bytes(image_bytes)
+                    pil_image = getattr(maybe_image, "_pil_image", None)
+                    if isinstance(pil_image, PILImage.Image):
+                        buf = io.BytesIO()
+                        pil_image.save(buf, format="PNG")
+                        return buf.getvalue()
+            except Exception:
+                pass
+
+        inline_data = getattr(part, "inline_data", None)
+        if inline_data and getattr(inline_data, "data", None):
+            try:
+                raw = bytes(inline_data.data)
+                # 尝试验证可读图像
+                PILImage.open(io.BytesIO(raw))
+                return raw
+            except Exception:
+                return None
+
+        file_data = getattr(part, "file_data", None)
+        if file_data:
+            uri = str(getattr(file_data, "file_uri", "") or "")
+            if uri:
+                return _decode_data_uri_image(uri) or _download_http_bytes(uri)
+        return None
+
+    def _extract_image_from_generate_images_response(self, response) -> Optional[bytes]:
+        generated_images = getattr(response, "generated_images", None) or []
+        for item in generated_images:
+            image_obj = getattr(item, "image", None)
+            if not image_obj:
+                continue
+            image_bytes = getattr(image_obj, "image_bytes", None)
+            if image_bytes:
+                return bytes(image_bytes)
+            gcs_uri = str(getattr(image_obj, "gcs_uri", "") or "")
+            if gcs_uri:
+                downloaded = _download_http_bytes(gcs_uri)
+                if downloaded:
+                    return downloaded
+        return None
 
 
 # ─────────────────────────────────────────────

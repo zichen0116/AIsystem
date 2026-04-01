@@ -9,8 +9,8 @@ const pptStore = usePptStore()
 const creationType = ref('dialog')
 const mainText = ref('')
 const aspectRatio = ref('16:9')
-const selectedTemplateId = ref('1')
-const selectedPresetTemplateId = ref('1')
+const selectedTemplateId = ref(null)
+const selectedPresetTemplateId = ref(null)
 const useTextStyle = ref(false)
 const templateStyle = ref('')
 const uploadedTemplateFile = ref(null)
@@ -175,6 +175,33 @@ function removeUploadedTemplate() {
   uploadedTemplateFile.value = null
 }
 
+function resolveSelectedTemplateUrl() {
+  if (useTextStyle.value) {
+    return null
+  }
+
+  if (selectedTemplateId.value) {
+    const userTemplate = userTemplates.value.find(t => String(t.id) === String(selectedTemplateId.value))
+    if (userTemplate?.cover_url || userTemplate?.thumbnail) {
+      return userTemplate.cover_url || userTemplate.thumbnail
+    }
+
+    const presetTemplate = templates.value.find(t => String(t.id) === String(selectedTemplateId.value))
+    if (presetTemplate?.preview || presetTemplate?.thumb) {
+      return presetTemplate.preview || presetTemplate.thumb
+    }
+  }
+
+  if (selectedPresetTemplateId.value) {
+    const presetTemplate = templates.value.find(t => String(t.id) === String(selectedPresetTemplateId.value))
+    if (presetTemplate?.preview || presetTemplate?.thumb) {
+      return presetTemplate.preview || presetTemplate.thumb
+    }
+  }
+
+  return null
+}
+
 // 触发参考文件上传
 function triggerReferenceFileUpload() {
   referenceFileInput.value?.click()
@@ -259,18 +286,25 @@ async function handleStyleImageUpload(event) {
 
 async function handleNext() {
   try {
+    const templateImageUrl = resolveSelectedTemplateUrl()
+    const effectiveTemplateStyle = useTextStyle.value ? (templateStyle.value || '').trim() : null
+    const effectiveTemplateId = useTextStyle.value
+      ? null
+      : (selectedTemplateId.value || selectedPresetTemplateId.value || null)
+
     // 构建 settings
     const settings = {
       aspect_ratio: aspectRatio.value,
-      template_id: selectedTemplateId.value || selectedPresetTemplateId.value,
-      template_style: templateStyle.value
+      template_id: effectiveTemplateId,
+      template_image_url: templateImageUrl,
+      template_style: effectiveTemplateStyle
     }
 
     const data = {
       title: mainText.value.slice(0, 100) || '未命名PPT',
       creation_type: creationType.value,
       outline_text: mainText.value,
-      theme: templateStyle.value || null,
+      theme: effectiveTemplateStyle,
       settings: settings
     }
 
@@ -278,10 +312,11 @@ async function handleNext() {
     pptStore.projectId = response.id
     pptStore.projectData = response
     pptStore.creationType = creationType.value
-    pptStore.selectedPresetTemplateId = selectedTemplateId.value || selectedPresetTemplateId.value
-    pptStore.templateStyle = templateStyle.value
+    pptStore.selectedPresetTemplateId = effectiveTemplateId
+    pptStore.templateStyle = effectiveTemplateStyle || ''
     pptStore.aspectRatio = aspectRatio.value
     pptStore.outlineText = mainText.value
+    pptStore.projectSettings = { ...pptStore.projectSettings, ...response.settings, ...settings }
 
     // Navigate to appropriate phase
     if (creationType.value === 'dialog') {

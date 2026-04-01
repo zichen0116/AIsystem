@@ -172,9 +172,9 @@ export const usePptStore = defineStore('ppt', {
       try {
         const pages = await apiRequest(`${API}/projects/${projectId}/pages`)
         this.outlinePages = pages.map(p => {
-          // points are stored as JSON array in description field
-          let points = []
-          if (p.description) {
+          const config = p.config && typeof p.config === 'object' ? p.config : {}
+          let points = Array.isArray(config.points) ? config.points : []
+          if (!points.length && p.description) {
             try {
               const parsed = JSON.parse(p.description)
               if (Array.isArray(parsed)) points = parsed
@@ -182,8 +182,10 @@ export const usePptStore = defineStore('ppt', {
               // description is plain text, not points array
             }
           }
-          // part is stored in config.part
-          const part = (p.config && p.config.part) ? p.config.part : ''
+          const part = config.part || ''
+          const extraFields = config.extra_fields && typeof config.extra_fields === 'object'
+            ? config.extra_fields
+            : {}
           return {
             id: p.id,
             pageNumber: p.page_number,
@@ -192,8 +194,18 @@ export const usePptStore = defineStore('ppt', {
             imagePrompt: p.image_prompt,
             notes: p.notes,
             imageUrl: p.image_url,
+            isDescriptionGenerating: !!p.is_description_generating,
+            isImageGenerating: !!p.is_image_generating,
             points,
             part,
+            config,
+            extraFields: {
+              visual_element: extraFields.visual_element || '',
+              visual_focus: extraFields.visual_focus || '',
+              layout: extraFields.layout || '',
+              ...extraFields,
+              notes: p.notes || ''
+            },
             status: p.is_description_generating ? 'generating' : (p.description ? 'completed' : 'pending')
           }
         })
@@ -232,7 +244,30 @@ export const usePptStore = defineStore('ppt', {
         })
         const idx = this.outlinePages.findIndex(p => p.id === pageId)
         if (idx !== -1) {
-          this.outlinePages[idx] = { ...this.outlinePages[idx], ...page }
+          const config = page.config && typeof page.config === 'object' ? page.config : {}
+          const extraFields = config.extra_fields && typeof config.extra_fields === 'object'
+            ? config.extra_fields
+            : {}
+          this.outlinePages[idx] = {
+            ...this.outlinePages[idx],
+            pageNumber: page.page_number ?? this.outlinePages[idx].pageNumber,
+            title: page.title,
+            description: page.description,
+            imagePrompt: page.image_prompt,
+            notes: page.notes,
+            imageUrl: page.image_url,
+            isDescriptionGenerating: !!page.is_description_generating,
+            isImageGenerating: !!page.is_image_generating,
+            config,
+            extraFields: {
+              visual_element: extraFields.visual_element || '',
+              visual_focus: extraFields.visual_focus || '',
+              layout: extraFields.layout || '',
+              ...extraFields,
+              notes: page.notes || ''
+            },
+            status: page.is_description_generating ? 'generating' : (page.description ? 'completed' : 'pending')
+          }
         }
         return page
       } catch (error) {
@@ -313,6 +348,9 @@ export const usePptStore = defineStore('ppt', {
     },
 
     async generateOutlineStream(projectId, ideaPrompt) {
+      this.outlineText = ''
+      this.generationProgress = { total: 0, completed: 0, failed: 0 }
+
       const response = await authFetch(`${API}/projects/${projectId}/outline/generate/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -337,11 +375,62 @@ export const usePptStore = defineStore('ppt', {
               const event = JSON.parse(line.slice(6))
               if (event.type === 'outline_chunk') {
                 this.outlineText += event.content
+              } else if (event.type === 'reset_pages') {
+                this.outlinePages = []
+              } else if (event.type === 'page' && event.page) {
+                const page = event.page
+                const pageId = Number(page.id)
+                const normalizedPage = {
+                  id: pageId,
+                  pageNumber: Number(page.page_number) || (this.outlinePages.length + 1),
+                  title: page.title || '未命名',
+                  description: page.description || '',
+                  imagePrompt: page.image_prompt || '',
+                  notes: page.notes || '',
+                  imageUrl: page.image_url || '',
+                  isDescriptionGenerating: false,
+                  isImageGenerating: false,
+                  points: Array.isArray(page.points) ? page.points : [],
+                  part: page.part || '',
+                  config: {
+                    points: Array.isArray(page.points) ? page.points : [],
+                    part: page.part || ''
+                  },
+                  extraFields: {
+                    visual_element: '',
+                    visual_focus: '',
+                    layout: '',
+                    notes: ''
+                  },
+                  status: 'pending'
+                }
+
+                const idx = this.outlinePages.findIndex(p => Number(p.id) === pageId)
+                if (idx !== -1) {
+                  this.outlinePages[idx] = { ...this.outlinePages[idx], ...normalizedPage }
+                } else {
+                  this.outlinePages.push(normalizedPage)
+                }
+              } else if (event.type === 'progress') {
+                this.generationProgress = {
+                  total: Number(event.total) || this.generationProgress.total,
+                  completed: Number(event.current) || this.generationProgress.completed,
+                  failed: 0
+                }
               } else if (event.type === 'done') {
+                if (this.generationProgress.total > 0) {
+                  this.generationProgress = {
+                    ...this.generationProgress,
+                    completed: this.generationProgress.total
+                  }
+                }
                 return
+              } else if (event.type === 'error') {
+                throw new Error(event.message || '大纲生成失败')
               }
             } catch (e) {
-              // ignore parse errors
+              if (!(e instanceof SyntaxError)) throw e
+              // ignore JSON parse errors from malformed SSE lines
             }
           }
         }
@@ -363,14 +452,14 @@ export const usePptStore = defineStore('ppt', {
     },
 
     async generateDescriptionsStream(projectId, options = {}) {
-      const { language = 'zh', detail_level = 'default' } = options
+      const { language = 'zh', detail_level = 'default', page_ids } = options
 
       const response = await authFetch(
         `${API}/projects/${projectId}/descriptions/generate/stream`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ language, detail_level })
+          body: JSON.stringify({ language, detail_level, page_ids })
         }
       )
 
@@ -405,6 +494,16 @@ export const usePptStore = defineStore('ppt', {
           this.descriptions[event.page_id] = {
             content: event.content,
             status: 'completed'
+          }
+          {
+            const idx = this.outlinePages.findIndex(page => page.id === event.page_id)
+            if (idx !== -1) {
+              this.outlinePages[idx] = {
+                ...this.outlinePages[idx],
+                description: event.content,
+                status: 'completed'
+              }
+            }
           }
           break
         case 'progress':

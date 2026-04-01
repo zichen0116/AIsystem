@@ -40,8 +40,15 @@ class ProjectSettingsUpdate(BaseModel):
     description_generation_mode: Optional[str] = Field(default=None, pattern="^(auto|manual)$")
     description_extra_fields: Optional[list[str]] = None
     image_prompt_extra_fields: Optional[list[str]] = None
+    extra_fields_config: Optional[list[dict]] = None
     detail_level: Optional[str] = Field(default=None, pattern="^(concise|default|detailed)$")
     theme: Optional[str] = Field(default=None, max_length=50)
+    template_image_url: Optional[str] = None
+    template_oss_key: Optional[str] = None
+    aspect_ratio: Optional[str] = Field(default=None, pattern="^(1:1|4:3|16:9|3:4|9:16)$")
+    image_resolution: Optional[str] = Field(default=None, pattern="^(1K|2K|4K)$")
+
+    model_config = {"extra": "allow"}
 
 
 class PPTProjectResponse(BaseModel):
@@ -312,6 +319,7 @@ class GenerateDescriptionsStreamRequest(BaseModel):
     """流式生成描述请求"""
     language: str = Field(default="zh", description="输出语言")
     detail_level: str = Field(default="default", description="详细程度：concise/default/detailed")
+    page_ids: Optional[list[int]] = Field(default=None, description="可选：只生成这些页面")
 
 
 # ============= Material Generate Schema =============

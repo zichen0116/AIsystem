@@ -6,17 +6,27 @@ import logging
 import os
 import tempfile
 import uuid
+from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 from celery import Task
 from app.celery import celery_app
 from app.generators.ppt.banana_service import get_banana_service
 from app.generators.ppt.file_service import get_oss_service
+from app.generators.ppt.page_utils import (
+    build_page_image_prompt,
+    extract_page_points,
+    get_active_extra_fields_config,
+    split_generated_description,
+)
 
 logger = logging.getLogger(__name__)
 
 # 本地导出目录（OSS 不可达时的降级存储）
 _LOCAL_EXPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "exports")
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_FRONTEND_PUBLIC_DIR = _REPO_ROOT / "teacher-platform" / "public"
 
 
 def _get_oss_service_safe():
@@ -52,6 +62,73 @@ def _upload_or_save_local(oss_svc, data: bytes, oss_key: str, filename: str) -> 
     return local_path, True
 
 
+def _load_project_template_bytes(project_settings: dict | None, oss_svc=None) -> Optional[bytes]:
+    settings = project_settings or {}
+    template_oss_key = str(settings.get("template_oss_key") or "").strip()
+    if template_oss_key and oss_svc is not None:
+        try:
+            suffix = Path(template_oss_key).suffix or ".png"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                oss_svc.download_file(template_oss_key, tmp_path)
+                with open(tmp_path, "rb") as f:
+                    return f.read()
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+        except Exception as e:
+            logger.warning("加载项目模板图片失败 oss_key=%s: %s", template_oss_key, e)
+
+    template_url = str(settings.get("template_image_url") or "").strip()
+    if not template_url:
+        return None
+
+    local_bytes = _load_frontend_public_asset_bytes(template_url)
+    if local_bytes:
+        return local_bytes
+
+    try:
+        import urllib.request as _ureq
+        with _ureq.urlopen(template_url, timeout=20) as resp:
+            return resp.read()
+    except Exception as e:
+        logger.warning("加载项目模板图片失败 template_url=%s: %s", template_url, e)
+        return None
+
+
+def _load_frontend_public_asset_bytes(asset_url: str) -> Optional[bytes]:
+    path = _resolve_frontend_public_asset_path(asset_url)
+    if not path:
+        return None
+    try:
+        return path.read_bytes()
+    except Exception as e:
+        logger.warning("读取前端静态模板失败 asset_url=%s: %s", asset_url, e)
+        return None
+
+
+def _resolve_frontend_public_asset_path(asset_url: str) -> Optional[Path]:
+    if not asset_url or not asset_url.startswith("/"):
+        return None
+
+    parsed = urlparse(asset_url)
+    relative_path = parsed.path.lstrip("/")
+    if not relative_path:
+        return None
+
+    public_root = _FRONTEND_PUBLIC_DIR.resolve()
+    candidate = (public_root / relative_path).resolve()
+    try:
+        candidate.relative_to(public_root)
+    except ValueError:
+        return None
+
+    if candidate.is_file():
+        return candidate
+    return None
+
+
 # ---------------------------------------------------------------------------
 # 工具函数
 # ---------------------------------------------------------------------------
@@ -72,6 +149,29 @@ async def _update_task_status(db, task_id_str: str, status: str, progress: int, 
         if status in ("COMPLETED", "FAILED"):
             task.completed_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+def _apply_generated_description(page, generated_text: str, extra_fields_config: list[dict]) -> None:
+    parsed = split_generated_description(generated_text, extra_fields_config)
+    page.description = parsed["description"] or generated_text
+
+    config = dict(page.config or {})
+    stored_extra_fields = dict(config.get("extra_fields") or {})
+    managed_keys = [
+        str(field.get("key") or "").strip()
+        for field in extra_fields_config
+        if str(field.get("key") or "").strip() and str(field.get("key") or "").strip() != "notes"
+    ]
+    for key in managed_keys:
+        if key in parsed["extra_fields"]:
+            stored_extra_fields[key] = parsed["extra_fields"][key]
+        else:
+            stored_extra_fields.pop(key, None)
+    config["extra_fields"] = stored_extra_fields
+    page.config = config
+
+    if any(str(field.get("key") or "").strip() == "notes" for field in extra_fields_config):
+        page.notes = parsed["notes"] or None
 
 
 def _extract_oss_key(url: str) -> Optional[str]:
@@ -208,22 +308,28 @@ def generate_descriptions_task(self: Task, project_id: int, task_id_str: str = N
 
         banana_svc = get_banana_service()
         theme = project.theme
+        extra_fields_config = get_active_extra_fields_config(project.settings or {})
         completed = 0
 
         for page in pages:
-            cfg = page.config or {}
-            points = cfg.get("points") or []
-            page_dict = {"id": page.id, "title": page.title or "", "points": points}
+            page_dict = {
+                "id": page.id,
+                "title": page.title or "",
+                "points": extract_page_points(page),
+            }
 
             try:
                 description = await banana_svc.generate_description(
-                    page_dict, theme=theme, language=language
+                    page_dict,
+                    theme=theme,
+                    language=language,
+                    extra_fields_config=extra_fields_config,
                 )
                 async with AsyncSessionLocal() as db2:
                     res2 = await db2.execute(select(PPTPage).where(PPTPage.id == page.id))
                     db_page = res2.scalar_one_or_none()
                     if db_page:
-                        db_page.description = description
+                        _apply_generated_description(db_page, description, extra_fields_config)
                         db_page.is_description_generating = False
                     await db2.commit()
             except Exception as e:
@@ -253,22 +359,16 @@ def generate_descriptions_task(self: Task, project_id: int, task_id_str: str = N
 # 任务：批量生成图片
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, name="banana-slides.generate_images")
-def generate_images_task(self: Task, project_id: int, page_ids: list = None, task_id_str: str = None):
+async def generate_images_async(project_id: int, page_ids: list = None, task_id_str: str = None):
     """
-    批量生成页面图片。
-
-    Args:
-        project_id: 项目ID
-        page_ids: 页面ID列表，None 表示全部
-        task_id_str: PPTTask.task_id
+    批量生成页面图片（异步核心，可直接 asyncio.create_task 调用，无需 Celery worker）。
     """
     from app.core.database import AsyncSessionLocal
     from sqlalchemy import select, update as sa_update
     from app.generators.ppt.banana_models import PPTProject, PPTPage, PPTMaterial, PageImageVersion
     from app.generators.ppt.banana_providers import get_image_provider_singleton
 
-    async def _run():
+    try:
         async with AsyncSessionLocal() as db:
             if task_id_str:
                 await _update_task_status(db, task_id_str, "PROCESSING", 0)
@@ -298,16 +398,21 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
             await db.commit()
 
         aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        oss_svc = get_oss_service()
+        oss_svc = _get_oss_service_safe()
         image_provider = get_image_provider_singleton()
+        extra_fields_config = get_active_extra_fields_config(project.settings or {})
+        template_ref_image = _load_project_template_bytes(project.settings or {}, oss_svc)
         completed = 0
+        success_count = 0
+        failure_count = 0
+        failed_pages = []
 
         for page in pages:
             try:
-                prompt = page.image_prompt or page.description or page.title or "Professional PPT slide"
+                prompt = build_page_image_prompt(page, extra_fields_config, project.settings or {})
 
-                # 素材参考图（同步下载）
-                ref_images = []
+                # 素材参考图
+                ref_images = [template_ref_image] if template_ref_image else []
                 if page.material_ids:
                     async with AsyncSessionLocal() as db_mat:
                         mat_res = await db_mat.execute(
@@ -318,7 +423,7 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
                         mat_ext = _normalize_extension(mat.file_type, mat.filename)
                         if mat_ext in ("png", "jpg", "jpeg", "webp"):
                             mat_key = _extract_oss_key(mat.url)
-                            if mat_key:
+                            if mat_key and oss_svc:
                                 try:
                                     with tempfile.NamedTemporaryFile(
                                         suffix="." + mat_ext, delete=False
@@ -340,7 +445,8 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
                 oss_key = "ppt/{}/pages/{}/v{}_{}.png".format(
                     project_id, page.id, page.image_version + 1, uuid.uuid4().hex[:8]
                 )
-                image_url = oss_svc.upload_bytes(img_bytes, oss_key)
+                filename = "page_{}_{}.png".format(page.id, uuid.uuid4().hex[:8])
+                image_url, is_local = _upload_or_save_local(oss_svc, img_bytes, oss_key, filename)
 
                 async with AsyncSessionLocal() as db2:
                     res2 = await db2.execute(select(PPTPage).where(PPTPage.id == page.id))
@@ -366,9 +472,17 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
                             is_active=True,
                         ))
                         await db2.commit()
+                        success_count += 1
 
             except Exception as e:
                 logger.error("图片生成失败 page_id=%s: %s", page.id, e)
+                failure_count += 1
+                failed_pages.append({
+                    "page_id": page.id,
+                    "page_number": page.page_number,
+                    "title": page.title,
+                    "error": str(e),
+                })
                 async with AsyncSessionLocal() as db2:
                     res2 = await db2.execute(select(PPTPage).where(PPTPage.id == page.id))
                     db_page = res2.scalar_one_or_none()
@@ -383,11 +497,38 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
                     await _update_task_status(db3, task_id_str, "PROCESSING", progress)
 
         if task_id_str:
+            result = {
+                "count": completed,
+                "success_count": success_count,
+                "failure_count": failure_count,
+                "failed_pages": failed_pages,
+            }
             async with AsyncSessionLocal() as db4:
-                await _update_task_status(db4, task_id_str, "COMPLETED", 100, {"count": completed})
-        return {"status": "completed", "project_id": project_id, "count": completed}
+                final_status = "FAILED" if success_count == 0 and failure_count > 0 else "COMPLETED"
+                await _update_task_status(db4, task_id_str, final_status, 100, result)
+        return {
+            "status": "failed" if success_count == 0 and failure_count > 0 else "completed",
+            "project_id": project_id,
+            "count": completed,
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "failed_pages": failed_pages,
+        }
 
-    return asyncio.run(_run())
+    except Exception as e:
+        logger.error("generate_images_async 失败 project_id=%s: %s", project_id, e)
+        if task_id_str:
+            try:
+                async with AsyncSessionLocal() as db_err:
+                    await _update_task_status(db_err, task_id_str, "FAILED", 0, {"error": str(e)})
+            except Exception:
+                pass
+
+
+@celery_app.task(bind=True, name="banana-slides.generate_images")
+def generate_images_task(self: Task, project_id: int, page_ids: list = None, task_id_str: str = None):
+    """Celery wrapper — delegates to generate_images_async."""
+    return asyncio.run(generate_images_async(project_id, page_ids, task_id_str))
 
 
 # ---------------------------------------------------------------------------
@@ -924,14 +1065,9 @@ def edit_page_image_task(
         if context_images:
             # 2a. 模板图：从项目 settings.template_image_url 获取
             if context_images.get("use_template"):
-                template_url = (project.settings or {}).get("template_image_url")
-                if template_url:
-                    try:
-                        import urllib.request as _ureq
-                        with _ureq.urlopen(template_url, timeout=20) as resp:
-                            ref_images.append(resp.read())
-                    except Exception as e:
-                        logger.warning("加载模板图片失败: %s", e)
+                template_bytes = _load_project_template_bytes(project.settings or {}, oss_svc)
+                if template_bytes:
+                    ref_images.append(template_bytes)
 
             # 2b. 描述中的图片URL列表
             for url in (context_images.get("desc_image_urls") or []):
