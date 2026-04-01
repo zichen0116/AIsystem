@@ -164,5 +164,27 @@ export const useUserStore = defineStore('user', {
       if (this.userInfo) this.userInfo.two_fa_enabled = enable
       return result
     },
+
+    /**
+     * 忘记密码 - 发送短信验证码
+     */
+    async forgotPasswordSendCode(phone) {
+      return await apiRequest('/api/v1/auth/forgot-password/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone }),
+      })
+    },
+
+    /**
+     * 忘记密码 - 重置密码
+     */
+    async resetPassword(phone, code, new_password) {
+      return await apiRequest('/api/v1/auth/forgot-password/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, code, new_password }),
+      })
+    },
   },
 })
