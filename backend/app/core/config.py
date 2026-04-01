@@ -88,6 +88,27 @@ class Settings(BaseSettings):
     EMAIL_SMTP_PASSWORD: str = ""
     EMAIL_FROM_NAME: str = "AI教学平台"
 
+    # ========== 讯飞 AI 虚拟人（在线驱动 / VMS）==========
+    # 控制台「在线虚拟人驱动」应用：APPID、APIKey、APISecret；形象 ID 在形象列表中查看
+    # Web SDK：https://www.xfyun.cn/doc/tts/virtual_human/Web-SDK.html
+    # Web API：https://static.xfyun.cn/doc/tts/virtual_human/API.html
+    IFLYTEK_VMS_APP_ID: str = ""
+    IFLYTEK_VMS_API_KEY: str = ""
+    IFLYTEK_VMS_API_SECRET: str = ""
+    IFLYTEK_VMS_SERVICE_ID: str = ""
+    IFLYTEK_VMS_DEFAULT_AVATAR_ID: str = "111283001"
+    IFLYTEK_VMS_HOST: str = "vms.cn-huadong-1.xf-yun.com"
+    IFLYTEK_VMS_DEFAULT_WIDTH: int = 1280
+    IFLYTEK_VMS_DEFAULT_HEIGHT: int = 720
+    IFLYTEK_VMS_STREAM_PROTOCOL: str = "xrtc"
+
+    # Avatar Platform（avatar-sdk-web / 交互）——与 VMS 老版 Web SDK 不同
+    # Demo：wss://avatar.cn-huadong-1.xf-yun.com/v1/interact ，需 sceneId（控制台「接口服务」）
+    IFLYTEK_AVATAR_SERVER_URL: str = "wss://avatar.cn-huadong-1.xf-yun.com/v1/interact"
+    IFLYTEK_AVATAR_SCENE_ID: str = ""
+    # Avatar SDK setGlobalParams.tts.vcn 必填，参见讯飞发音人列表（如 x4_xiaoxuan）
+    IFLYTEK_AVATAR_TTS_VCN: str = "x4_xiaoxuan"
+
     # ========== 数据分析（Excel -> 图表）==========
     # 上传的 Excel 存放目录（相对于 backend/ 运行目录）
     DATA_ANALYSIS_UPLOAD_DIR: str = "media/data_analysis/uploads"

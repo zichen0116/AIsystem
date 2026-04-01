@@ -3,6 +3,7 @@ import { ref, provide, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import ThemeToggle from './ThemeToggle.vue'
+import DigitalHumanAssistant from './DigitalHumanAssistant.vue'
 
 // 全局侧栏折叠状态（提供给子组件注入使用）
 const sidebarCollapsed = ref(false)
@@ -390,6 +391,9 @@ function handleAvatarClick() {
     <main class="main">
       <slot />
     </main>
+
+    <!-- 教师端：可拖动数字人入口 + 右侧抽屉（管理员端不展示） -->
+    <DigitalHumanAssistant v-if="!isAdmin" />
   </div>
 </template>
 
