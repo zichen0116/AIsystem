@@ -4,7 +4,8 @@ import { usePptStore } from '@/stores/ppt'
 import {
   exportEditablePptx, generateImages,
   editPageImage, getImageVersions, setCurrentVersion,
-  getTask, getExportTaskStatus
+  getTask, getExportTaskStatus,
+  getMaterials, generateMaterial
 } from '@/api/ppt'
 import { authFetch } from '@/api/http'
 
@@ -47,10 +48,20 @@ const imagesExportStatus = ref('idle')
 const imagesExportUrl = ref(null)
 let imagesExportPollTimer = null
 
+// -------- 素材库 --------
+const showMaterialPanel = ref(false)
+const materials = ref([])
+const materialPrompt = ref('')
+const materialAspectRatio = ref('1:1')
+const materialGenerating = ref(false)
+const materialTaskId = ref(null)
+let materialPollTimer = null
+
 onMounted(async () => {
   if (pptStore.projectId) {
     await pptStore.fetchPages(pptStore.projectId)
     syncPages()
+    await loadMaterials()
   }
 })
 
@@ -386,7 +397,67 @@ onUnmounted(() => {
   clearInterval(editPollTimer)
   clearInterval(editableExportPollTimer)
   clearInterval(imagesExportPollTimer)
+  clearInterval(materialPollTimer)
 })
+
+// -------- 素材库逻辑 --------
+
+async function loadMaterials() {
+  if (!pptStore.projectId) return
+  try {
+    const res = await getMaterials(pptStore.projectId)
+    materials.value = Array.isArray(res) ? res : (res?.materials || [])
+  } catch (e) {
+    console.error('加载素材失败:', e)
+  }
+}
+
+async function handleGenerateMaterial() {
+  if (!materialPrompt.value.trim() || !pptStore.projectId) return
+  materialGenerating.value = true
+  try {
+    const res = await generateMaterial(pptStore.projectId, materialPrompt.value.trim(), materialAspectRatio.value)
+    materialTaskId.value = res.task_id || res.id || null
+    if (materialTaskId.value) {
+      _pollMaterialTask()
+    } else {
+      // 同步完成
+      await loadMaterials()
+      materialGenerating.value = false
+      materialPrompt.value = ''
+    }
+  } catch (e) {
+    console.error('生成素材失败:', e)
+    materialGenerating.value = false
+  }
+}
+
+function _pollMaterialTask() {
+  clearInterval(materialPollTimer)
+  materialPollTimer = setInterval(async () => {
+    try {
+      const task = await getTask(pptStore.projectId, materialTaskId.value)
+      if (task.status === 'COMPLETED') {
+        clearInterval(materialPollTimer)
+        materialGenerating.value = false
+        materialPrompt.value = ''
+        await loadMaterials()
+      } else if (task.status === 'FAILED') {
+        clearInterval(materialPollTimer)
+        materialGenerating.value = false
+      }
+    } catch (e) {
+      clearInterval(materialPollTimer)
+      materialGenerating.value = false
+    }
+  }, 2000)
+}
+
+function toggleMaterialPanel() {
+  showMaterialPanel.value = !showMaterialPanel.value
+  showEditPanel.value = false
+  showVersionPanel.value = false
+}
 
 function prevPage() {
   if (currentPageIndex.value > 0) {
@@ -679,6 +750,13 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
             <div class="control-right">
               <button
                 class="action-btn secondary"
+                :class="{ active: showMaterialPanel }"
+                @click="toggleMaterialPanel"
+              >
+                素材库
+              </button>
+              <button
+                class="action-btn secondary"
                 :class="{ active: showVersionPanel }"
                 :disabled="!currentPage?.id"
                 @click="toggleVersionPanel"
@@ -743,6 +821,72 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
             AI 正在处理，完成后自动刷新图片
           </p>
         </template>
+      </aside>
+
+      <!-- 素材库面板 -->
+      <aside v-if="showMaterialPanel" class="right-panel">
+        <div class="panel-title">
+          <span>AI 素材库</span>
+          <button class="close-btn" @click="showMaterialPanel = false">✕</button>
+        </div>
+
+        <!-- 生成表单 -->
+        <div class="material-generate-form">
+          <textarea
+            v-model="materialPrompt"
+            class="edit-textarea"
+            placeholder="描述你想要生成的素材，例如：蓝色抽象背景、箭头流程图..."
+            :disabled="materialGenerating"
+            rows="3"
+          />
+          <div class="material-ratio-row">
+            <span class="ratio-label">比例</span>
+            <div class="ratio-group">
+              <button
+                v-for="r in ['1:1', '16:9', '4:3']"
+                :key="r"
+                class="ratio-btn"
+                :class="{ active: materialAspectRatio === r }"
+                @click="materialAspectRatio = r"
+              >{{ r }}</button>
+            </div>
+          </div>
+          <button
+            class="action-btn primary full"
+            :disabled="!materialPrompt.trim() || materialGenerating"
+            @click="handleGenerateMaterial"
+          >
+            {{ materialGenerating ? 'AI生成中...' : 'AI 生成素材' }}
+          </button>
+          <div v-if="materialGenerating" class="material-generating-hint">
+            <div class="spinner-small"></div>
+            <span>素材生成中，完成后自动刷新</span>
+          </div>
+        </div>
+
+        <!-- 素材画廊 -->
+        <div class="material-gallery">
+          <div v-if="materials.length === 0 && !materialGenerating" class="panel-hint">
+            暂无素材，请先 AI 生成或上传图片
+          </div>
+          <div v-else class="material-grid">
+            <div
+              v-for="mat in materials"
+              :key="mat.id"
+              class="material-card"
+            >
+              <img v-if="mat.url || mat.image_url" :src="mat.url || mat.image_url" :alt="mat.title || mat.prompt || '素材'" class="material-img" />
+              <div v-else class="material-img-placeholder">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="24" height="24">
+                  <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                </svg>
+              </div>
+              <div class="material-card-meta">
+                <span class="material-title" :title="mat.title || mat.prompt">{{ mat.title || mat.prompt || '素材' }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </aside>
 
       <!-- 版本历史面板 -->
@@ -1499,4 +1643,125 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 .action-btn.full { width: calc(100% - 32px); margin: 0 16px 12px; justify-content: center; }
 .action-btn.small { padding: 5px 10px; font-size: 12px; width: calc(100% - 20px); margin: 0 10px 10px; justify-content: center; }
 .action-btn.active { background: #EFF6FF; color: #2563eb; border-color: #bfdbfe; }
+
+/* Material panel */
+.material-generate-form {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.material-ratio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.ratio-label {
+  font-size: 12px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.ratio-group {
+  display: flex;
+  gap: 4px;
+}
+
+.ratio-btn {
+  padding: 3px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+
+.ratio-btn.active {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.material-generating-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 8px;
+}
+
+.spinner-small {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #e5e7eb;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.material-gallery {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.material-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.material-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.15s;
+  cursor: pointer;
+}
+
+.material-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.material-img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  background: #f1f5f9;
+}
+
+.material-img-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+}
+
+.material-card-meta {
+  padding: 4px 6px;
+  background: #fafafa;
+}
+
+.material-title {
+  font-size: 11px;
+  color: #64748b;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

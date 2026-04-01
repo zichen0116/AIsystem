@@ -1,18 +1,27 @@
 """
 PPT生成模块 - AI服务层
-banana-slides 核心服务适配
+banana-slides 核心服务适配（文本生成使用 Gemini text provider）
 """
 import json
 import re
 from typing import Optional, AsyncGenerator
-from app.services.ai.dashscope_service import get_dashscope_service
+from app.generators.ppt.banana_providers import get_text_provider_singleton
 
 
 class BananaAIService:
     """banana-slides AI服务适配"""
 
     def __init__(self):
-        self.dashscope = get_dashscope_service()
+        pass
+
+    @property
+    def _text(self):
+        """懒加载文本 provider（Gemini/OpenAI/Anthropic，取决于 AI_PROVIDER_FORMAT）"""
+        return get_text_provider_singleton()
+
+    async def _chat(self, prompt: str) -> str:
+        """统一文本调用入口"""
+        return await self._text.agenerate_text(prompt)
 
     async def parse_outline_text(
         self,
@@ -34,7 +43,7 @@ class BananaAIService:
         prompt = self._build_outline_parsing_prompt(outline_text, theme, language)
 
         try:
-            response = await self.dashscope.chat(prompt)
+            response = await self._chat(prompt)
             return self._parse_json_response(response)
         except Exception as e:
             # 解析失败时返回原始文本
@@ -109,7 +118,7 @@ class BananaAIService:
             )
 
             try:
-                response = await self.dashscope.chat(prompt)
+                response = await self._chat(prompt)
                 description = self._extract_description(response)
 
                 yield {
@@ -194,7 +203,7 @@ class BananaAIService:
         """
         prompt = self._build_description_prompt(page, theme, language, detail_level)
         try:
-            response = await self.dashscope.chat(prompt)
+            response = await self._chat(prompt)
             return self._extract_description(response)
         except Exception as e:
             return f"描述生成失败: {str(e)}"
@@ -231,7 +240,7 @@ class BananaAIService:
 - 直接返回JSON数组，不要包含markdown代码块"""
 
         try:
-            response = await self.dashscope.chat(prompt)
+            response = await self._chat(prompt)
             result = self._parse_json_response(response)
             if isinstance(result, list):
                 return result
@@ -273,7 +282,7 @@ class BananaAIService:
 - 直接返回JSON数组，不要包含markdown代码块"""
 
         try:
-            response = await self.dashscope.chat(prompt)
+            response = await self._chat(prompt)
             result = self._parse_json_response(response)
             return result if isinstance(result, list) else descriptions
         except Exception:

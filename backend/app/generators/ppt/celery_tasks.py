@@ -15,6 +15,42 @@ from app.generators.ppt.file_service import get_oss_service
 
 logger = logging.getLogger(__name__)
 
+# 本地导出目录（OSS 不可达时的降级存储）
+_LOCAL_EXPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "exports")
+
+
+def _get_oss_service_safe():
+    """获取 OSS 服务，失败时返回 None（降级到本地存储）"""
+    try:
+        return get_oss_service()
+    except Exception as e:
+        logger.warning("OSS 服务不可用，降级到本地文件: %s", e)
+        return None
+
+
+def _save_bytes_local(data: bytes, filename: str) -> str:
+    """保存字节数据到本地导出目录，返回相对路径标识"""
+    os.makedirs(_LOCAL_EXPORTS_DIR, exist_ok=True)
+    local_path = os.path.join(_LOCAL_EXPORTS_DIR, filename)
+    with open(local_path, "wb") as f:
+        f.write(data)
+    return local_path
+
+
+def _upload_or_save_local(oss_svc, data: bytes, oss_key: str, filename: str) -> tuple:
+    """
+    尝试上传到 OSS；失败时保存到本地。
+    返回 (url_or_path, is_local: bool)
+    """
+    if oss_svc is not None:
+        try:
+            url = oss_svc.upload_bytes(data, oss_key)
+            return url, False
+        except Exception as e:
+            logger.warning("OSS 上传失败，降级本地存储 key=%s: %s", oss_key, e)
+    local_path = _save_bytes_local(data, filename)
+    return local_path, True
+
 
 # ---------------------------------------------------------------------------
 # 工具函数
@@ -91,31 +127,36 @@ def _normalize_extension(file_type: Optional[str], filename: Optional[str] = Non
 
 
 def _download_image_bytes(page, oss_svc) -> Optional[bytes]:
-    """同步下载页面图片，返回 bytes；失败返回 None"""
+    """同步下载页面图片，返回 bytes；失败返回 None。oss_svc=None 时直接 URL 下载。"""
+    import urllib.request
     if not page.image_url:
         return None
     tmp_path = None
-    try:
+    # 尝试 OSS 下载
+    if oss_svc is not None:
         oss_key = _extract_oss_key(page.image_url)
         if oss_key:
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                tmp_path = tmp.name
-            oss_svc.download_file(oss_key, tmp_path)
-            with open(tmp_path, "rb") as f:
-                return f.read()
-        else:
-            import urllib.request
-            with urllib.request.urlopen(page.image_url, timeout=30) as resp:
-                return resp.read()
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+                oss_svc.download_file(oss_key, tmp_path)
+                with open(tmp_path, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("OSS 下载失败 page_id=%s, 降级 URL: %s", page.id, e)
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+    # 直接从 URL 下载（fallback）
+    try:
+        with urllib.request.urlopen(page.image_url, timeout=30) as resp:
+            return resp.read()
     except Exception as e:
         logger.warning("下载页面图片失败 page_id=%s: %s", page.id, e)
         return None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -354,21 +395,31 @@ def generate_images_task(self: Task, project_id: int, page_ids: list = None, tas
 # ---------------------------------------------------------------------------
 
 def _download_pages_to_tmpdir(pages, oss_svc) -> tuple:
-    """下载页面图片到临时目录，返回 (tmp_dir, image_paths)"""
+    """下载页面图片到临时目录，返回 (tmp_dir, image_paths)。oss_svc=None 时直接 URL 下载。"""
+    import urllib.request
     tmp_dir = tempfile.mkdtemp()
     image_paths = []
     for i, page in enumerate(pages):
+        if not page.image_url:
+            continue
         local_path = os.path.join(tmp_dir, "page_{:04d}.png".format(i))
         oss_key = _extract_oss_key(page.image_url)
-        try:
-            if oss_key:
+        downloaded = False
+        # 优先尝试 OSS 下载
+        if oss_svc is not None and oss_key:
+            try:
                 oss_svc.download_file(oss_key, local_path)
-            else:
-                import urllib.request
+                image_paths.append(local_path)
+                downloaded = True
+            except Exception as e:
+                logger.warning("OSS 下载失败 page_id=%s, 降级 URL: %s", page.id, e)
+        # OSS 不可用或失败时，直接从 URL 下载
+        if not downloaded:
+            try:
                 urllib.request.urlretrieve(page.image_url, local_path)
-            image_paths.append(local_path)
-        except Exception as e:
-            logger.warning("下载页面图片失败 page_id=%s: %s", page.id, e)
+                image_paths.append(local_path)
+            except Exception as e:
+                logger.warning("下载页面图片失败 page_id=%s: %s", page.id, e)
     return tmp_dir, image_paths
 
 
@@ -428,7 +479,7 @@ def export_pptx_task(self: Task, project_id: int, task_id_str: str = None):
             pages = list(res.scalars().all())
 
         aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        oss_svc = get_oss_service()
+        oss_svc = _get_oss_service_safe()
         export_svc = get_ppt_export_service()
 
         tmp_dir, image_paths = _download_pages_to_tmpdir(pages, oss_svc)
@@ -441,16 +492,20 @@ def export_pptx_task(self: Task, project_id: int, task_id_str: str = None):
             if not pptx_bytes:
                 raise ValueError("PPTX生成失败")
 
-            oss_key = "ppt/{}/exports/presentation_{}.pptx".format(
-                project_id, uuid.uuid4().hex[:8]
-            )
-            export_url = oss_svc.upload_bytes(pptx_bytes, oss_key)
+            uid = uuid.uuid4().hex[:8]
+            oss_key = "ppt/{}/exports/presentation_{}.pptx".format(project_id, uid)
+            filename = "presentation_{}_{}.pptx".format(project_id, uid)
+            export_url, is_local = _upload_or_save_local(oss_svc, pptx_bytes, oss_key, filename)
             await _update_project_export(project_id, export_url)
 
+            result = {"url": export_url}
+            if is_local:
+                result["is_local"] = True
+                result["warning"] = "OSS不可用，文件已保存到本地，下载时请使用同步接口"
             if task_id_str:
                 async with AsyncSessionLocal() as db3:
-                    await _update_task_status(db3, task_id_str, "COMPLETED", 100, {"url": export_url})
-            return {"status": "completed", "url": export_url}
+                    await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
+            return {"status": "completed", **result}
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -497,7 +552,7 @@ def export_pdf_task(self: Task, project_id: int, task_id_str: str = None):
             pages = list(res.scalars().all())
 
         aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        oss_svc = get_oss_service()
+        oss_svc = _get_oss_service_safe()
         export_svc = get_ppt_export_service()
 
         tmp_dir, image_paths = _download_pages_to_tmpdir(pages, oss_svc)
@@ -510,16 +565,20 @@ def export_pdf_task(self: Task, project_id: int, task_id_str: str = None):
             if not pdf_bytes:
                 raise ValueError("PDF生成失败")
 
-            oss_key = "ppt/{}/exports/presentation_{}.pdf".format(
-                project_id, uuid.uuid4().hex[:8]
-            )
-            export_url = oss_svc.upload_bytes(pdf_bytes, oss_key)
+            uid = uuid.uuid4().hex[:8]
+            oss_key = "ppt/{}/exports/presentation_{}.pdf".format(project_id, uid)
+            filename = "presentation_{}_{}.pdf".format(project_id, uid)
+            export_url, is_local = _upload_or_save_local(oss_svc, pdf_bytes, oss_key, filename)
             await _update_project_export(project_id, export_url)
 
+            result = {"url": export_url}
+            if is_local:
+                result["is_local"] = True
+                result["warning"] = "OSS不可用，文件已保存到本地，下载时请使用同步接口"
             if task_id_str:
                 async with AsyncSessionLocal() as db3:
-                    await _update_task_status(db3, task_id_str, "COMPLETED", 100, {"url": export_url})
-            return {"status": "completed", "url": export_url}
+                    await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
+            return {"status": "completed", **result}
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -565,9 +624,10 @@ def export_images_task(self: Task, project_id: int, task_id_str: str = None):
             )
             pages = list(res.scalars().all())
 
-        oss_svc = get_oss_service()
+        oss_svc = _get_oss_service_safe()
         zip_buf = _io.BytesIO()
         total = len(pages)
+        skipped = 0
 
         with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             for i, page in enumerate(pages):
@@ -575,6 +635,7 @@ def export_images_task(self: Task, project_id: int, task_id_str: str = None):
                 if img_bytes:
                     zf.writestr("slide_{:03d}.png".format(i + 1), img_bytes)
                 else:
+                    skipped += 1
                     logger.warning("跳过无图片页面 page_id=%s", page.id)
 
                 if task_id_str:
@@ -583,13 +644,19 @@ def export_images_task(self: Task, project_id: int, task_id_str: str = None):
                         await _update_task_status(db2, task_id_str, "PROCESSING", progress)
 
         zip_bytes = zip_buf.getvalue()
-        oss_key = "ppt/{}/exports/images_{}.zip".format(project_id, uuid.uuid4().hex[:8])
-        export_url = oss_svc.upload_bytes(zip_bytes, oss_key)
+        uid = uuid.uuid4().hex[:8]
+        oss_key = "ppt/{}/exports/images_{}.zip".format(project_id, uid)
+        filename = "images_{}_{}.zip".format(project_id, uid)
+        export_url, is_local = _upload_or_save_local(oss_svc, zip_bytes, oss_key, filename)
 
+        result = {"url": export_url, "total": total, "skipped": skipped}
+        if is_local:
+            result["is_local"] = True
+            result["warning"] = "OSS不可用，文件已保存到本地"
         if task_id_str:
             async with AsyncSessionLocal() as db3:
-                await _update_task_status(db3, task_id_str, "COMPLETED", 100, {"url": export_url})
-        return {"status": "completed", "url": export_url}
+                await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
+        return {"status": "completed", **result}
 
     return asyncio.run(_run())
 
@@ -601,13 +668,80 @@ def export_images_task(self: Task, project_id: int, task_id_str: str = None):
 @celery_app.task(bind=True, name="banana-slides.export_editable_pptx")
 def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = None):
     """
-    导出可编辑PPTX（当前实现与 export_pptx 相同）。
+    导出可编辑 PPTX：图片底层 + 文字层（标题/描述/备注）。
 
     Args:
         project_id: 项目ID
         task_id_str: PPTTask.task_id
     """
-    return export_pptx_task(project_id, task_id_str=task_id_str)
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import select
+    from app.generators.ppt.banana_models import PPTProject, PPTPage
+    from app.generators.ppt.ppt_export_service import get_ppt_export_service
+    import shutil
+
+    async def _run():
+        async with AsyncSessionLocal() as db:
+            if task_id_str:
+                await _update_task_status(db, task_id_str, "PROCESSING", 10)
+
+            res = await db.execute(select(PPTProject).where(PPTProject.id == project_id))
+            project = res.scalar_one_or_none()
+            if not project:
+                if task_id_str:
+                    await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "Project not found"})
+                return {"error": "Project not found"}
+
+            res = await db.execute(
+                select(PPTPage)
+                .where(PPTPage.project_id == project_id)
+                .where(PPTPage.image_url.isnot(None))
+                .order_by(PPTPage.page_number)
+            )
+            pages = list(res.scalars().all())
+
+        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
+        oss_svc = _get_oss_service_safe()
+        export_svc = get_ppt_export_service()
+
+        pages_data = [
+            {"title": p.title or "", "description": p.description or "", "notes": p.notes or ""}
+            for p in pages
+        ]
+
+        tmp_dir, image_paths = _download_pages_to_tmpdir(pages, oss_svc)
+        try:
+            if task_id_str:
+                async with AsyncSessionLocal() as db2:
+                    await _update_task_status(db2, task_id_str, "PROCESSING", 50)
+
+            pptx_bytes = export_svc.create_pptx_from_images(
+                image_paths,
+                aspect_ratio=aspect_ratio,
+                pages_data=pages_data,
+                add_text_layer=True,
+            )
+            if not pptx_bytes:
+                raise ValueError("可编辑PPTX生成失败")
+
+            uid = uuid.uuid4().hex[:8]
+            oss_key = "ppt/{}/exports/editable_{}.pptx".format(project_id, uid)
+            filename = "editable_{}_{}.pptx".format(project_id, uid)
+            export_url, is_local = _upload_or_save_local(oss_svc, pptx_bytes, oss_key, filename)
+            await _update_project_export(project_id, export_url)
+
+            result = {"url": export_url}
+            if is_local:
+                result["is_local"] = True
+                result["warning"] = "OSS不可用，文件已保存到本地"
+            if task_id_str:
+                async with AsyncSessionLocal() as db3:
+                    await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
+            return {"status": "completed", **result}
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------

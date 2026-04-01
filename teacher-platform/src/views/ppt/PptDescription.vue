@@ -14,11 +14,57 @@ const requirements = ref('')
 
 // Extra fields configuration
 const extraFields = ref([
-  { key: 'visual_element', label: '视觉元素', active: true, icon: 'image' },
-  { key: 'visual_focus', label: '视觉焦点', active: true, icon: 'focus' },
-  { key: 'layout', label: '排版布局', active: true, icon: 'layout' },
-  { key: 'notes', label: '演讲者备注', active: true, icon: 'message' }
+  { key: 'visual_element', label: '视觉元素', active: true, icon: 'image', image_prompt: true },
+  { key: 'visual_focus', label: '视觉焦点', active: true, icon: 'focus', image_prompt: true },
+  { key: 'layout', label: '排版布局', active: true, icon: 'layout', image_prompt: true },
+  { key: 'notes', label: '演讲者备注', active: true, icon: 'message', image_prompt: false }
 ])
+
+// Field management
+const newFieldLabel = ref('')
+const showAddField = ref(false)
+const dragSrcIndex = ref(null)
+
+function addField() {
+  const label = newFieldLabel.value.trim()
+  if (!label) return
+  const key = 'custom_' + Date.now()
+  extraFields.value.push({ key, label, active: true, icon: 'message', image_prompt: true })
+  newFieldLabel.value = ''
+  showAddField.value = false
+}
+
+function removeField(index) {
+  extraFields.value.splice(index, 1)
+}
+
+function toggleFieldActive(index) {
+  extraFields.value[index].active = !extraFields.value[index].active
+}
+
+function toggleFieldImagePrompt(index) {
+  extraFields.value[index].image_prompt = !extraFields.value[index].image_prompt
+}
+
+function onFieldDragStart(e, index) {
+  dragSrcIndex.value = index
+  e.dataTransfer.effectAllowed = 'move'
+}
+
+function onFieldDragOver(e, index) {
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+}
+
+function onFieldDrop(e, index) {
+  e.preventDefault()
+  if (dragSrcIndex.value === null || dragSrcIndex.value === index) return
+  const arr = [...extraFields.value]
+  const [moved] = arr.splice(dragSrcIndex.value, 1)
+  arr.splice(index, 0, moved)
+  extraFields.value = arr
+  dragSrcIndex.value = null
+}
 
 // Generation mode
 const generationMode = ref('stream')
@@ -352,17 +398,62 @@ function getFieldIcon(iconType) {
 
             <div class="settings-section">
               <div class="settings-label">额外字段</div>
-              <div class="fields-container">
-                <span
-                  v-for="field in extraFields"
+              <div class="fields-list">
+                <div
+                  v-for="(field, idx) in extraFields"
                   :key="field.key"
-                  class="field-pill"
-                  :class="{ active: field.active }"
-                  @click="toggleField(field.key)"
+                  class="field-row"
+                  :class="{ inactive: !field.active }"
+                  draggable="true"
+                  @dragstart="onFieldDragStart($event, idx)"
+                  @dragover="onFieldDragOver($event, idx)"
+                  @drop="onFieldDrop($event, idx)"
                 >
-                  {{ field.label }}
-                </span>
+                  <span class="field-drag-handle" title="拖拽排序">⠿</span>
+                  <span class="field-row-label">{{ field.label }}</span>
+                  <button
+                    class="field-icon-btn"
+                    :class="{ active: field.active }"
+                    @click="toggleFieldActive(idx)"
+                    :title="field.active ? '点击隐藏' : '点击显示'"
+                  >
+                    <svg v-if="field.active" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  </button>
+                  <button
+                    class="field-icon-btn"
+                    :class="{ 'img-prompt-on': field.image_prompt }"
+                    @click="toggleFieldImagePrompt(idx)"
+                    :title="field.image_prompt ? '参与图片生成（点击关闭）' : '不参与图片生成（点击开启）'"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  </button>
+                  <button class="field-icon-btn delete" @click="removeField(idx)" title="删除字段">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
               </div>
+              <!-- 添加字段 -->
+              <div v-if="showAddField" class="add-field-row">
+                <input
+                  v-model="newFieldLabel"
+                  class="add-field-input"
+                  placeholder="字段名称"
+                  @keydown.enter="addField"
+                  @keydown.escape="showAddField = false"
+                  autofocus
+                />
+                <button class="field-icon-btn" @click="addField" title="确认添加">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+                </button>
+                <button class="field-icon-btn delete" @click="showAddField = false; newFieldLabel = ''" title="取消">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <button v-else class="add-field-btn" @click="showAddField = true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加字段
+              </button>
             </div>
           </div>
         </div>
@@ -753,7 +844,7 @@ function getFieldIcon(iconType) {
   top: 100%;
   left: 0;
   margin-top: 4px;
-  width: 280px;
+  width: 320px;
   background: white;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
@@ -761,6 +852,8 @@ function getFieldIcon(iconType) {
   padding: 16px;
   z-index: 50;
   display: none;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 
 .settings-panel.open {
@@ -806,31 +899,123 @@ function getFieldIcon(iconType) {
   color: white;
 }
 
-.fields-container {
+.fields-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
 }
 
-.field-pill {
-  display: inline-flex;
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: grab;
+  transition: all 0.15s;
+}
+
+.field-row:hover {
+  background: #f1f5f9;
+}
+
+.field-row.inactive {
+  opacity: 0.5;
+}
+
+.field-drag-handle {
+  color: #94a3b8;
+  cursor: grab;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.field-row-label {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-icon-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.field-icon-btn:hover {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.field-icon-btn.active {
+  color: #3b82f6;
+}
+
+.field-icon-btn.img-prompt-on {
+  color: #f59e0b;
+}
+
+.field-icon-btn.delete:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.add-field-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.add-field-input {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid #3b82f6;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+
+.add-field-btn {
+  display: flex;
   align-items: center;
   gap: 4px;
   padding: 5px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-  border: 1px solid #e5e7eb;
-  background: #f8fafc;
+  border: 1px dashed #e5e7eb;
+  border-radius: 6px;
+  background: transparent;
   color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  width: 100%;
+  justify-content: center;
 }
 
-.field-pill.active {
-  background: #FEF3C7;
-  border-color: #F59E0B;
-  color: #92400e;
+.add-field-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #eff6ff;
 }
 
 /* Requirements Section */

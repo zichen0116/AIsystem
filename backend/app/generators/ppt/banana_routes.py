@@ -668,8 +668,9 @@ Constraints:
 - Output only the JSON array, no other text
 - 请使用全中文输出。"""
 
-                # 调用 AI 生成大纲（模拟流式）
-                response = await banana_svc.dashscope.chat(prompt)
+                # 调用 AI 生成大纲（Gemini text provider）
+                from app.generators.ppt.banana_providers import get_text_provider_singleton
+                response = await get_text_provider_singleton().agenerate_text(prompt)
 
                 # 解析 AI 响应
                 outline_content = banana_svc._extract_description(response)
@@ -1840,7 +1841,7 @@ async def generate_outline_from_dialog(
     db: AsyncSession = Depends(get_db)
 ):
     """从对话历史生成结构化大纲"""
-    from app.services.ai.dashscope_service import get_dashscope_service
+    from app.generators.ppt.banana_providers import get_text_provider_singleton
 
     result = await db.execute(
         select(PPTProject)
@@ -1860,8 +1861,6 @@ async def generate_outline_from_dialog(
 
     # 构建对话内容
     conversation = "\n".join([f"{s.role}: {s.content}" for s in sessions])
-
-    dashscope = get_dashscope_service()
 
     # 构建提示词
     prompt = f"""根据以下对话内容，生成一个PPT大纲：
@@ -1884,7 +1883,7 @@ async def generate_outline_from_dialog(
 只返回JSON，不要其他内容。"""
 
     try:
-        response = await dashscope.chat(prompt)
+        response = await get_text_provider_singleton().agenerate_text(prompt)
 
         # 解析 JSON 响应
         import re

@@ -25,49 +25,98 @@ class PptExportService:
     """PPT导出服务"""
 
     @staticmethod
-    def create_pptx_from_images(image_paths: list[str], output_file: str = None, aspect_ratio: str = '16:9') -> Optional[bytes]:
+    def create_pptx_from_images(
+        image_paths: list[str],
+        output_file: str = None,
+        aspect_ratio: str = '16:9',
+        pages_data: list[dict] = None,
+        add_text_layer: bool = False,
+    ) -> Optional[bytes]:
         """
-        从图片创建 PPTX 文件
+        从图片创建 PPTX 文件。
 
         Args:
             image_paths: 图片路径列表
-            output_file: 输出文件路径（如果为 None，则返回 bytes）
+            output_file: 输出文件路径（None 则返回 bytes）
             aspect_ratio: 页面比例，如 '16:9', '4:3', '1:1'
+            pages_data: 可选页面数据列表，每项含 title / description / notes
+            add_text_layer: 为 True 时在图片上叠加透明文字层（可编辑 PPTX）
 
         Returns:
-            如果 output_file 为 None，返回 PPTX 文件的字节数据
+            PPTX 字节数据（output_file 为 None 时）
         """
+        import os
         from pptx import Presentation
-        from pptx.util import Inches
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
 
         prs = Presentation()
 
-        # 设置幻灯片尺寸
         page_w, page_h = get_page_size_inches(aspect_ratio)
         prs.slide_width = Inches(page_w)
         prs.slide_height = Inches(page_h)
 
-        # 添加每张图片作为一页
-        for image_path in image_paths:
-            import os
+        for idx, image_path in enumerate(image_paths):
             if not os.path.exists(image_path):
                 logger.warning(f"图片不存在: {image_path}")
                 continue
 
-            # 添加空白幻灯片
             blank_slide_layout = prs.slide_layouts[6]
             slide = prs.slides.add_slide(blank_slide_layout)
 
-            # 添加图片填满整个幻灯片
+            # 底层：图片填满幻灯片
             slide.shapes.add_picture(
                 image_path,
-                left=0,
-                top=0,
+                left=0, top=0,
                 width=prs.slide_width,
-                height=prs.slide_height
+                height=prs.slide_height,
             )
 
-        # 保存或返回字节
+            if add_text_layer and pages_data and idx < len(pages_data):
+                page = pages_data[idx]
+                title_text = page.get("title") or ""
+                desc_text = page.get("description") or ""
+                notes_text = page.get("notes") or ""
+
+                # 标题文本框（顶部 10%，透明背景，白色字）
+                if title_text:
+                    title_h = Inches(page_h * 0.12)
+                    txBox = slide.shapes.add_textbox(
+                        Inches(page_w * 0.05), Inches(page_h * 0.04),
+                        Inches(page_w * 0.9), title_h,
+                    )
+                    tf = txBox.text_frame
+                    tf.word_wrap = True
+                    p = tf.paragraphs[0]
+                    p.alignment = PP_ALIGN.LEFT
+                    run = p.add_run()
+                    run.text = title_text
+                    run.font.size = Pt(28)
+                    run.font.bold = True
+                    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+                # 描述文本框（底部 20%，半透明字）
+                if desc_text:
+                    desc_h = Inches(page_h * 0.22)
+                    txBox2 = slide.shapes.add_textbox(
+                        Inches(page_w * 0.05), Inches(page_h * 0.75),
+                        Inches(page_w * 0.9), desc_h,
+                    )
+                    tf2 = txBox2.text_frame
+                    tf2.word_wrap = True
+                    p2 = tf2.paragraphs[0]
+                    run2 = p2.add_run()
+                    # 截断过长描述
+                    run2.text = desc_text[:300] + ("…" if len(desc_text) > 300 else "")
+                    run2.font.size = Pt(12)
+                    run2.font.color.rgb = RGBColor(0xEE, 0xEE, 0xEE)
+
+                # 演讲者备注
+                if notes_text:
+                    notes_slide = slide.notes_slide
+                    notes_slide.notes_text_frame.text = notes_text
+
         if output_file:
             prs.save(output_file)
             return None
