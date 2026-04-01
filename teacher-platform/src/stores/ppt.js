@@ -102,9 +102,29 @@ export const usePptStore = defineStore('ppt', {
         this.projectStatus = response.status
         this.creationType = response.creation_type
         this.outlineText = response.outline_text || ''
+        if (response.settings && typeof response.settings === 'object') {
+          this.projectSettings = { ...this.projectSettings, ...response.settings }
+        }
         return response
       } catch (error) {
         this.setError('fetch', error.message)
+        throw error
+      }
+    },
+
+    async updateSettings(projectId, settingsData) {
+      try {
+        const response = await apiRequest(`${API}/projects/${projectId}/settings`, {
+          method: 'PUT',
+          body: JSON.stringify(settingsData)
+        })
+        this.projectSettings = { ...this.projectSettings, ...settingsData }
+        if (this.projectData) {
+          this.projectData = { ...this.projectData, settings: this.projectSettings }
+        }
+        return response
+      } catch (error) {
+        this.setError('updateSettings', error.message)
         throw error
       }
     },

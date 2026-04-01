@@ -5,7 +5,9 @@ import {
   exportEditablePptx, generateImages,
   editPageImage, getImageVersions, setCurrentVersion,
   getTask, getExportTaskStatus,
-  getMaterials, generateMaterial
+  getMaterials, generateMaterial,
+  getPresetTemplates, getUserTemplates, uploadProjectTemplate,
+  regeneratePageRenovation, updateProjectSettings
 } from '@/api/ppt'
 import { authFetch } from '@/api/http'
 
@@ -56,6 +58,21 @@ const materialAspectRatio = ref('1:1')
 const materialGenerating = ref(false)
 const materialTaskId = ref(null)
 let materialPollTimer = null
+
+// -------- 模板切换 --------
+const showTemplateModal = ref(false)
+const presetTemplates = ref([])
+const userTemplatesList = ref([])
+const templatesLoading = ref(false)
+const currentTemplateUrl = computed(() => pptStore.projectSettings?.template_image_url || null)
+
+// -------- 在线编辑 context_images --------
+const contextUseTemplate = ref(false)
+const contextMaterialIds = ref([])
+
+// -------- renovation 单页再生 --------
+const renovationRegenerating = ref(false)
+const isRenovationMode = computed(() => pptStore.creationType === 'renovation')
 
 onMounted(async () => {
   if (pptStore.projectId) {
@@ -246,7 +263,7 @@ function _pollEditableExport() {
         editableExportStatus.value = 'done'
         editableExportUrl.value = task.result?.url || null
         if (editableExportUrl.value) {
-          window.open(editableExportUrl.value, '_blank')
+          await _downloadExportResult(task.result, pptStore.projectData?.title || 'presentation', 'pptx')
         }
       } else if (task.status === 'FAILED') {
         clearInterval(editableExportPollTimer)
@@ -286,7 +303,7 @@ function _pollImagesExport() {
         imagesExportStatus.value = 'done'
         imagesExportUrl.value = task.result?.url || null
         if (imagesExportUrl.value) {
-          window.open(imagesExportUrl.value, '_blank')
+          await _downloadExportResult(task.result, pptStore.projectData?.title || 'presentation', 'zip')
         }
       } else if (task.status === 'FAILED') {
         clearInterval(imagesExportPollTimer)
@@ -299,6 +316,30 @@ function _pollImagesExport() {
   }, 2000)
 }
 
+// 统一导出结果下载（兼容 OSS URL 和 is_local 本地路径）
+async function _downloadExportResult(result, basename, ext) {
+  const url = result?.url
+  if (!url) return
+  if (result?.is_local) {
+    // OSS 不可达，文件在本地：通过带鉴权的接口下载
+    const filename = url.replace(/\\/g, '/').split('/').pop()
+    try {
+      const res = await authFetch(`/api/v1/ppt/exports/local/${encodeURIComponent(filename)}`)
+      if (!res.ok) { alert('本地文件下载失败，OSS 服务不可用'); return }
+      const blob = await res.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${basename}.${ext}`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000)
+    } catch (e) {
+      alert('下载失败：' + e.message)
+    }
+  } else {
+    window.open(url, '_blank')
+  }
+}
+
 // -------- 单页在线编辑 --------
 
 async function submitEditInstruction() {
@@ -307,7 +348,12 @@ async function submitEditInstruction() {
   editErrorMsg.value = ''
   editTaskId.value = null
   try {
-    const res = await editPageImage(pptStore.projectId, currentPage.value.id, editInstruction.value)
+    const contextImages = {
+      use_template: contextUseTemplate.value,
+      desc_image_urls: [],
+      uploaded_image_ids: contextMaterialIds.value.map(String)
+    }
+    const res = await editPageImage(pptStore.projectId, currentPage.value.id, editInstruction.value, contextImages)
     editTaskId.value = res.task_id
     _pollEditTask()
   } catch (e) {
@@ -399,6 +445,64 @@ onUnmounted(() => {
   clearInterval(imagesExportPollTimer)
   clearInterval(materialPollTimer)
 })
+
+// -------- 模板切换逻辑 --------
+
+async function openTemplateModal() {
+  showTemplateModal.value = true
+  templatesLoading.value = true
+  try {
+    const [presets, userTpls] = await Promise.all([getPresetTemplates(), getUserTemplates()])
+    presetTemplates.value = Array.isArray(presets) ? presets : []
+    userTemplatesList.value = Array.isArray(userTpls) ? userTpls : []
+  } catch (e) {
+    console.error('加载模板失败:', e)
+  } finally {
+    templatesLoading.value = false
+  }
+}
+
+async function selectTemplate(templateUrl) {
+  if (!pptStore.projectId || !templateUrl) return
+  try {
+    await updateProjectSettings(pptStore.projectId, { template_image_url: templateUrl })
+    pptStore.projectSettings = { ...pptStore.projectSettings, template_image_url: templateUrl }
+    showTemplateModal.value = false
+  } catch (e) {
+    console.error('设置模板失败:', e)
+    alert('设置模板失败：' + e.message)
+  }
+}
+
+async function handleUploadTemplate(file) {
+  if (!pptStore.projectId || !file) return
+  try {
+    const res = await uploadProjectTemplate(pptStore.projectId, file)
+    pptStore.projectSettings = { ...pptStore.projectSettings, template_image_url: res.url }
+    // reload template lists
+    await openTemplateModal()
+  } catch (e) {
+    console.error('上传模板失败:', e)
+    alert('上传模板失败：' + e.message)
+  }
+}
+
+// -------- renovation 单页再生 --------
+
+async function handleRenovateCurrentPage() {
+  if (!pptStore.projectId || !currentPage.value?.id || renovationRegenerating.value) return
+  renovationRegenerating.value = true
+  try {
+    await regeneratePageRenovation(pptStore.projectId, currentPage.value.id)
+    await pptStore.fetchPages(pptStore.projectId)
+    syncPages()
+  } catch (e) {
+    console.error('翻新再生成失败:', e)
+    alert('翻新再生成失败：' + e.message)
+  } finally {
+    renovationRegenerating.value = false
+  }
+}
 
 // -------- 素材库逻辑 --------
 
@@ -525,7 +629,7 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
             <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
           </svg>
         </button>
-        <button class="icon-btn" title="更换模板">
+        <button class="icon-btn" :class="{ active: showTemplateModal }" title="更换模板" @click="openTemplateModal">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
             <polyline points="17 8 12 3 7 8"/>
@@ -749,6 +853,14 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 
             <div class="control-right">
               <button
+                v-if="isRenovationMode"
+                class="action-btn secondary"
+                :disabled="renovationRegenerating || !currentPage?.id"
+                @click="handleRenovateCurrentPage"
+              >
+                {{ renovationRegenerating ? '再生成中...' : '翻新再生成' }}
+              </button>
+              <button
                 class="action-btn secondary"
                 :class="{ active: showMaterialPanel }"
                 @click="toggleMaterialPanel"
@@ -808,8 +920,36 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
             class="edit-textarea"
             placeholder="例如：把背景改为深蓝色，突出标题区"
             :disabled="editStatus === 'processing'"
-            rows="5"
+            rows="4"
           />
+
+          <!-- 参考上下文 -->
+          <div class="context-section">
+            <div class="context-label">参考上下文</div>
+            <label class="context-row">
+              <input type="checkbox" v-model="contextUseTemplate" :disabled="!currentTemplateUrl" />
+              <span>使用当前模板图</span>
+              <img v-if="currentTemplateUrl" :src="currentTemplateUrl" class="context-thumb" />
+              <span v-else class="context-none">（未设置模板）</span>
+            </label>
+            <div v-if="materials.length > 0" class="context-materials">
+              <div class="context-label" style="margin-top:6px">从素材库选参考图</div>
+              <label
+                v-for="mat in materials.slice(0, 8)"
+                :key="mat.id"
+                class="context-mat-row"
+              >
+                <input
+                  type="checkbox"
+                  :value="mat.id"
+                  v-model="contextMaterialIds"
+                />
+                <img v-if="mat.url || mat.image_url" :src="mat.url || mat.image_url" class="context-thumb" />
+                <span class="context-mat-label">{{ mat.title || mat.prompt || '素材' + mat.id }}</span>
+              </label>
+            </div>
+          </div>
+
           <button
             class="action-btn primary full"
             :disabled="!editInstruction.trim() || editStatus === 'processing'"
@@ -822,6 +962,77 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
           </p>
         </template>
       </aside>
+
+      <!-- 模板切换 Modal -->
+      <div v-if="showTemplateModal" class="modal-overlay" @click.self="showTemplateModal = false">
+        <div class="modal-box">
+          <div class="modal-header">
+            <span>更换模板</span>
+            <button class="close-btn" @click="showTemplateModal = false">✕</button>
+          </div>
+
+          <!-- 当前模板 -->
+          <div v-if="currentTemplateUrl" class="template-current">
+            <div class="template-section-label">当前模板</div>
+            <img :src="currentTemplateUrl" class="template-current-img" />
+          </div>
+
+          <div v-if="templatesLoading" class="panel-hint">加载中...</div>
+          <template v-else>
+            <!-- 预设模板 -->
+            <div class="template-section-label">预设模板</div>
+            <div class="template-grid">
+              <div
+                v-for="tpl in presetTemplates"
+                :key="tpl.id"
+                class="template-card"
+                :class="{ selected: currentTemplateUrl === tpl.thumbnail }"
+                @click="selectTemplate(tpl.thumbnail)"
+              >
+                <img :src="tpl.thumbnail" :alt="tpl.name" class="template-thumb" />
+                <div class="template-name">{{ tpl.name }}</div>
+                <div class="template-cat">{{ tpl.category }}</div>
+              </div>
+            </div>
+
+            <!-- 用户模板 -->
+            <div v-if="userTemplatesList.length > 0">
+              <div class="template-section-label" style="margin-top:16px">我的模板</div>
+              <div class="template-grid">
+                <div
+                  v-for="tpl in userTemplatesList"
+                  :key="tpl.id"
+                  class="template-card"
+                  :class="{ selected: currentTemplateUrl === tpl.cover_url }"
+                  @click="selectTemplate(tpl.cover_url)"
+                >
+                  <img v-if="tpl.cover_url" :src="tpl.cover_url" class="template-thumb" />
+                  <div v-else class="template-thumb-placeholder">无图</div>
+                  <div class="template-name">{{ tpl.name }}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 上传自定义模板 -->
+            <div class="template-upload-row">
+              <label class="upload-template-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                上传自定义模板
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  style="display:none"
+                  @change="e => handleUploadTemplate(e.target.files[0])"
+                />
+              </label>
+            </div>
+          </template>
+        </div>
+      </div>
 
       <!-- 素材库面板 -->
       <aside v-if="showMaterialPanel" class="right-panel">
@@ -1763,5 +1974,191 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Context images in edit panel */
+.context-section {
+  padding: 10px 16px;
+  border-top: 1px solid #f1f5f9;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 8px;
+}
+
+.context-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.context-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.context-row input[type=checkbox] { cursor: pointer; }
+.context-thumb { width: 28px; height: 18px; object-fit: cover; border-radius: 3px; border: 1px solid #e5e7eb; }
+.context-none { font-size: 11px; color: #94a3b8; }
+
+.context-materials {
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.context-mat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.context-mat-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* Template modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-box {
+  background: white;
+  border-radius: 16px;
+  width: 680px;
+  max-width: 95vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  padding: 24px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 16px;
+}
+
+.template-current {
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.template-current-img {
+  width: 120px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid #3b82f6;
+  margin-top: 8px;
+}
+
+.template-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 10px;
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.template-card {
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.template-card:hover { border-color: #93c5fd; box-shadow: 0 2px 8px rgba(59,130,246,0.15); }
+.template-card.selected { border-color: #3b82f6; }
+
+.template-thumb {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  display: block;
+  background: #f1f5f9;
+}
+
+.template-thumb-placeholder {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.template-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: #374151;
+  padding: 4px 6px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-cat {
+  font-size: 10px;
+  color: #94a3b8;
+  padding: 0 6px 4px;
+}
+
+.template-upload-row {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.upload-template-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px dashed #e5e7eb;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.upload-template-btn:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: #eff6ff;
 }
 </style>

@@ -3,6 +3,14 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { refineDescriptions } from '@/api/ppt'
 
+// 额外字段默认配置
+const DEFAULT_EXTRA_FIELDS = [
+  { key: 'visual_element', label: '视觉元素', active: true, icon: 'image', image_prompt: true },
+  { key: 'visual_focus', label: '视觉焦点', active: true, icon: 'focus', image_prompt: true },
+  { key: 'layout', label: '排版布局', active: true, icon: 'layout', image_prompt: true },
+  { key: 'notes', label: '演讲者备注', active: true, icon: 'message', image_prompt: false }
+]
+
 const pptStore = usePptStore()
 
 const refineInput = ref('')
@@ -12,18 +20,30 @@ const showSettings = ref(false)
 const showRequirements = ref(false)
 const requirements = ref('')
 
-// Extra fields configuration
-const extraFields = ref([
-  { key: 'visual_element', label: '视觉元素', active: true, icon: 'image', image_prompt: true },
-  { key: 'visual_focus', label: '视觉焦点', active: true, icon: 'focus', image_prompt: true },
-  { key: 'layout', label: '排版布局', active: true, icon: 'layout', image_prompt: true },
-  { key: 'notes', label: '演讲者备注', active: true, icon: 'message', image_prompt: false }
-])
+// Extra fields configuration — 从 projectSettings 恢复，否则使用默认值
+const _savedFields = pptStore.projectSettings?.extra_fields_config
+const extraFields = ref(Array.isArray(_savedFields) && _savedFields.length > 0 ? _savedFields : DEFAULT_EXTRA_FIELDS)
 
 // Field management
 const newFieldLabel = ref('')
 const showAddField = ref(false)
 const dragSrcIndex = ref(null)
+
+// 持久化额外字段配置（防抖 800ms）
+let _saveFieldsTimer = null
+function _persistExtraFields() {
+  clearTimeout(_saveFieldsTimer)
+  _saveFieldsTimer = setTimeout(async () => {
+    if (!pptStore.projectId) return
+    try {
+      await pptStore.updateSettings(pptStore.projectId, {
+        extra_fields_config: extraFields.value
+      })
+    } catch (e) {
+      console.warn('保存额外字段配置失败:', e)
+    }
+  }, 800)
+}
 
 function addField() {
   const label = newFieldLabel.value.trim()
@@ -32,18 +52,22 @@ function addField() {
   extraFields.value.push({ key, label, active: true, icon: 'message', image_prompt: true })
   newFieldLabel.value = ''
   showAddField.value = false
+  _persistExtraFields()
 }
 
 function removeField(index) {
   extraFields.value.splice(index, 1)
+  _persistExtraFields()
 }
 
 function toggleFieldActive(index) {
   extraFields.value[index].active = !extraFields.value[index].active
+  _persistExtraFields()
 }
 
 function toggleFieldImagePrompt(index) {
   extraFields.value[index].image_prompt = !extraFields.value[index].image_prompt
+  _persistExtraFields()
 }
 
 function onFieldDragStart(e, index) {
@@ -64,6 +88,7 @@ function onFieldDrop(e, index) {
   arr.splice(index, 0, moved)
   extraFields.value = arr
   dragSrcIndex.value = null
+  _persistExtraFields()
 }
 
 // Generation mode

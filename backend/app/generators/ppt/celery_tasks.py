@@ -1058,7 +1058,7 @@ def generate_material_task(
 
         try:
             image_provider = get_image_provider_singleton()
-            oss_svc = get_oss_service()
+            oss_svc = _get_oss_service_safe()
 
             if task_id_str:
                 async with AsyncSessionLocal() as db:
@@ -1069,8 +1069,10 @@ def generate_material_task(
                 aspect_ratio=aspect_ratio,
             )
 
-            oss_key = "ppt/{}/materials/ai_{}.png".format(project_id, uuid.uuid4().hex[:10])
-            image_url = oss_svc.upload_bytes(img_bytes, oss_key)
+            uid = uuid.uuid4().hex[:10]
+            oss_key = "ppt/{}/materials/ai_{}.png".format(project_id, uid)
+            filename = "material_{}_{}.png".format(project_id, uid)
+            image_url, _is_local = _upload_or_save_local(oss_svc, img_bytes, oss_key, filename)
 
             if task_id_str:
                 async with AsyncSessionLocal() as db:

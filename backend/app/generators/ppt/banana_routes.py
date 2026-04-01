@@ -2349,6 +2349,39 @@ async def regenerate_page_renovation(
         raise HTTPException(status_code=500, detail=f"解析失败: {str(e)}")
 
 
+# ============= Local Export Serving (OSS fallback) =============
+
+@router.get("/exports/local/{filename}")
+async def serve_local_export(
+    filename: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    服务本地导出文件（OSS不可达时的降级方案）。
+    filename 只允许安全文件名，不含路径分隔符。
+    """
+    import os
+    from fastapi.responses import FileResponse
+    from app.generators.ppt.celery_tasks import _LOCAL_EXPORTS_DIR
+
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name != filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+
+    local_path = os.path.join(_LOCAL_EXPORTS_DIR, safe_name)
+    if not os.path.exists(local_path):
+        raise HTTPException(status_code=404, detail="文件不存在或已过期")
+
+    ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+    media_types = {
+        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pdf": "application/pdf",
+        "zip": "application/zip",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    return FileResponse(local_path, media_type=media_type, filename=safe_name)
+
+
 # ============= Extract Style from Image =============
 
 @router.post("/extract-style")
