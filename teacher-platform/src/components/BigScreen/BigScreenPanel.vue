@@ -7,8 +7,11 @@ import CenterTwo from './CenterTwo.vue'
 import RightOne from './RightOne.vue'
 import RightTwo from './RightTwo.vue'
 import RightThree from './RightThree.vue'
+import AdminDigitalHumanWidget from './AdminDigitalHumanWidget.vue'
+import { useAdminDigitalHumanStore } from '@/stores/adminDigitalHuman'
 
 const currentTime = ref(getCurrentDateTime())
+const adminDigitalHumanStore = useAdminDigitalHumanStore()
 
 const kpiItems = [
   { label: '活跃教师数', value: '268', unit: '人' },
@@ -84,6 +87,12 @@ onBeforeUnmount(() => {
         </dv-border-box-1>
         <dv-border-box-1 class="center-bottom">
           <CenterTwo />
+          <div class="admin-dh-overlay">
+            <AdminDigitalHumanWidget
+              :visible="adminDigitalHumanStore.visible"
+              :voice-mode="adminDigitalHumanStore.voiceMode"
+            />
+          </div>
         </dv-border-box-1>
       </div>
 
@@ -261,7 +270,17 @@ onBeforeUnmount(() => {
     background-color: #000;
     border-radius: 8px;
     box-shadow: inset 0 0 15px rgba(0, 98, 255, 0.2);
+    position: relative;
+    overflow: hidden;
   }
+}
+
+.admin-dh-overlay {
+  position: absolute;
+  right: 4px;
+  bottom: 8px;
+  z-index: 7;
+  pointer-events: auto;
 }
 
 .right {
