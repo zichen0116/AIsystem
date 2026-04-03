@@ -71,10 +71,27 @@ let refreshBtnEl = null
 // -------- 在线编辑 context_images --------
 const contextUseTemplate = ref(false)
 const contextMaterialIds = ref([])
+const contextUploadedFiles = ref([])
+const contextUploadedFileUrls = ref([])
+const previewImageRef = ref(null)
+const isRegionSelectionMode = ref(false)
+const isSelectingRegion = ref(false)
+const selectionStart = ref(null)
+const selectionRect = ref(null)
+const selectionBBox = ref(null)
 
 // -------- renovation 单页再生 --------
 const renovationRegenerating = ref(false)
 const isRenovationMode = computed(() => pptStore.creationType === 'renovation')
+const currentAspectRatioStyle = computed(() => {
+  const value = String(pptStore.projectSettings?.aspect_ratio || '16:9')
+  const [w, h] = value.split(':').map(Number)
+  return w > 0 && h > 0 ? `${w}/${h}` : '16/9'
+})
+const selectedRegionSummary = computed(() => {
+  if (!selectionBBox.value) return ''
+  return `${selectionBBox.value.width} x ${selectionBBox.value.height}px`
+})
 
 onMounted(async () => {
   if (pptStore.projectId) {
@@ -87,6 +104,16 @@ onMounted(async () => {
 watch(() => pptStore.outlinePages, () => {
   syncPages()
 }, { deep: true })
+
+watch(contextUploadedFiles, (files, previousFiles = []) => {
+  previousFiles.forEach((_, index) => {
+    const url = contextUploadedFileUrls.value[index]
+    if (url) {
+      URL.revokeObjectURL(url)
+    }
+  })
+  contextUploadedFileUrls.value = files.map(file => URL.createObjectURL(file))
+})
 
 function syncPages() {
   pages.value = pptStore.outlinePages.map(p => ({
@@ -113,6 +140,151 @@ function markPagesGenerating(targetPageIds = null) {
   })
 }
 
+function resetRegionSelection() {
+  isRegionSelectionMode.value = false
+  isSelectingRegion.value = false
+  selectionStart.value = null
+  selectionRect.value = null
+  selectionBBox.value = null
+}
+
+function getPreviewImageMetrics() {
+  const imageEl = previewImageRef.value
+  if (!imageEl) return null
+
+  const rect = imageEl.getBoundingClientRect()
+  const naturalWidth = imageEl.naturalWidth || rect.width
+  const naturalHeight = imageEl.naturalHeight || rect.height
+  if (!rect.width || !rect.height || !naturalWidth || !naturalHeight) {
+    return null
+  }
+
+  const naturalRatio = naturalWidth / naturalHeight
+  const displayRatio = rect.width / rect.height
+
+  let contentWidth = rect.width
+  let contentHeight = rect.height
+  let offsetX = 0
+  let offsetY = 0
+
+  if (naturalRatio > displayRatio) {
+    contentHeight = rect.width / naturalRatio
+    offsetY = (rect.height - contentHeight) / 2
+  } else if (naturalRatio < displayRatio) {
+    contentWidth = rect.height * naturalRatio
+    offsetX = (rect.width - contentWidth) / 2
+  }
+
+  return {
+    rect,
+    naturalWidth,
+    naturalHeight,
+    contentWidth,
+    contentHeight,
+    offsetX,
+    offsetY
+  }
+}
+
+function removeContextUploadedFile(index) {
+  contextUploadedFiles.value = contextUploadedFiles.value.filter((_, i) => i !== index)
+}
+
+function clearSelectedRegion() {
+  selectionRect.value = null
+  selectionBBox.value = null
+}
+
+function handleContextFileUpload(event) {
+  const files = Array.from(event?.target?.files || [])
+  if (files.length > 0) {
+    contextUploadedFiles.value = [...contextUploadedFiles.value, ...files]
+  }
+  if (event?.target) {
+    event.target.value = ''
+  }
+}
+
+function toggleRegionSelectionMode() {
+  if (isRegionSelectionMode.value) {
+    resetRegionSelection()
+  } else {
+    clearSelectedRegion()
+    isRegionSelectionMode.value = true
+  }
+}
+
+function handleRegionPointerDown(event) {
+  if (!showEditPanel.value || !isRegionSelectionMode.value || !previewImageRef.value) return
+  const metrics = getPreviewImageMetrics()
+  if (!metrics) return
+
+  const x = event.clientX - metrics.rect.left - metrics.offsetX
+  const y = event.clientY - metrics.rect.top - metrics.offsetY
+  if (x < 0 || y < 0 || x > metrics.contentWidth || y > metrics.contentHeight) return
+
+  isSelectingRegion.value = true
+  selectionStart.value = { x, y }
+  selectionRect.value = {
+    left: metrics.offsetX + x,
+    top: metrics.offsetY + y,
+    width: 0,
+    height: 0
+  }
+}
+
+function handleRegionPointerMove(event) {
+  if (!showEditPanel.value || !isRegionSelectionMode.value || !isSelectingRegion.value || !selectionStart.value) return
+  const metrics = getPreviewImageMetrics()
+  if (!metrics) return
+
+  const x = Math.max(0, Math.min(event.clientX - metrics.rect.left - metrics.offsetX, metrics.contentWidth))
+  const y = Math.max(0, Math.min(event.clientY - metrics.rect.top - metrics.offsetY, metrics.contentHeight))
+
+  selectionRect.value = {
+    left: metrics.offsetX + Math.min(selectionStart.value.x, x),
+    top: metrics.offsetY + Math.min(selectionStart.value.y, y),
+    width: Math.abs(x - selectionStart.value.x),
+    height: Math.abs(y - selectionStart.value.y)
+  }
+}
+
+async function handleRegionPointerUp() {
+  if (!showEditPanel.value || !isRegionSelectionMode.value || !isSelectingRegion.value || !selectionRect.value || !previewImageRef.value) {
+    isSelectingRegion.value = false
+    selectionStart.value = null
+    return
+  }
+
+  const metrics = getPreviewImageMetrics()
+  isSelectingRegion.value = false
+  selectionStart.value = null
+  if (!metrics) return
+
+  const leftInImage = selectionRect.value.left - metrics.offsetX
+  const topInImage = selectionRect.value.top - metrics.offsetY
+  if (selectionRect.value.width < 12 || selectionRect.value.height < 12) {
+    clearSelectedRegion()
+    return
+  }
+
+  const scaleX = metrics.naturalWidth / metrics.contentWidth
+  const scaleY = metrics.naturalHeight / metrics.contentHeight
+  selectionBBox.value = {
+    x: Math.max(0, Math.round(leftInImage * scaleX)),
+    y: Math.max(0, Math.round(topInImage * scaleY)),
+    width: Math.max(1, Math.round(selectionRect.value.width * scaleX)),
+    height: Math.max(1, Math.round(selectionRect.value.height * scaleY))
+  }
+
+  /*
+
+    alert('框选区域裁剪失败，可能是当前图片不允许浏览器读取像素数据')
+  }
+}
+  */
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -132,8 +304,8 @@ async function waitForImageTask(taskId) {
 
   while (Date.now() < deadline) {
     const task = await getTask(pptStore.projectId, taskId)
+    await reloadPreviewData()
     if (task.status === 'COMPLETED' || task.status === 'FAILED') {
-      await reloadPreviewData()
       const failureCount = task?.result?.failure_count || 0
       const failedPages = task?.result?.failed_pages || []
       if (task.status === 'FAILED' || failureCount > 0) {
@@ -269,6 +441,10 @@ function handleEditCurrentPage() {
   editInstruction.value = ''
   editStatus.value = 'idle'
   editErrorMsg.value = ''
+  contextUseTemplate.value = false
+  contextMaterialIds.value = []
+  contextUploadedFiles.value = []
+  resetRegionSelection()
   showEditPanel.value = true
   showVersionPanel.value = false
 }
@@ -466,7 +642,9 @@ async function submitEditInstruction() {
     const contextImages = {
       use_template: contextUseTemplate.value,
       desc_image_urls: [],
-      uploaded_image_ids: contextMaterialIds.value.map(String)
+      uploaded_image_ids: contextMaterialIds.value.map(String),
+      uploaded_files: contextUploadedFiles.value,
+      selection_bbox: selectionBBox.value
     }
     const res = await editPageImage(pptStore.projectId, currentPage.value.id, editInstruction.value, contextImages)
     editTaskId.value = res.task_id
@@ -486,8 +664,7 @@ function _pollEditTask() {
         clearInterval(editPollTimer)
         editStatus.value = 'done'
         // 刷新页面图和版本列表
-        await pptStore.fetchPages(pptStore.projectId)
-        syncPages()
+        await reloadPreviewData()
         if (showVersionPanel.value) {
           await loadVersions()
         }
@@ -495,6 +672,7 @@ function _pollEditTask() {
         clearInterval(editPollTimer)
         editStatus.value = 'error'
         editErrorMsg.value = task.result?.error || '编辑失败，请重试'
+        await reloadPreviewData()
       }
     } catch (e) {
       clearInterval(editPollTimer)
@@ -549,6 +727,8 @@ async function switchVersion(version) {
 
 // 当切换预览页时刷新版本列表
 watch(currentPageIndex, async () => {
+  contextUploadedFiles.value = []
+  resetRegionSelection()
   if (showVersionPanel.value) {
     await loadVersions()
   }
@@ -559,6 +739,7 @@ onUnmounted(() => {
   clearInterval(editableExportPollTimer)
   clearInterval(imagesExportPollTimer)
   clearInterval(materialPollTimer)
+  contextUploadedFileUrls.value.forEach(url => URL.revokeObjectURL(url))
   unbindHeaderQuickActions()
 })
 
@@ -930,14 +1111,46 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
           <div class="preview-container">
             <div
               class="preview-slide"
-              :style="{ aspectRatio: '16/9' }"
+              :class="{ 'region-selecting': showEditPanel && isRegionSelectionMode }"
+              :style="{ aspectRatio: currentAspectRatioStyle }"
+              @mousedown="handleRegionPointerDown"
+              @mousemove="handleRegionPointerMove"
+              @mouseup="handleRegionPointerUp"
+              @mouseleave="handleRegionPointerUp"
             >
               <template v-if="currentPage?.thumbnail">
+                <button
+                  v-if="showEditPanel"
+                  class="region-select-btn"
+                  type="button"
+                  @mousedown.stop
+                  @click.stop="toggleRegionSelectionMode"
+                >
+                  {{ isRegionSelectionMode ? '结束框选' : '框选编辑区域' }}
+                </button>
+                <div
+                  v-if="showEditPanel && isRegionSelectionMode"
+                  class="region-select-hint"
+                >
+                  在图片上拖动框选，裁剪结果会自动加入右侧参考图
+                </div>
                 <img
+                  ref="previewImageRef"
                   :src="currentPage.imageUrl"
                   :alt="currentPage.title"
                   class="slide-image"
+                  draggable="false"
                 >
+                <div
+                  v-if="selectionRect && showEditPanel"
+                  class="selection-rect"
+                  :style="{
+                    left: `${selectionRect.left}px`,
+                    top: `${selectionRect.top}px`,
+                    width: `${selectionRect.width}px`,
+                    height: `${selectionRect.height}px`
+                  }"
+                />
               </template>
               <template v-else>
                 <div class="slide-placeholder">
@@ -1072,6 +1285,46 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
                 <img v-if="mat.url || mat.image_url" :src="mat.url || mat.image_url" class="context-thumb" />
                 <span class="context-mat-label">{{ mat.title || mat.prompt || '素材' + mat.id }}</span>
               </label>
+            </div>
+            <div class="context-upload-actions">
+              <button
+                class="action-btn secondary small"
+                type="button"
+                @click="toggleRegionSelectionMode"
+              >
+                {{ isRegionSelectionMode ? '结束框选' : '框选参考图' }}
+              </button>
+              <label class="upload-context-btn">
+                上传参考图
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  multiple
+                  style="display:none"
+                  @change="handleContextFileUpload"
+                />
+              </label>
+            </div>
+            <p v-if="isRegionSelectionMode" class="panel-hint muted">
+              左侧大图已进入框选模式，拖动后会把选区自动加入参考图
+            </p>
+            <div v-if="selectionBBox" class="context-selection-card">
+              <div class="context-selection-title">已选框选区域</div>
+              <div class="context-selection-meta">{{ selectedRegionSummary }}</div>
+              <button class="action-btn secondary small" type="button" @click="clearSelectedRegion">
+                清除选区
+              </button>
+            </div>
+            <div v-if="contextUploadedFiles.length > 0" class="context-upload-grid">
+              <div
+                v-for="(file, index) in contextUploadedFiles"
+                :key="file.name + index"
+                class="context-upload-card"
+              >
+                <img :src="contextUploadedFileUrls[index]" :alt="file.name" class="context-upload-thumb" />
+                <button class="context-upload-remove" type="button" @click="removeContextUploadedFile(index)">×</button>
+                <span class="context-upload-name" :title="file.name">{{ file.name }}</span>
+              </div>
             </div>
           </div>
 
@@ -1668,11 +1921,54 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
   position: relative;
 }
 
+.preview-slide.region-selecting {
+  cursor: crosshair;
+}
+
 .slide-image {
   width: 100%;
   height: 100%;
   object-fit: contain;
   display: block;
+  user-select: none;
+}
+
+.region-select-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+.region-select-hint {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 3;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  color: white;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.selection-rect {
+  position: absolute;
+  z-index: 2;
+  border: 2px solid #2563eb;
+  background: rgba(37, 99, 235, 0.14);
+  box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.12);
+  pointer-events: none;
 }
 
 .slide-placeholder {
@@ -2153,6 +2449,99 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+
+.context-upload-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.upload-context-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.context-upload-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 10px;
+}
+
+.context-selection-card {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #bfdbfe;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+}
+
+.context-selection-title {
+  font-size: 0;
+  color: transparent;
+}
+
+.context-selection-title::after {
+  content: 'Selected Region';
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.context-selection-meta {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  color: #475569;
+}
+
+.context-upload-card {
+  position: relative;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 6px;
+}
+
+.context-upload-thumb {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.context-upload-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  color: white;
+  cursor: pointer;
+}
+
+.context-upload-name {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Template modal */

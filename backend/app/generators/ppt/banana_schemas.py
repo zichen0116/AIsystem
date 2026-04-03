@@ -293,11 +293,22 @@ class EditImageRequest(BaseModel):
     context_images: Optional["EditImageContext"] = None
 
 
+class EditImageSelectionBBox(BaseModel):
+    """用户框选的编辑区域，坐标基于原图像素尺寸。"""
+    x: float = Field(ge=0, description="选区左上角 x 坐标")
+    y: float = Field(ge=0, description="选区左上角 y 坐标")
+    width: float = Field(gt=0, description="选区宽度")
+    height: float = Field(gt=0, description="选区高度")
+
+
 class EditImageContext(BaseModel):
     """编辑图片的上下文图片"""
     use_template: bool = Field(default=False, description="是否使用模板图片")
     desc_image_urls: list[str] = Field(default_factory=list, description="描述中的图片URL列表")
     uploaded_image_ids: list[str] = Field(default_factory=list, description="上传的图片文件ID列表")
+
+
+    selection_bbox: Optional[EditImageSelectionBBox] = None
 
 
 # ============= Dialog Schemas =============

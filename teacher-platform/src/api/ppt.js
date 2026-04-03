@@ -179,6 +179,35 @@ export async function refineDescriptions(projectId, userRequirement, language = 
 }
 
 export async function editPageImage(projectId, pageId, editInstruction, contextImages = null) {
+  const uploadedFiles = Array.isArray(contextImages?.uploaded_files) ? contextImages.uploaded_files : []
+  if (uploadedFiles.length > 0) {
+    const formData = new FormData()
+    formData.append('edit_instruction', editInstruction)
+    formData.append('use_template', String(!!contextImages?.use_template))
+    if (contextImages?.selection_bbox) {
+      formData.append('selection_bbox', JSON.stringify(contextImages.selection_bbox))
+    }
+    if (Array.isArray(contextImages?.desc_image_urls) && contextImages.desc_image_urls.length > 0) {
+      formData.append('desc_image_urls', JSON.stringify(contextImages.desc_image_urls))
+    }
+    if (Array.isArray(contextImages?.uploaded_image_ids) && contextImages.uploaded_image_ids.length > 0) {
+      formData.append('uploaded_image_ids', JSON.stringify(contextImages.uploaded_image_ids))
+    }
+    uploadedFiles.forEach(file => {
+      formData.append('context_images', file)
+    })
+
+    const res = await authFetch(`${API}/projects/${projectId}/pages/${pageId}/edit/image`, {
+      method: 'POST',
+      body: formData
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(detail || '发起编辑失败')
+    }
+    return res.json()
+  }
+
   return await apiRequest(`${API}/projects/${projectId}/pages/${pageId}/edit/image`, {
     method: 'POST',
     body: JSON.stringify({

@@ -11,7 +11,9 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from celery import Task
+from fastapi import UploadFile
 from app.celery import celery_app
+from app.core.config import get_settings
 from app.generators.ppt.banana_service import get_banana_service
 from app.generators.ppt.file_service import get_oss_service
 from app.generators.ppt.page_utils import (
@@ -226,9 +228,83 @@ def _normalize_extension(file_type: Optional[str], filename: Optional[str] = Non
     return "bin"
 
 
+def _load_bytes_from_url_or_path(source: Optional[str]) -> Optional[bytes]:
+    """Read bytes from a local file path or remote URL."""
+    import urllib.request
+
+    if not source:
+        return None
+
+    if os.path.isfile(source):
+        try:
+            with open(source, "rb") as f:
+                return f.read()
+        except Exception as e:
+            logger.warning("读取本地资源失败 source=%s: %s", source, e)
+            return None
+
+    try:
+        with urllib.request.urlopen(source, timeout=30) as resp:
+            return resp.read()
+    except Exception as e:
+        logger.warning("下载资源失败 source=%s: %s", source, e)
+        return None
+
+
+async def _read_uploaded_context_images(uploaded_files: list[UploadFile] | None) -> list[bytes]:
+    """Read uploaded edit-context images into memory, ignoring non-image files."""
+    result: list[bytes] = []
+    for upload in uploaded_files or []:
+        ext = _normalize_extension(upload.content_type, upload.filename)
+        if ext not in ("png", "jpg", "jpeg", "webp", "gif"):
+            continue
+        data = await upload.read()
+        if data:
+            result.append(data)
+        try:
+            await upload.seek(0)
+        except Exception:
+            pass
+    return result
+
+
+async def _generate_image_with_retry(
+    image_provider,
+    *,
+    prompt: str,
+    ref_images: Optional[list[bytes]],
+    aspect_ratio: str,
+    resolution: str = "2K",
+    max_attempts: Optional[int] = None,
+    retry_delay: float = 1.0,
+) -> bytes:
+    """Retry image generation to smooth transient upstream disconnects."""
+    settings = get_settings()
+    attempts = max_attempts or max(1, int(settings.GENAI_MAX_RETRIES or 0) + 1)
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await image_provider.agenerate_image(
+                prompt=prompt,
+                ref_images=ref_images or None,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise
+            logger.warning("图片生成第 %s/%s 次失败，准备重试: %s", attempt, attempts, exc)
+            await asyncio.sleep(max(retry_delay, 0) * attempt)
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("图片生成失败")
+
+
 def _download_image_bytes(page, oss_svc) -> Optional[bytes]:
     """同步下载页面图片，返回 bytes；失败返回 None。oss_svc=None 时直接 URL 下载。"""
-    import urllib.request
     if not page.image_url:
         return None
     tmp_path = None
@@ -250,18 +326,110 @@ def _download_image_bytes(page, oss_svc) -> Optional[bytes]:
                         os.unlink(tmp_path)
                     except Exception:
                         pass
-    # 直接从 URL 下载（fallback）
-    try:
-        with urllib.request.urlopen(page.image_url, timeout=30) as resp:
-            return resp.read()
-    except Exception as e:
-        logger.warning("下载页面图片失败 page_id=%s: %s", page.id, e)
-        return None
+    # 直接从 URL / 本地路径下载（fallback）
+    return _load_bytes_from_url_or_path(page.image_url)
 
 
 # ---------------------------------------------------------------------------
 # 任务：批量生成描述
 # ---------------------------------------------------------------------------
+
+def _download_image_bytes(page, oss_svc) -> Optional[bytes]:
+    """Download a page image as bytes, falling back from OSS to URL/local path."""
+    if not page.image_url:
+        return None
+
+    tmp_path = None
+    if oss_svc is not None:
+        oss_key = _extract_oss_key(page.image_url)
+        if oss_key:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+                oss_svc.download_file(oss_key, tmp_path)
+                with open(tmp_path, "rb") as f:
+                    return f.read()
+            except Exception as e:
+                logger.warning("OSS 涓嬭浇澶辫触 page_id=%s, 闄嶇骇 URL: %s", page.id, e)
+            finally:
+                if tmp_path:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+
+    return _load_bytes_from_url_or_path(page.image_url)
+
+
+def _normalize_selection_bbox(
+    selection_bbox: Optional[dict],
+    *,
+    image_width: int,
+    image_height: int,
+    min_size: int = 8,
+) -> Optional[tuple[int, int, int, int]]:
+    """Normalize a selection bbox into a clamped (left, top, right, bottom) tuple."""
+    import math
+
+    if not isinstance(selection_bbox, dict):
+        return None
+
+    try:
+        if {"x", "y", "width", "height"}.issubset(selection_bbox):
+            x1 = float(selection_bbox["x"])
+            y1 = float(selection_bbox["y"])
+            x2 = x1 + float(selection_bbox["width"])
+            y2 = y1 + float(selection_bbox["height"])
+        elif {"x1", "y1", "x2", "y2"}.issubset(selection_bbox):
+            x1 = float(selection_bbox["x1"])
+            y1 = float(selection_bbox["y1"])
+            x2 = float(selection_bbox["x2"])
+            y2 = float(selection_bbox["y2"])
+        else:
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    left = max(0, min(image_width, math.floor(min(x1, x2))))
+    top = max(0, min(image_height, math.floor(min(y1, y2))))
+    right = max(0, min(image_width, math.ceil(max(x1, x2))))
+    bottom = max(0, min(image_height, math.ceil(max(y1, y2))))
+
+    if right - left < min_size or bottom - top < min_size:
+        return None
+
+    return left, top, right, bottom
+
+
+def _crop_image_by_selection_bbox(
+    image_bytes: Optional[bytes],
+    selection_bbox: Optional[dict],
+) -> Optional[bytes]:
+    """Crop the selected region from the current page image for edit reference."""
+    import io
+    from PIL import Image as PILImage
+
+    if not image_bytes or not selection_bbox:
+        return None
+
+    try:
+        with PILImage.open(io.BytesIO(image_bytes)) as image:
+            crop_box = _normalize_selection_bbox(
+                selection_bbox,
+                image_width=image.width,
+                image_height=image.height,
+            )
+            if not crop_box:
+                return None
+
+            cropped = image.crop(crop_box)
+            output = io.BytesIO()
+            cropped.save(output, format="PNG")
+            return output.getvalue()
+    except Exception as e:
+        logger.warning("瑁佸壀鍦ㄧ嚎缂栬緫妗嗛€夊尯鍩熷け璐? %s", e)
+        return None
+
 
 @celery_app.task(bind=True, name="banana-slides.generate_descriptions")
 def generate_descriptions_task(self: Task, project_id: int, task_id_str: str = None, language: str = "zh"):
@@ -398,6 +566,7 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
             await db.commit()
 
         aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
+        resolution = (project.settings or {}).get("image_resolution", "2K")
         oss_svc = _get_oss_service_safe()
         image_provider = get_image_provider_singleton()
         extra_fields_config = get_active_extra_fields_config(project.settings or {})
@@ -436,10 +605,12 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
                                 except Exception as e:
                                     logger.warning("加载素材图片失败 material_id=%s: %s", mat.id, e)
 
-                img_bytes = await image_provider.agenerate_image(
+                img_bytes = await _generate_image_with_retry(
+                    image_provider,
                     prompt=prompt,
-                    ref_images=ref_images or None,
+                    ref_images=ref_images,
                     aspect_ratio=aspect_ratio,
+                    resolution=resolution,
                 )
 
                 oss_key = "ppt/{}/pages/{}/v{}_{}.png".format(
@@ -496,6 +667,10 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
                 async with AsyncSessionLocal() as db3:
                     await _update_task_status(db3, task_id_str, "PROCESSING", progress)
 
+        """
+        prompt = "{0}\n\n编辑要求：{1}".format(base_desc, edit_instruction) if base_desc else edit_instruction
+
+        """
         if task_id_str:
             result = {
                 "count": completed,
@@ -1007,30 +1182,21 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
 # 任务：编辑单页图片
 # ---------------------------------------------------------------------------
 
-@celery_app.task(bind=True, name="banana-slides.edit_page_image")
-def edit_page_image_task(
-    self: Task,
+async def edit_page_image_async(
     project_id: int,
     page_id: int,
     edit_instruction: str,
     task_id_str: str = None,
     context_images: dict = None,
+    uploaded_context_images: list[UploadFile] | None = None,
 ):
-    """
-    对单页图片执行自然语言编辑。
-
-    Args:
-        project_id: 项目ID
-        page_id: 页面ID
-        edit_instruction: 自然语言编辑指令
-        task_id_str: PPTTask.task_id
-    """
+    """Async core for single-page image editing, usable without Redis/Celery."""
     from app.core.database import AsyncSessionLocal
     from sqlalchemy import select, update as sa_update
-    from app.generators.ppt.banana_models import PPTProject, PPTPage, PageImageVersion
+    from app.generators.ppt.banana_models import PPTProject, PPTPage, PageImageVersion, PPTMaterial
     from app.generators.ppt.banana_providers import get_image_provider_singleton
 
-    async def _run():
+    try:
         async with AsyncSessionLocal() as db:
             if task_id_str:
                 await _update_task_status(db, task_id_str, "PROCESSING", 0)
@@ -1049,39 +1215,44 @@ def edit_page_image_task(
                     await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "Page not found"})
                 return {"error": "Page not found"}
 
+            page.is_image_generating = True
+            await db.commit()
+
         aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        oss_svc = get_oss_service()
+        resolution = (project.settings or {}).get("image_resolution", "2K")
+        oss_svc = _get_oss_service_safe()
         image_provider = get_image_provider_singleton()
 
-        ref_images = []
+        ref_images: list[bytes] = []
+        page_image_bytes: Optional[bytes] = None
+        has_selection_region = False
 
-        # 1. 当前页面图作为基础参考
         if page.image_url:
-            img = _download_image_bytes(page, oss_svc)
-            if img:
-                ref_images.append(img)
+            page_image_bytes = _download_image_bytes(page, oss_svc)
+            if page_image_bytes:
+                ref_images.append(page_image_bytes)
 
-        # 2. 消费 context_images
         if context_images:
-            # 2a. 模板图：从项目 settings.template_image_url 获取
+            selection_crop = _crop_image_by_selection_bbox(
+                page_image_bytes,
+                context_images.get("selection_bbox"),
+            )
+            if selection_crop:
+                ref_images.append(selection_crop)
+                has_selection_region = True
+
             if context_images.get("use_template"):
                 template_bytes = _load_project_template_bytes(project.settings or {}, oss_svc)
                 if template_bytes:
                     ref_images.append(template_bytes)
 
-            # 2b. 描述中的图片URL列表
             for url in (context_images.get("desc_image_urls") or []):
-                try:
-                    import urllib.request as _ureq
-                    with _ureq.urlopen(url, timeout=20) as resp:
-                        ref_images.append(resp.read())
-                except Exception as e:
-                    logger.warning("加载描述图片失败 url=%s: %s", url, e)
+                img_bytes = _load_bytes_from_url_or_path(url)
+                if img_bytes:
+                    ref_images.append(img_bytes)
 
-            # 2c. 上传的图片ID：从 PPTMaterial 查找，通过 url 字段下载
             uploaded_ids = context_images.get("uploaded_image_ids") or []
             if uploaded_ids:
-                from app.generators.ppt.banana_models import PPTMaterial
                 async with AsyncSessionLocal() as db_mat:
                     mat_res = await db_mat.execute(
                         select(PPTMaterial).where(PPTMaterial.id.in_([
@@ -1094,37 +1265,61 @@ def edit_page_image_task(
                         mat_ext = _normalize_extension(mat.file_type, mat.filename)
                         if mat_ext not in ("png", "jpg", "jpeg", "webp"):
                             continue
-                        try:
-                            mat_key = _extract_oss_key(mat.url)
-                            if mat_key:
+                        img_bytes = None
+                        mat_key = _extract_oss_key(mat.url)
+                        if mat_key and oss_svc is not None:
+                            tmp_mat_path = None
+                            try:
                                 with tempfile.NamedTemporaryFile(suffix="." + mat_ext, delete=False) as tmp:
                                     tmp_mat_path = tmp.name
                                 oss_svc.download_file(mat_key, tmp_mat_path)
                                 with open(tmp_mat_path, "rb") as f:
-                                    ref_images.append(f.read())
-                                os.unlink(tmp_mat_path)
-                            else:
-                                import urllib.request as _ureq2
-                                with _ureq2.urlopen(mat.url, timeout=20) as resp:
-                                    ref_images.append(resp.read())
-                        except Exception as e:
-                            logger.warning("加载上传图片失败 material_id=%s: %s", mat.id, e)
+                                    img_bytes = f.read()
+                            except Exception as e:
+                                logger.warning("加载上传图片失败 material_id=%s: %s", mat.id, e)
+                            finally:
+                                if tmp_mat_path:
+                                    try:
+                                        os.unlink(tmp_mat_path)
+                                    except Exception:
+                                        pass
+                        else:
+                            img_bytes = _load_bytes_from_url_or_path(mat.url)
+                        if img_bytes:
+                            ref_images.append(img_bytes)
+
+        ref_images.extend(await _read_uploaded_context_images(uploaded_context_images))
 
         base_desc = page.description or page.title or ""
+        if has_selection_region:
+            edit_instruction = f"{edit_instruction}\n\nPrioritize the user-selected region while keeping the rest of the slide layout and style as consistent as possible."
+            """
+                f"{edit_instruction}\n\n请优先围绕用户框选的局部区域完成修改，其余区域尽量保持原有版式和风格。"
+            )
         prompt = "{0}\n\n编辑要求：{1}".format(base_desc, edit_instruction) if base_desc else edit_instruction
 
         if task_id_str:
             async with AsyncSessionLocal() as db2:
                 await _update_task_status(db2, task_id_str, "PROCESSING", 30)
 
-        img_bytes = await image_provider.agenerate_image(
+        """
+        prompt = "{0}\n\n编辑要求：{1}".format(base_desc, edit_instruction) if base_desc else edit_instruction
+
+        if task_id_str:
+            async with AsyncSessionLocal() as db2:
+                await _update_task_status(db2, task_id_str, "PROCESSING", 30)
+
+        img_bytes = await _generate_image_with_retry(
+            image_provider,
             prompt=prompt,
-            ref_images=ref_images or None,
+            ref_images=ref_images,
             aspect_ratio=aspect_ratio,
+            resolution=resolution,
         )
 
         oss_key = "ppt/{}/pages/{}/edit_{}.png".format(project_id, page_id, uuid.uuid4().hex[:8])
-        image_url = oss_svc.upload_bytes(img_bytes, oss_key)
+        filename = "page_edit_{}_{}.png".format(page_id, uuid.uuid4().hex[:8])
+        image_url, _is_local = _upload_or_save_local(oss_svc, img_bytes, oss_key, filename)
 
         async with AsyncSessionLocal() as db3:
             res3 = await db3.execute(select(PPTPage).where(PPTPage.id == page_id))
@@ -1157,7 +1352,37 @@ def edit_page_image_task(
                 await _update_task_status(db4, task_id_str, "COMPLETED", 100, {"url": image_url})
         return {"status": "completed", "url": image_url}
 
-    return asyncio.run(_run())
+    except Exception as e:
+        logger.error("编辑页面图片失败 page_id=%s: %s", page_id, e)
+        async with AsyncSessionLocal() as db_err:
+            res = await db_err.execute(select(PPTPage).where(PPTPage.id == page_id))
+            db_page = res.scalar_one_or_none()
+            if db_page:
+                db_page.is_image_generating = False
+            if task_id_str:
+                await _update_task_status(db_err, task_id_str, "FAILED", 0, {"error": str(e)})
+            await db_err.commit()
+        return {"status": "failed", "error": str(e)}
+
+
+@celery_app.task(bind=True, name="banana-slides.edit_page_image")
+def edit_page_image_task(
+    self: Task,
+    project_id: int,
+    page_id: int,
+    edit_instruction: str,
+    task_id_str: str = None,
+    context_images: dict = None,
+):
+    return asyncio.run(
+        edit_page_image_async(
+            project_id=project_id,
+            page_id=page_id,
+            edit_instruction=edit_instruction,
+            task_id_str=task_id_str,
+            context_images=context_images,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

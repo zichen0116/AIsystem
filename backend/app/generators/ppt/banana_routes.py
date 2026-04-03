@@ -10,11 +10,13 @@ import shutil
 import tempfile
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query, Path
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
@@ -61,6 +63,8 @@ DEFAULT_INTENT_SCORES = {
     "structure": 35,
     "interaction": 35,
 }
+
+LOCAL_EXPORT_ROUTE_PREFIX = "/api/v1/ppt/exports/local"
 
 
 def _normalize_file_ext(filename: Optional[str], content_type: Optional[str] = None) -> str:
@@ -116,6 +120,53 @@ def _parse_page_ids_param(page_ids: Optional[str]) -> Optional[list[int]]:
     return ids or None
 
 
+def _parse_string_list_field(value: object) -> list[str]:
+    """Parse JSON/form list fields into a compact string list."""
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = [raw]
+    elif isinstance(value, (list, tuple, set)):
+        parsed = list(value)
+    else:
+        parsed = [value]
+
+    result: list[str] = []
+    for item in parsed:
+        text = str(item or "").strip()
+        if text:
+            result.append(text)
+    return result
+
+
+def _parse_bool_field(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_json_object_field(value: object) -> object:
+    """Parse JSON object-ish multipart fields, returning raw values if parsing fails."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
+    return value
+
+
 def _extract_page_points(page: PPTPage) -> list[str]:
     return extract_page_points(page)
 
@@ -164,7 +215,9 @@ def _download_image_urls_to_local_paths(image_urls: list[str]) -> tuple[str, lis
         local_path = os.path.join(tmp_dir, f"page_{idx:04d}{suffix}")
         oss_key = _extract_oss_key(image_url)
         try:
-            if oss_key and oss_svc is not None:
+            if os.path.isfile(image_url):
+                shutil.copyfile(image_url, local_path)
+            elif oss_key and oss_svc is not None:
                 try:
                     oss_svc.download_file(oss_key, local_path)
                 except Exception:
@@ -176,6 +229,23 @@ def _download_image_urls_to_local_paths(image_urls: list[str]) -> tuple[str, lis
             logger.warning("下载导出图片失败 url=%s: %s", image_url, e)
 
     return tmp_dir, local_paths
+
+
+def _build_export_download_urls(export_url: str, *, is_local: bool, api_base: str) -> dict:
+    """Build download URLs for both OSS-hosted and local fallback exports."""
+    if is_local:
+        filename = os.path.basename(str(export_url).replace("\\", "/"))
+        download_url = f"{LOCAL_EXPORT_ROUTE_PREFIX}/{filename}"
+        return {
+            "download_url": download_url,
+            "download_url_absolute": f"{api_base.rstrip('/')}{download_url}",
+            "is_local": True,
+        }
+
+    return {
+        "download_url": export_url,
+        "download_url_absolute": export_url,
+    }
 
 
 def _clamp_score(value: object, default: int = 35) -> int:
@@ -1114,7 +1184,7 @@ async def refine_descriptions(
 async def edit_page_image(
     project_id: int,
     page_id: int,
-    data: EditImageRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1135,6 +1205,37 @@ async def edit_page_image(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
+    content_type = request.headers.get("content-type", "")
+    uploaded_context_images: list[UploadFile] = []
+    if "multipart/form-data" in content_type.lower():
+        form = await request.form()
+        uploaded_context_images = [
+            item
+            for item in form.getlist("context_images")
+            if isinstance(item, UploadFile)
+        ]
+        try:
+            data = EditImageRequest.model_validate({
+                "edit_instruction": form.get("edit_instruction"),
+                "context_images": {
+                    "use_template": _parse_bool_field(form.get("use_template")),
+                    "desc_image_urls": _parse_string_list_field(form.get("desc_image_urls")),
+                    "uploaded_image_ids": _parse_string_list_field(form.get("uploaded_image_ids")),
+                    "selection_bbox": _parse_json_object_field(form.get("selection_bbox")),
+                },
+            })
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    else:
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid edit request: {exc}") from exc
+        try:
+            data = EditImageRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
     task_id = str(uuid.uuid4())
 
     task = PPTTask(
@@ -1145,19 +1246,25 @@ async def edit_page_image(
         status="PENDING"
     )
     db.add(task)
+    page.is_image_generating = True
     await db.commit()
 
     context_images_dict = None
     if data.context_images:
         context_images_dict = data.context_images.model_dump()
 
-    from app.generators.ppt.celery_tasks import edit_page_image_task
-    edit_page_image_task.delay(
-        project_id=project_id,
-        page_id=page_id,
-        edit_instruction=data.edit_instruction,
-        task_id_str=task_id,
-        context_images=context_images_dict,
+    from app.generators.ppt.celery_tasks import edit_page_image_async
+    import asyncio
+
+    asyncio.create_task(
+        edit_page_image_async(
+            project_id=project_id,
+            page_id=page_id,
+            edit_instruction=data.edit_instruction,
+            task_id_str=task_id,
+            context_images=context_images_dict,
+            uploaded_context_images=uploaded_context_images,
+        )
     )
 
     return {"task_id": task_id}
@@ -1167,6 +1274,7 @@ async def edit_page_image(
 
 @router.get("/projects/{project_id}/export/{format}")
 async def export_project(
+    request: Request,
     project_id: int,
     format: str = Path(..., pattern="^(pptx|pdf|images)$"),
     page_ids: Optional[str] = None,
@@ -1175,7 +1283,12 @@ async def export_project(
 ):
     """导出项目（同步）"""
     from app.generators.ppt.ppt_export_service import get_ppt_export_service
-    from fastapi.responses import StreamingResponse
+    from app.generators.ppt.celery_tasks import (
+        _download_image_bytes,
+        _get_oss_service_safe,
+        _update_project_export,
+        _upload_or_save_local,
+    )
 
     result = await db.execute(
         select(PPTProject)
@@ -1187,9 +1300,9 @@ async def export_project(
 
     # 获取页面列表
     query = select(PPTPage).where(PPTPage.project_id == project_id).order_by(PPTPage.page_number)
-    if page_ids:
-        ids = [int(x) for x in page_ids.split(",")]
-        query = query.where(PPTPage.id.in_(ids))
+    selected_page_ids = _parse_page_ids_param(page_ids)
+    if selected_page_ids:
+        query = query.where(PPTPage.id.in_(selected_page_ids))
 
     result = await db.execute(query)
     pages = result.scalars().all()
@@ -1203,6 +1316,7 @@ async def export_project(
         if page.image_url:
             # image_url 可能是 URL 或本地路径
             image_paths.append(page.image_url)
+    image_paths = [page.image_url for page in pages if page.image_url]
 
     if not image_paths:
         raise HTTPException(status_code=400, detail="没有生成的图片，请先生成页面图片")
