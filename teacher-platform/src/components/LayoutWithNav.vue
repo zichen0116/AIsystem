@@ -2,6 +2,7 @@
 import { ref, provide, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
+import { useAdminDigitalHumanStore } from '../stores/adminDigitalHuman'
 import ThemeToggle from './ThemeToggle.vue'
 import DigitalHumanAssistant from './DigitalHumanAssistant.vue'
 
@@ -12,6 +13,7 @@ provide('sidebarCollapsed', sidebarCollapsed)
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const adminDigitalHumanStore = useAdminDigitalHumanStore()
 
 const primaryItems = [
   { id: 'lesson-prep', path: '/lesson-prep', label: '备课中心', icon: 'lesson' },
@@ -28,7 +30,13 @@ const otherPrimaryItems = computed(() => {
     return [
       { id: 'admin-data', path: '/admin', label: '数据中台', icon: 'dashboard' },
       { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
-      { id: 'personal-center', path: '/admin/profile', label: '个人中心', icon: 'user' }
+      { id: 'personal-center', path: '/admin/profile', label: '个人中心', icon: 'user' },
+      {
+        id: 'admin-digital-human',
+        path: '/admin',
+        label: adminDigitalHumanStore.visible ? '隐藏数字人' : '显示数字人',
+        icon: 'digital-human'
+      }
     ]
   }
   return primaryItems.filter(i => i.id !== 'lesson-prep')
@@ -41,6 +49,9 @@ function isPrimaryActive(item) {
   }
   if (item.id === 'personal-center' && isAdmin.value) {
     return route.path.startsWith('/admin/profile')
+  }
+  if (item.id === 'admin-digital-human') {
+    return adminDigitalHumanStore.visible
   }
   return route.path.startsWith(item.path)
 }
@@ -106,6 +117,14 @@ function handleAvatarClick() {
   } else {
     router.push('/login')
   }
+}
+
+function toggleAdminDigitalHumanVisible() {
+  adminDigitalHumanStore.toggleVisible()
+}
+
+function toggleAdminDigitalHumanVoice() {
+  adminDigitalHumanStore.toggleVoiceMode()
 }
 </script>
 
@@ -248,7 +267,7 @@ function handleAvatarClick() {
           type="button"
           class="primary-item"
           :class="{ active: isPrimaryActive(item) }"
-          @click="item.id === 'personal-center' ? handleAvatarClick() : goToPrimary(item.path)"
+          @click="item.id === 'personal-center' ? handleAvatarClick() : item.id === 'admin-digital-human' ? toggleAdminDigitalHumanVisible() : goToPrimary(item.path)"
         >
           <span class="pi-icon" aria-hidden="true">
             <!-- 课件管理 / 数据中台：文件夹 / 柱状图 -->
@@ -319,6 +338,20 @@ function handleAvatarClick() {
               <path d="M16 16l4 4" />
             </svg>
             <svg
+              v-else-if="item.icon === 'digital-human'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="4" y="4" width="16" height="16" rx="4" />
+              <circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none" />
+              <circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none" />
+              <path d="M8 15c1.1 1 2.4 1.5 4 1.5s2.9-.5 4-1.5" />
+            </svg>
+            <svg
               v-else-if="item.icon === 'user'"
               viewBox="0 0 24 24"
               fill="none"
@@ -332,6 +365,20 @@ function handleAvatarClick() {
             </svg>
           </span>
           <span class="pi-label">{{ item.label }}</span>
+          <button
+            v-if="item.id === 'admin-digital-human'"
+            type="button"
+            class="nav-mic-btn"
+            :class="{ on: adminDigitalHumanStore.voiceMode }"
+            :title="adminDigitalHumanStore.voiceMode ? '结束通话' : '开始通话'"
+            @click.stop="toggleAdminDigitalHumanVoice"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3z" />
+              <path d="M19 11a7 7 0 0 1-14 0" />
+              <path d="M12 19v3" />
+            </svg>
+          </button>
         </button>
 
         <button
@@ -548,6 +595,37 @@ function handleAvatarClick() {
 .pi-icon svg {
   width: 20px;
   height: 20px;
+}
+
+.nav-mic-btn {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.nav-mic-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nav-mic-btn:hover {
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
+.nav-mic-btn.on {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #ffffff;
 }
 
 .primary-item.has-children {
