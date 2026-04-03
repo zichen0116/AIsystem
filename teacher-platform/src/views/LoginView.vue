@@ -27,6 +27,18 @@ const twoFAError = ref('')
 const pendingRememberMe = ref(false)
 const pendingRedirect = ref('')
 
+// 忘记密码 modal state
+const showForgotModal = ref(false)
+const forgotPhone = ref('')
+const forgotCode = ref('')
+const forgotNewPassword = ref('')
+const forgotConfirmPassword = ref('')
+const forgotLoading = ref(false)
+const forgotError = ref('')
+const forgotSuccess = ref('')
+const forgotCooldown = ref(0)
+let forgotCooldownTimer = null
+
 const form = ref({
   phone: '',
   password: '',
@@ -206,6 +218,87 @@ function on2FACodeKeydown(index, e) {
   }
 }
 
+// ===== 忘记密码方法 =====
+function openForgotModal() {
+  forgotPhone.value = form.value.phone || ''
+  forgotCode.value = ''
+  forgotNewPassword.value = ''
+  forgotConfirmPassword.value = ''
+  forgotError.value = ''
+  forgotSuccess.value = ''
+  forgotLoading.value = false
+  showForgotModal.value = true
+}
+
+function closeForgotModal() {
+  showForgotModal.value = false
+  if (forgotCooldownTimer) {
+    clearInterval(forgotCooldownTimer)
+    forgotCooldownTimer = null
+  }
+}
+
+function startForgotCooldown() {
+  forgotCooldown.value = 60
+  if (forgotCooldownTimer) clearInterval(forgotCooldownTimer)
+  forgotCooldownTimer = setInterval(() => {
+    forgotCooldown.value--
+    if (forgotCooldown.value <= 0) {
+      clearInterval(forgotCooldownTimer)
+      forgotCooldownTimer = null
+    }
+  }, 1000)
+}
+
+async function forgotSendCode() {
+  forgotError.value = ''
+  if (!forgotPhone.value || forgotPhone.value.length < 11) {
+    forgotError.value = '请输入正确的手机号'
+    return
+  }
+  forgotLoading.value = true
+  try {
+    await userStore.forgotPasswordSendCode(forgotPhone.value)
+    startForgotCooldown()
+  } catch (e) {
+    forgotError.value = e.message || '发送验证码失败'
+  } finally {
+    forgotLoading.value = false
+  }
+}
+
+async function forgotSubmitReset() {
+  forgotError.value = ''
+  if (!forgotPhone.value || forgotPhone.value.length < 11) {
+    forgotError.value = '请输入正确的手机号'
+    return
+  }
+  if (!forgotCode.value) {
+    forgotError.value = '请输入验证码'
+    return
+  }
+  if (!forgotNewPassword.value || forgotNewPassword.value.length < 6) {
+    forgotError.value = '密码长度不能少于6位'
+    return
+  }
+  if (forgotNewPassword.value !== forgotConfirmPassword.value) {
+    forgotError.value = '两次密码不一致'
+    return
+  }
+  forgotLoading.value = true
+  try {
+    await userStore.resetPassword(forgotPhone.value, forgotCode.value, forgotNewPassword.value)
+    forgotSuccess.value = '密码重置成功，请使用新密码登录'
+    setTimeout(() => {
+      closeForgotModal()
+    }, 2000)
+  } catch (e) {
+    forgotError.value = e.message || '密码重置失败'
+  } finally {
+    forgotLoading.value = false
+  }
+}
+
 function goHome() {
   router.push('/')
 }
@@ -374,7 +467,7 @@ function goHome() {
               <input v-model="rememberMe" type="checkbox" />
               30天内记住我
             </label>
-            <a href="#" class="forgot-link" @click.prevent>忘记密码？</a>
+            <a href="#" class="forgot-link" @click.prevent="openForgotModal">忘记密码？</a>
           </div>
 
           <button type="submit" class="submit-btn hover-btn" :disabled="loading">
@@ -421,6 +514,90 @@ function goHome() {
             <button class="twofa-cancel" @click="show2FAVerifyModal = false">取消</button>
             <button class="twofa-confirm" :disabled="twoFALoading" @click="submit2FAVerify">
               {{ twoFALoading ? '验证中...' : '确认验证' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- 忘记密码弹框 -->
+    <Teleport to="body">
+      <div v-if="showForgotModal" class="twofa-overlay" @click.self="closeForgotModal">
+        <div class="twofa-box forgot-box">
+          <div class="twofa-header">
+            <h3>重置密码</h3>
+            <button class="twofa-close" @click="closeForgotModal">×</button>
+          </div>
+          <div class="twofa-body">
+            <!-- 成功提示 -->
+            <template v-if="forgotSuccess">
+              <div class="forgot-success-icon">✅</div>
+              <p class="forgot-success-msg">{{ forgotSuccess }}</p>
+            </template>
+
+            <template v-else>
+              <!-- 手机号 -->
+              <div class="forgot-row">
+                <label class="forgot-label">手机号</label>
+                <input
+                  v-model="forgotPhone"
+                  type="tel"
+                  placeholder="请输入手机号"
+                  class="forgot-input"
+                  maxlength="11"
+                />
+              </div>
+              <!-- 验证码 -->
+              <div class="forgot-row">
+                <label class="forgot-label">验证码</label>
+                <input
+                  v-model="forgotCode"
+                  type="text"
+                  placeholder="验证码"
+                  class="forgot-input forgot-input-short"
+                  maxlength="6"
+                  inputmode="numeric"
+                />
+                <button
+                  type="button"
+                  class="forgot-send-btn"
+                  :disabled="forgotCooldown > 0 || forgotLoading"
+                  @click="forgotSendCode"
+                >
+                  {{ forgotCooldown > 0 ? `${forgotCooldown}s` : '发送验证码' }}
+                </button>
+              </div>
+              <!-- 新密码 -->
+              <div class="forgot-row">
+                <label class="forgot-label">新密码</label>
+                <input
+                  v-model="forgotNewPassword"
+                  type="password"
+                  placeholder="请输入新密码（至少6位）"
+                  class="forgot-input"
+                />
+              </div>
+              <!-- 确认密码 -->
+              <div class="forgot-row">
+                <label class="forgot-label">确认密码</label>
+                <input
+                  v-model="forgotConfirmPassword"
+                  type="password"
+                  placeholder="再次确认新密码"
+                  class="forgot-input"
+                />
+              </div>
+              <p v-if="forgotError" class="twofa-error">{{ forgotError }}</p>
+            </template>
+          </div>
+          <div v-if="!forgotSuccess" class="twofa-footer">
+            <button class="twofa-cancel" @click="closeForgotModal">取消</button>
+            <button
+              class="twofa-confirm"
+              :disabled="forgotLoading"
+              @click="forgotSubmitReset"
+            >
+              {{ forgotLoading ? '重置中...' : '确认重置' }}
             </button>
           </div>
         </div>
@@ -1104,5 +1281,87 @@ function goHome() {
 .twofa-confirm:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* 忘记密码弹窗样式 */
+.forgot-box {
+  width: 440px;
+}
+
+.forgot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.forgot-label {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #334155;
+  text-align: right;
+}
+
+.forgot-input {
+  flex: 1;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+  color: #1e293b;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.forgot-input-short {
+  flex: 0 1 120px;
+}
+
+.forgot-input:focus {
+  border-color: #3b82f6;
+}
+
+.forgot-input::placeholder {
+  color: #94a3b8;
+}
+
+.forgot-send-btn {
+  flex-shrink: 0;
+  height: 42px;
+  padding: 0 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.forgot-send-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.forgot-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.forgot-success-icon {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+}
+
+.forgot-success-msg {
+  font-size: 0.95rem;
+  color: #16a34a;
+  font-weight: 500;
 }
 </style>

@@ -1,7 +1,7 @@
 const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '')
 
 // 不做 401 自动跳转的路径（登录/注册等接口本身会返回 401）
-const AUTH_PATHS = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/auth/send-code', '/api/v1/auth/me']
+const AUTH_PATHS = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/auth/send-code', '/api/v1/auth/me', '/api/v1/auth/forgot-password']
 
 function isAuthPath(path) {
   return AUTH_PATHS.some(p => path.includes(p))
