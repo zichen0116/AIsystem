@@ -21,6 +21,17 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // 讯飞数字人 Web SDK 相关请求代理（官方要求）
+      '/vmss': {
+        target: 'http://vms.cn-huadong-1.xf-yun.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/vmss/, ''),
+      },
+      // 可选：个性化资源上传代理（背景/模板）
+      '/individuation': {
+        target: 'http://evo-hu.xf-yun.com',
+        changeOrigin: true,
+      },
     },
   },
 })

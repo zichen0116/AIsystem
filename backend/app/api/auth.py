@@ -20,6 +20,7 @@ from app.schemas.auth import (
     ChangePassword, SendCodeRequest,
     UpdateProfile, ChangePhone, ChangeEmail, Toggle2FA,
     TwoFARequired, Login2FAVerify, SendEmailCodeRequest,
+    ForgotPasswordSendCode, ResetPassword,
 )
 from app.services.sms import send_sms_code, verify_sms_code
 from app.services.email import send_email_code, verify_email_code
@@ -317,3 +318,57 @@ async def toggle_2fa(
     await db.commit()
     state = "开启" if data.enable else "关闭"
     return {"message": f"2FA 已{state}"}
+
+
+@router.post("/forgot-password/send-code", status_code=status.HTTP_200_OK)
+async def forgot_password_send_code(
+    data: ForgotPasswordSendCode,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """忘记密码 - 发送短信验证码（需手机号已注册）"""
+    result = await db.execute(
+        select(User).where(User.phone == data.phone)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该手机号未注册"
+        )
+
+    try:
+        await send_sms_code(data.phone)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(e)
+        )
+    return {"message": "验证码已发送"}
+
+
+@router.post("/forgot-password/reset", status_code=status.HTTP_200_OK)
+async def forgot_password_reset(
+    data: ResetPassword,
+    db: Annotated[AsyncSession, Depends(get_db)]
+):
+    """忘记密码 - 验证短信验证码并重置密码"""
+    result = await db.execute(
+        select(User).where(User.phone == data.phone)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="手机号未注册或验证码错误"
+        )
+
+    if not await verify_sms_code(data.phone, data.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="验证码错误或已过期"
+        )
+
+    user.password_hash = hash_password(data.new_password)
+    user.token_version += 1
+    await db.commit()
+
+    return {"message": "密码重置成功，请重新登录"}

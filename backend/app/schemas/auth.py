@@ -102,3 +102,15 @@ class Login2FAVerify(BaseModel):
 class SendEmailCodeRequest(BaseModel):
     """发送邮箱验证码请求（使用当前登录用户绑定的邮箱）"""
     pass
+
+
+class ForgotPasswordSendCode(BaseModel):
+    """忘记密码 - 发送短信验证码"""
+    phone: str = Field(..., min_length=11, max_length=20)
+
+
+class ResetPassword(BaseModel):
+    """忘记密码 - 重置密码"""
+    phone: str = Field(..., min_length=11, max_length=20)
+    code: str = Field(..., min_length=4, max_length=8, description="短信验证码")
+    new_password: str = Field(..., min_length=6)
