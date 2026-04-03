@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import LessonPrepPpt from './LessonPrepPpt.vue'
+import LessonPrepPpt from './ppt/PptIndex.vue'
 import LessonPlanPage from './LessonPlanPage.vue'
 import LessonPrepAnimation from './LessonPrepAnimation.vue'
 import LessonPrepKnowledge from './LessonPrepKnowledge.vue'

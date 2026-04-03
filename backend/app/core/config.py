@@ -1,10 +1,14 @@
 """
 应用配置管理
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings,SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
 import os
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE_PATH = BACKEND_ROOT / ".env"
 
 
 class Settings(BaseSettings):
@@ -31,11 +35,57 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "tongyi-embedding-vision-flash"
     RERANK_MODEL: str = "qwen3-vl-rerank"
 
+ # SiliconFlow / Docmee / Unsplash 配置
+    siliconflow_api_key: str | None = None
+    docmee_api_key: str | None = None
+    docmee_trust_env: bool = False
+    docmee_request_timeout_seconds: int = 60
+    docmee_generate_pptx_timeout_seconds: int = 600
+    docmee_pptx_poll_attempts: int = 8
+    docmee_pptx_poll_delay_seconds: float = 2.0
+    unsplash_access_key: str | None = None
+
+
+    # 使用 model_config 替代 class Config，并设置 extra="ignore"
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_FILE_PATH),
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
     # ========== 阿里云 OSS ==========
     OSS_ENDPOINT: str = ""
     OSS_BUCKET: str = ""
     OSS_ACCESS_KEY_ID: str = ""
     OSS_ACCESS_KEY_SECRET: str = ""
+
+    # ========== Banana-slides AI 配置（PPT生成服务）==========
+    # AI Provider SDK 格式：gemini（默认）/ openai / anthropic
+    AI_PROVIDER_FORMAT: str = "gemini"
+    # Gemini
+    GOOGLE_API_KEY: str = ""
+    GOOGLE_API_BASE: str = "https://generativelanguage.googleapis.com"
+    GENAI_TIMEOUT: float = 300.0
+    GENAI_MAX_RETRIES: int = 2
+    # 各模型选择（可选，默认用 AI_PROVIDER_FORMAT 对应的模型）
+    TEXT_MODEL: str = ""
+    IMAGE_MODEL: str = ""
+    IMAGE_CAPTION_MODEL: str = ""
+    # 国内厂商 API Key（按需填）
+    DOUBAO_API_KEY: str = ""
+    QWEN_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
+    GLM_API_KEY: str = ""
+    SILICONFLOW_API_KEY: str = ""
+    # 并发控制
+    MAX_DESCRIPTION_WORKERS: int = 5
+    MAX_IMAGE_WORKERS: int = 8
+    # MinerU 文档解析（文件生成路径）
+    MINERU_TOKEN: str = ""
+    MINERU_API_BASE: str = "https://mineru.net"
+    # 可编辑 PPTX 导出（文字提取）
+    BAIDU_API_KEY: str = ""
+    # 输出语言：zh / ja / en / auto
+    OUTPUT_LANGUAGE: str = "zh"
 
     # ========== 短信服务（国阳云） ==========
     SMS_APPCODE: str = ""
@@ -118,9 +168,9 @@ class Settings(BaseSettings):
     # 例如 Windows: C:/Windows/Fonts/msyh.ttc
     DATA_ANALYSIS_FONT_PATH: str = ""
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    #class Config:
+    #    env_file = ".env"
+    #    env_file_encoding = "utf-8"
 
 
 @lru_cache()

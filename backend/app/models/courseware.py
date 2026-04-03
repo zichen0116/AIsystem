@@ -62,5 +62,11 @@ class Courseware(Base):
     # 关联关系
     user: Mapped["User"] = relationship("User", back_populates="coursewares")
 
+    # ⚠️ 单向FK，PPTProject不维护反向关系
+    ppt_project_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("ppt_projects.id", ondelete="SET NULL"),
+        nullable=True, unique=True
+    )
+
     def __repr__(self):
         return f"<Courseware(id={self.id}, title={self.title}, status={self.status})>"

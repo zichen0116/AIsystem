@@ -189,12 +189,78 @@ class DashScopeService:
     """阿里云百炼 AI 服务"""
 
     def __init__(self):
-        self.api_key = os.getenv("DASHSCOPE_API_KEY", "")
-        self.llm_model = os.getenv("LLM_MODEL", "qwen-plus")
+        # 优先读取 settings，确保与 .env 配置保持一致
+        self.api_key = settings.DASHSCOPE_API_KEY or os.getenv("DASHSCOPE_API_KEY", "")
+        raw_model = settings.LLM_MODEL or os.getenv("LLM_MODEL", "qwen-plus")
+        self.llm_model = self._normalize_model_name(raw_model)
         self.base_url = DASHSCOPE_BASE_URL
 
         if not self.api_key:
             logger.warning("未配置 DASHSCOPE_API_KEY")
+
+        if raw_model != self.llm_model:
+            logger.warning("LLM_MODEL=%s 在当前端点不可用，自动使用 %s", raw_model, self.llm_model)
+
+    @staticmethod
+    def _normalize_model_name(model_name: str) -> str:
+        """将不兼容别名映射到当前端点可用模型。"""
+        if not model_name:
+            return "qwen-plus"
+
+        aliases = {
+            "qwen3.5-plus": "qwen-plus",
+            "qwen3.5-turbo": "qwen-turbo",
+            "qwen3.5-max": "qwen-max",
+        }
+        return aliases.get(model_name, model_name)
+
+    @staticmethod
+    def _normalize_role(role: str) -> str:
+        """将历史会话中的非标准角色映射为 DashScope 支持的角色。"""
+        role_value = (role or "user").strip().lower()
+        mapping = {
+            "ai": "assistant",
+            "bot": "assistant",
+            "human": "user",
+        }
+        role_value = mapping.get(role_value, role_value)
+        if role_value in {"system", "user", "assistant"}:
+            return role_value
+        return "user"
+
+    async def _call_generation_api(self, payload: dict) -> dict:
+        """调用 text-generation 接口，并在模型不兼容时自动回退。"""
+        url = f"{self.base_url}/services/aigc/text-generation/generation"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60.0
+            )
+
+            # 某些模型别名在该端点会返回 400，自动回退到 qwen-plus
+            if response.status_code == 400 and payload.get("model") != "qwen-plus":
+                fallback_payload = {**payload, "model": "qwen-plus"}
+                logger.warning(
+                    "DashScope 400，模型 %s 自动回退为 qwen-plus。原始响应: %s",
+                    payload.get("model"),
+                    response.text
+                )
+                response = await client.post(
+                    url,
+                    headers=headers,
+                    json=fallback_payload,
+                    timeout=60.0
+                )
+
+            response.raise_for_status()
+            return response.json()
 
     async def chat(
         self,
@@ -218,12 +284,6 @@ class DashScopeService:
         if not self.api_key:
             return "错误: 未配置 DASHSCOPE_API_KEY"
 
-        url = f"{self.base_url}/services/aigc/text-generation/generation"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
         payload = {
             "model": self.llm_model,
             "input": {
@@ -240,29 +300,20 @@ class DashScopeService:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
+            result = await self._call_generation_api(payload)
 
-                result = response.json()
-
-                # 解析响应
-                if "output" in result and "choices" in result["output"]:
-                    return result["output"]["choices"][0]["message"]["content"]
-                elif "usage" in result:
-                    # 返回 usage 信息用于调试
-                    return f"请求成功，但响应格式异常: {result}"
-                else:
-                    return f"响应格式异常: {result}"
+            # 解析响应
+            if "output" in result and "choices" in result["output"]:
+                return result["output"]["choices"][0]["message"]["content"]
+            elif "usage" in result:
+                # 返回 usage 信息用于调试
+                return f"请求成功，但响应格式异常: {result}"
+            else:
+                return f"响应格式异常: {result}"
 
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP 错误: {e.response.status_code} - {e.response.text}")
-            return f"API 调用失败: {e.response.status_code}"
+            return f"API 调用失败: {e.response.status_code} - {e.response.text}"
         except Exception as e:
             logger.error(f"调用通义千问 API 失败: {e}")
             return f"API 调用失败: {str(e)}"
@@ -289,14 +340,20 @@ class DashScopeService:
         if not self.api_key:
             return "错误: 未配置 DASHSCOPE_API_KEY"
 
-        url = f"{self.base_url}/services/aigc/text-generation/generation"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
         # 构建消息列表
-        all_messages = [{"role": "system", "content": system_prompt}] + messages
+        normalized_messages = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            normalized_messages.append({
+                "role": self._normalize_role(msg.get("role", "user")),
+                "content": content
+            })
+
+        all_messages = [{"role": "system", "content": system_prompt}] + normalized_messages
 
         payload = {
             "model": self.llm_model,
@@ -311,22 +368,16 @@ class DashScopeService:
         }
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=60.0
-                )
-                response.raise_for_status()
+            result = await self._call_generation_api(payload)
 
-                result = response.json()
+            if "output" in result and "choices" in result["output"]:
+                return result["output"]["choices"][0]["message"]["content"]
+            else:
+                return f"响应格式异常: {result}"
 
-                if "output" in result and "choices" in result["output"]:
-                    return result["output"]["choices"][0]["message"]["content"]
-                else:
-                    return f"响应格式异常: {result}"
-
+        except httpx.HTTPStatusError as e:
+            logger.error(f"调用通义千问 API 失败: {e.response.status_code} - {e.response.text}")
+            return f"API 调用失败: {e.response.status_code} - {e.response.text}"
         except Exception as e:
             logger.error(f"调用通义千问 API 失败: {e}")
             return f"API 调用失败: {str(e)}"
