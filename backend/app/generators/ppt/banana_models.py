@@ -36,6 +36,7 @@ class PPTProject(Base):
 
     # 主题/风格
     theme: Mapped[str] = mapped_column(String(50), nullable=True)
+    template_style: Mapped[str] = mapped_column(Text, nullable=True)
 
     # 状态: PLANNING / GENERATING / COMPLETED / FAILED
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PLANNING")

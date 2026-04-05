@@ -4,7 +4,49 @@ PPT生成模块 - Pydantic Schemas
 """
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+THEME_MAX_LENGTH = 50
+
+
+def _normalize_project_style_payload(values: object) -> object:
+    """Normalize style-related fields for backward-compatible payloads."""
+    if not isinstance(values, dict):
+        return values
+
+    normalized = dict(values)
+    settings = normalized.get("settings")
+    settings_dict = dict(settings) if isinstance(settings, dict) else None
+
+    theme_raw = normalized.get("theme")
+    style_raw = normalized.get("template_style")
+
+    theme_text = str(theme_raw or "").strip() if theme_raw is not None else None
+    style_text = str(style_raw or "").strip() if style_raw is not None else None
+
+    settings_style_text = None
+    if settings_dict is not None and "template_style" in settings_dict:
+        settings_style_text = str(settings_dict.get("template_style") or "").strip() or None
+        settings_dict["template_style"] = settings_style_text
+        normalized["settings"] = settings_dict
+
+    if theme_text is not None:
+        if len(theme_text) > THEME_MAX_LENGTH:
+            if not style_text and not settings_style_text:
+                style_text = theme_text
+                normalized["template_style"] = style_text
+                if settings_dict is not None:
+                    settings_dict["template_style"] = style_text
+                    normalized["settings"] = settings_dict
+            normalized["theme"] = theme_text[:THEME_MAX_LENGTH]
+        else:
+            normalized["theme"] = theme_text or None
+
+    if style_raw is not None:
+        normalized["template_style"] = style_text or None
+
+    return normalized
 
 
 # ============= Project Schemas =============
@@ -14,10 +56,16 @@ class PPTProjectCreate(BaseModel):
     title: str = Field(default="未命名PPT", max_length=255)
     description: Optional[str] = None
     creation_type: str = Field(default="dialog", pattern="^(dialog|file|renovation)$")
-    theme: Optional[str] = Field(default=None, max_length=50)
+    theme: Optional[str] = Field(default=None, max_length=THEME_MAX_LENGTH)
+    template_style: Optional[str] = None
     outline_text: Optional[str] = None
     settings: Optional[dict] = None
     knowledge_library_ids: Optional[list[int]] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_style_fields(cls, values: object) -> object:
+        return _normalize_project_style_payload(values)
     """用户选择的知识库ID列表，Dialog生成时做RAG检索用"""
 
 
@@ -26,12 +74,18 @@ class PPTProjectUpdate(BaseModel):
     title: Optional[str] = Field(default=None, max_length=255)
     description: Optional[str] = None
     outline_text: Optional[str] = None
-    theme: Optional[str] = Field(default=None, max_length=50)
+    theme: Optional[str] = Field(default=None, max_length=THEME_MAX_LENGTH)
+    template_style: Optional[str] = None
     settings: Optional[dict] = None
     status: Optional[str] = None
     exported_file_url: Optional[str] = None
     exported_at: Optional[datetime] = None
     knowledge_library_ids: Optional[list[int]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_style_fields(cls, values: object) -> object:
+        return _normalize_project_style_payload(values)
     """用户选择的知识库ID列表"""
 
 
@@ -42,13 +96,19 @@ class ProjectSettingsUpdate(BaseModel):
     image_prompt_extra_fields: Optional[list[str]] = None
     extra_fields_config: Optional[list[dict]] = None
     detail_level: Optional[str] = Field(default=None, pattern="^(concise|default|detailed)$")
-    theme: Optional[str] = Field(default=None, max_length=50)
+    theme: Optional[str] = Field(default=None, max_length=THEME_MAX_LENGTH)
+    template_style: Optional[str] = None
     template_image_url: Optional[str] = None
     template_oss_key: Optional[str] = None
     aspect_ratio: Optional[str] = Field(default=None, pattern="^(1:1|4:3|16:9|3:4|9:16)$")
     image_resolution: Optional[str] = Field(default=None, pattern="^(1K|2K|4K)$")
 
     model_config = {"extra": "allow"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_style_fields(cls, values: object) -> object:
+        return _normalize_project_style_payload(values)
 
 
 class PPTProjectResponse(BaseModel):
@@ -61,6 +121,7 @@ class PPTProjectResponse(BaseModel):
     outline_text: Optional[str]
     settings: dict
     theme: Optional[str]
+    template_style: Optional[str]
     knowledge_library_ids: list[int]
     status: str
     exported_file_url: Optional[str]
