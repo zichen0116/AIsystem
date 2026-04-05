@@ -6,17 +6,19 @@ import PptDialog from './PptDialog.vue'
 import PptOutline from './PptOutline.vue'
 import PptDescription from './PptDescription.vue'
 import PptPreview from './PptPreview.vue'
+import PptHistory from './PptHistory.vue'
 
 const pptStore = usePptStore()
 
 const currentPhase = computed(() => {
-  if (!pptStore.projectId) return 'home'
+  if (!pptStore.projectId && pptStore.currentPhase !== 'history') return 'home'
   return pptStore.currentPhase
 })
 
 const phaseComponent = computed(() => {
   const map = {
     home: PptHome,
+    history: PptHistory,
     dialog: PptDialog,
     outline: PptOutline,
     description: PptDescription,

@@ -1065,7 +1065,17 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 
             <div class="thumbnail-image">
               <template v-if="page.thumbnail">
-                <img :src="page.thumbnail" :alt="page.title">
+                <img
+                  :src="page.thumbnail"
+                  :alt="page.title"
+                  class="image-reveal revealed"
+                >
+              </template>
+              <template v-else-if="page.status === 'generating'">
+                <div class="thumbnail-generating">
+                  <div class="shimmer-bg"></div>
+                  <div class="thumb-spin-loader"></div>
+                </div>
               </template>
               <template v-else>
                 <div class="thumbnail-placeholder">
@@ -1138,7 +1148,7 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
                   ref="previewImageRef"
                   :src="currentPage.imageUrl"
                   :alt="currentPage.title"
-                  class="slide-image"
+                  class="slide-image image-reveal revealed"
                   draggable="false"
                 >
                 <div
@@ -1153,13 +1163,24 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
                 />
               </template>
               <template v-else>
-                <div class="slide-placeholder">
+                <div v-if="currentPage?.status === 'generating'" class="slide-generating">
+                  <div class="shimmer-bg"></div>
+                  <div class="generating-content">
+                    <div class="bouncing-indicator">
+                      <span class="bounce-dot">&#9998;</span>
+                      <span class="bounce-dot">&#10024;</span>
+                      <span class="bounce-dot">&#9998;</span>
+                    </div>
+                    <p class="generating-text">正在创作中...</p>
+                    <div class="generating-spin-wrapper">
+                      <div class="spin-loader"></div>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="slide-placeholder">
                   <div class="placeholder-icon">🍌</div>
-                  <p class="placeholder-text">
-                    {{ currentPage?.status === 'generating' ? '生成中...' : '尚未生成图片' }}
-                  </p>
+                  <p class="placeholder-text">尚未生成图片</p>
                   <button
-                    v-if="currentPage?.status !== 'generating'"
                     class="generate-page-btn"
                     @click="handleGeneratePage(currentPageIndex)"
                   >
@@ -1971,6 +1992,7 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
   pointer-events: none;
 }
 
+/* ---- 图片生成动画 ---- */
 .slide-placeholder {
   width: 100%;
   height: 100%;
@@ -2007,6 +2029,135 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 
 .generate-page-btn:hover {
   background: #2563eb;
+}
+
+.shimmer-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, #f0f4ff 0%, #f0f4ff 40%, #e0ebff 50%, #f0f4ff 60%, #f0f4ff 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.slide-generating {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.generating-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.bouncing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bounce-dot {
+  display: inline-block;
+  font-size: 24px;
+  animation: bounce 1.2s ease-in-out infinite;
+  filter: drop-shadow(0 2px 4px rgba(59, 130, 246, 0.3));
+}
+
+.bounce-dot:nth-child(2) {
+  animation-delay: 0.15s;
+  font-size: 28px;
+}
+
+.bounce-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-14px); }
+}
+
+.generating-text {
+  color: #475569;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  animation: textPulse 2s ease-in-out infinite;
+}
+
+@keyframes textPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.generating-spin-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spin-loader {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e0ebff;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.thumbnail-generating {
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.thumb-spin-loader {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid #dbeafe;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.image-reveal {
+  opacity: 0;
+  transform: scale(0.95);
+  filter: blur(8px);
+  transition: all 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.image-reveal.revealed {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0);
 }
 
 /* Control Bar */

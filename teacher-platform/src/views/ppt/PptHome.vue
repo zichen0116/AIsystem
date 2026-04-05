@@ -259,6 +259,10 @@ function removeReferenceFile(index) {
   uploadedReferenceFiles.value.splice(index, 1)
 }
 
+function goToHistory() {
+  pptStore.setPhase('history')
+}
+
 // 上传图片自动识别风格
 async function handleStyleImageUpload(event) {
   const file = event.target.files?.[0]
@@ -400,6 +404,13 @@ async function handleNext() {
 
 <template>
   <div class="ppt-home">
+    <button class="history-entry-btn" @click="goToHistory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      历史项目
+    </button>
     <div class="shell">
       <section class="hero">
         <h1>智能 PPT 生成</h1>
@@ -605,6 +616,34 @@ async function handleNext() {
   flex: 1;
   overflow-y: auto;
   background: #ffffff;
+  position: relative;
+}
+
+.history-entry-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d5dfed;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #3f5f82;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  z-index: 10;
+}
+
+.history-entry-btn:hover {
+  border-color: #3b82f6;
+  background: #eef5ff;
+  color: #1e3a8a;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
 }
 
 .shell {
