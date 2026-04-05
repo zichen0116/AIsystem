@@ -132,6 +132,23 @@ class PPTProjectResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PPTProjectListItem(BaseModel):
+    """PPT项目列表项（含摘要信息）"""
+    id: int
+    user_id: int
+    title: str
+    description: Optional[str]
+    creation_type: str
+    status: str
+    template_style: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    page_count: int = 0
+    cover_image_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
 # ============= Page Schemas =============
 
 class PPTPageCreate(BaseModel):

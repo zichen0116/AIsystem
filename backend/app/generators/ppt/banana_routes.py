@@ -35,7 +35,7 @@ from app.generators.ppt.page_utils import (
     split_generated_description,
 )
 from app.generators.ppt.banana_schemas import (
-    PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse,
+    PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse, PPTProjectListItem,
     PPTPageCreate, PPTPageUpdate, PPTPageResponse,
     PPTTaskResponse, PPTMaterialResponse, PPTReferenceFileResponse,
     PPTSessionResponse, ChatMessageRequest, PageReorderRequest,
@@ -428,18 +428,48 @@ async def create_project(
     return project
 
 
-@router.get("/projects", response_model=list[PPTProjectResponse])
+@router.get("/projects", response_model=list[PPTProjectListItem])
 async def list_projects(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """列出当前用户的所有PPT项目"""
+    """列出当前用户的所有PPT项目（含页数和封面图）"""
     result = await db.execute(
         select(PPTProject)
         .where(PPTProject.user_id == current_user.id)
-        .order_by(PPTProject.created_at.desc())
+        .order_by(PPTProject.updated_at.desc())
     )
-    return result.scalars().all()
+    projects = result.scalars().all()
+
+    items = []
+    for project in projects:
+        # 查询页数和第一张有图的页面
+        page_result = await db.execute(
+            select(PPTPage)
+            .where(PPTPage.project_id == project.id)
+            .order_by(PPTPage.page_number)
+        )
+        pages = page_result.scalars().all()
+        cover_url = None
+        for p in pages:
+            if p.image_url:
+                cover_url = p.image_url
+                break
+
+        items.append(PPTProjectListItem(
+            id=project.id,
+            user_id=project.user_id,
+            title=project.title or project.outline_text or "未命名项目",
+            description=project.description,
+            creation_type=project.creation_type or "dialog",
+            status=project.status or "DRAFT",
+            template_style=project.template_style,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            page_count=len(pages),
+            cover_image_url=cover_url,
+        ))
+    return items
 
 
 @router.get("/projects/{project_id}", response_model=PPTProjectResponse)
@@ -1958,7 +1988,19 @@ JSON Schema:
 约束：
 - scores 和 confidence 取值 0-100
 - pending 非空时 ready_for_confirmation 必须为 false
-- 当 ready_for_confirmation=true 时，intent_summary 字段必须完整填写"""
+- 当 ready_for_confirmation=true 时，intent_summary 字段必须完整填写
+- 当 ready_for_confirmation=true 时，你的 reply 最后一句必须是：请点击右侧按钮「确认意图，进入大纲页」，进一步生成大纲。"""
+
+        # 注入历史已确认要点到 system prompt
+        hist_confirmed = set()
+        for s in sessions:
+            if s.role == 'assistant' and s.session_metadata:
+                old_state = s.session_metadata.get('intent_state', {})
+                for item in old_state.get('confirmed', []):
+                    if isinstance(item, str) and item.strip():
+                        hist_confirmed.add(item.strip())
+        if hist_confirmed:
+            intent_system_prompt += f"\n\n之前轮次已确认的要点：{', '.join(hist_confirmed)}。请在你的回复中保留这些已确认要点，不要丢弃。"
 
         response = await dashscope.chat_with_history(
             messages=messages,
@@ -1966,6 +2008,39 @@ JSON Schema:
         )
         raw_content = response if isinstance(response, str) else response.get("content", "")
         ai_content, intent_state = _parse_intent_state(raw_content)
+
+        # ---- 确定性合并：历史已确认要点 ∪ 当前轮已确认要点 ----
+        previous_confirmed = set()
+        for s in sessions:
+            if s.role == 'assistant' and s.session_metadata:
+                old_state = s.session_metadata.get('intent_state', {})
+                for item in old_state.get('confirmed', []):
+                    if isinstance(item, str) and item.strip():
+                        previous_confirmed.add(item.strip())
+        current_confirmed = set(
+            item for item in intent_state.get('confirmed', [])
+            if isinstance(item, str) and item.strip()
+        )
+        merged_confirmed = previous_confirmed | current_confirmed
+        intent_state['confirmed'] = list(merged_confirmed)
+
+        # ---- pending 与合并后 confirmed 校正：移除已被 confirmed 覆盖的维度 ----
+        merged_text = "\n".join(merged_confirmed)
+        dimension_covered = {
+            "受众基础层次": any(k in merged_text for k in ["受众", "年级", "学生", "基础"]),
+            "核心教学目标": any(k in merged_text for k in ["目标", "学习目标", "达成", "掌握"]),
+            "课时与目标页数": any(k in merged_text for k in ["课时", "时长", "页数", "时间", "页"]),
+            "互动与约束条件": any(k in merged_text for k in ["互动", "约束", "活动", "限制", "形式"]),
+        }
+        corrected_pending = [
+            p for p in intent_state.get('pending', [])
+            if not dimension_covered.get(p, False)
+        ]
+        intent_state['pending'] = corrected_pending
+
+        # 如果 pending 被清空且有足够 confirmed，标记可确认
+        if not corrected_pending and len(merged_confirmed) >= 4:
+            intent_state['ready_for_confirmation'] = True
 
     except Exception as e:
         ai_content = f"抱歉，发生了错误: {str(e)}"
