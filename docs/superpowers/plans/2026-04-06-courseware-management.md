@@ -33,7 +33,7 @@
 | `teacher-platform/src/api/courseware.js` | Create | API functions for /courseware/* endpoints |
 | `teacher-platform/src/views/CoursewareManage.vue` | Modify | Rewire to store, add action menu, edit modal, time formatting |
 | `teacher-platform/src/views/PersonalCenter.vue` | Modify | Adapt to new store shape |
-| `teacher-platform/src/views/LessonPrep.vue` | Modify | Parse route query params for mode/projectId/id |
+| `teacher-platform/src/views/LessonPrep.vue` | Modify | Parse route query params for tab/projectId/lessonPlanId |
 | `teacher-platform/src/views/LessonPlanPage.vue` | Modify | Support loading existing plan by id from route |
 
 ---
@@ -45,20 +45,20 @@
 
 - [ ] **Step 1: Add new columns to Courseware model**
 
-In `backend/app/models/courseware.py`, add after the `file_url` field (line 49):
+In `backend/app/models/courseware.py`, add after the `file_url` field (line 49). **Use the repo's existing ORM style (`Mapped` + `mapped_column`)**, NOT `Column()`:
 
 ```python
-    file_name = Column(String(255), nullable=True)
-    file_size = Column(BigInteger, nullable=True)
-    file_type = Column(String(20), nullable=True)  # pdf/ppt/word/video/image
-    tags = Column(String(500), nullable=True)
-    remark = Column(Text, nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pdf/ppt/word/video/image
+    tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
 ```
 
-Add the `BigInteger` and `Text` imports at the top — they're already imported via `from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text` but add `BigInteger`:
+Update the imports at the top to add `BigInteger` and `Text`:
 
 ```python
-from sqlalchemy import Column, Integer, BigInteger, String, DateTime, ForeignKey, Text
+from sqlalchemy import String, DateTime, ForeignKey, Integer, BigInteger, Text
 ```
 
 - [ ] **Step 2: Generate Alembic migration**
@@ -422,6 +422,11 @@ async def upload_courseware(
     remark: str | None = Form(None),
 ):
     """上传课件文件到OSS并创建记录"""
+    # Read file size BEFORE oss_upload (which consumes the stream)
+    contents = await file.read()
+    file_size = len(contents)
+    await file.seek(0)  # reset for oss_upload to read
+
     oss_result = await oss_upload(file, current_user.id)
 
     # Derive file_type from oss_service result
@@ -430,10 +435,6 @@ async def upload_courseware(
     # Use provided title or strip extension from original filename
     original_name = oss_result.get("file_name", file.filename or "未命名文件")
     display_title = title or original_name.rsplit(".", 1)[0]
-
-    # Get file size
-    await file.seek(0, 2)
-    file_size = file.tell() if hasattr(file, 'tell') else None
 
     courseware = Courseware(
         user_id=current_user.id,
@@ -1271,15 +1272,26 @@ const pptStore = usePptStore()
 
 watch(routeProjectId, async (newId) => {
   if (newId && activeTab.value === 'ppt') {
-    // Load project and go to appropriate phase (same as PptHistory.openProject)
+    // Load project and go to appropriate phase
+    // Replicates PptHistory.vue's openProject() + getProjectPhase() logic
     await pptStore.fetchProject(Number(newId))
     await pptStore.fetchPages(Number(newId))
-    const project = pptStore.projectData
-    if (project) {
-      const phase = project.cover_image_url ? 'preview'
-        : (pptStore.outlinePages?.length > 0 ? 'outline' : 'dialog')
-      pptStore.setPhase(phase)
+
+    // Determine phase using same logic as PptHistory.getProjectPhase():
+    // - has pages with images → preview
+    // - has pages but no images → outline
+    // - dialog creation type with no pages → dialog
+    // - default → outline
+    const pages = pptStore.outlinePages || []
+    const hasImages = pages.some(p => p.imageUrl)
+    let phase = 'outline'
+    if (hasImages) {
+      phase = 'preview'
+    } else if (pages.length === 0 && pptStore.projectData?.creation_type === 'dialog') {
+      phase = 'dialog'
     }
+    pptStore.setPhase(phase)
+
     // Clear query params to avoid re-triggering
     router.replace({ query: { tab: 'ppt' } })
   }

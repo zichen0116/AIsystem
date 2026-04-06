@@ -201,8 +201,8 @@ Replace all mock data. New state with**双列表分层**：
 
 | ID Prefix | Target | Notes |
 |---|---|---|
-| `ppt_` | `/lesson-prep?mode=ppt&projectId={source_id}` | Load PPT project into preview phase |
-| `lp_` | `/lesson-prep?mode=lesson-plan&id={source_id}` | Load lesson plan, expand rich text editor |
+| `ppt_` | `/lesson-prep?tab=ppt&projectId={source_id}` | Load PPT project into preview phase |
+| `lp_` | `/lesson-prep?tab=lesson-plan&lessonPlanId={source_id}` | Load lesson plan, expand rich text editor |
 | `up_` | No navigation | Toast: "该课件为手动上传，暂不支持在线编辑" |
 
 ### 3.2 LessonPrep Route Param Handling — 改造范围
@@ -210,9 +210,9 @@ Replace all mock data. New state with**双列表分层**：
 当前 `LessonPrep.vue` 只通过 tab 切换模块，不识别 query 参数。需要改造：
 
 **LessonPrep.vue 改造：**
-- `onMounted` / `watch(route.query)` 中解析 `mode` 参数
-- `mode=ppt` → 切换到 PPT tab，调用 `pptStore.loadProject(projectId)` 加载项目，设置 `currentPhase = 'preview'`
-- `mode=lesson-plan` → 切换到教案 tab，传 `id` 给 LessonPlanPage 组件
+- `onMounted` / `watch(route.query)` 中解析 `tab` + `projectId`/`lessonPlanId` 参数
+- `tab=ppt&projectId=X` → 切换到 PPT tab，加载项目 X，根据页面状态自动跳到对应阶段
+- `tab=lesson-plan&lessonPlanId=X` → 切换到教案 tab，传 lessonPlanId 给 LessonPlanPage 组件
 
 **LessonPlanPage.vue 改造：**
 - 当前进入页面会重置会话。增加逻辑：如果 route 带 `id` 参数，跳过新建流程，直接调 `GET /api/v1/lesson-plan/{id}` 加载已有教案内容到编辑器，展开富文本编辑区
