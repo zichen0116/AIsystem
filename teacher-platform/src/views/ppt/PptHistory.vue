@@ -2,33 +2,69 @@
 import { ref, computed, onMounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { listProjects, deleteProject, batchDeleteProjects } from '@/api/ppt'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, ArrowRight, Document, Clock } from '@element-plus/icons-vue'
 
 const pptStore = usePptStore()
 
+const _allProjects = ref([])
 const projects = ref([])
+const total = ref(0)
 const isLoading = ref(false)
-const errorMsg = ref('')
-const selectedIds = ref(new Set())
+const selectedIds = ref([])
 const isDeleting = ref(false)
 
-const isBatchMode = computed(() => selectedIds.value.size > 0)
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(Number(localStorage.getItem('ppt_history_page_size')) || 5)
+const pageSizeOptions = [5, 10, 20, 50]
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
-onMounted(async () => {
-  await loadProjects()
-})
+const isAllSelected = computed(() =>
+  projects.value.length > 0 && selectedIds.value.length === projects.value.length
+)
+const isIndeterminate = computed(() =>
+  selectedIds.value.length > 0 && selectedIds.value.length < projects.value.length
+)
+
+onMounted(() => loadProjects())
 
 async function loadProjects() {
   isLoading.value = true
-  errorMsg.value = ''
   try {
     const data = await listProjects()
-    projects.value = Array.isArray(data) ? data : (data?.projects || [])
+    const all = Array.isArray(data) ? data : (data?.projects || [])
+    _allProjects.value = all
+    total.value = all.length
+    applyPage()
   } catch (e) {
-    errorMsg.value = '加载历史项目失败，请重试'
+    ElMessage.error('加载历史项目失败，请重试')
     console.error(e)
   } finally {
     isLoading.value = false
   }
+}
+
+function applyPage() {
+  const start = (currentPage.value - 1) * pageSize.value
+  projects.value = _allProjects.value.slice(start, start + pageSize.value)
+  selectedIds.value = []
+}
+
+function handlePageChange(page) {
+  currentPage.value = page
+  applyPage()
+}
+
+function handleSizeChange(size) {
+  pageSize.value = size
+  currentPage.value = 1
+  localStorage.setItem('ppt_history_page_size', String(size))
+  applyPage()
+}
+
+function toggleSelectAll(val) {
+  selectedIds.value = val ? projects.value.map(p => p.id) : []
 }
 
 function getStatusText(project) {
@@ -37,14 +73,14 @@ function getStatusText(project) {
   if (s === 'INTENT_CONFIRMED') return '待生成大纲'
   if (project.page_count > 0 && project.cover_image_url) return '已完成'
   if (project.page_count > 0) return '待生成图片'
-  return '进行中'
+  return '待生成描述'
 }
 
-function getStatusClass(project) {
+function getStatusType(project) {
   const text = getStatusText(project)
-  if (text === '已完成') return 'status-completed'
-  if (text === '待生成图片') return 'status-pending-images'
-  return 'status-in-progress'
+  if (text === '已完成') return 'success'
+  if (text === '待生成图片') return 'warning'
+  return 'info'
 }
 
 function getProjectPhase(project) {
@@ -57,553 +93,417 @@ function getProjectPhase(project) {
 function formatDate(dateStr) {
   if (!dateStr) return ''
   const d = new Date(dateStr)
-  return d.toLocaleString('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit'
-  })
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 async function openProject(project) {
-  if (isBatchMode.value) {
-    toggleSelect(project.id)
-    return
-  }
   try {
     await pptStore.fetchProject(project.id)
     await pptStore.fetchPages(project.id)
-
-    // 恢复意图
     if (project.creation_type === 'dialog') {
-      try {
-        await pptStore.fetchIntent(project.id)
-      } catch (e) {
-        // 意图可能不存在
-      }
+      try { await pptStore.fetchIntent(project.id) } catch (_) {}
     }
-
-    const phase = getProjectPhase(project)
-    pptStore.setPhase(phase)
+    pptStore.setPhase(getProjectPhase(project))
   } catch (e) {
-    console.error('打开项目失败:', e)
+    ElMessage.error('打开项目失败')
+    console.error(e)
   }
 }
 
-function toggleSelect(id) {
-  const s = new Set(selectedIds.value)
-  if (s.has(id)) s.delete(id)
-  else s.add(id)
-  selectedIds.value = s
-}
-
-function toggleSelectAll() {
-  if (selectedIds.value.size === projects.value.length) {
-    selectedIds.value = new Set()
-  } else {
-    selectedIds.value = new Set(projects.value.map(p => p.id))
-  }
-}
-
-async function handleDelete(e, project) {
-  e.stopPropagation()
-  if (!confirm(`确定要删除项目「${project.title}」吗？此操作不可恢复。`)) return
+async function handleDelete(project) {
   try {
+    await ElMessageBox.confirm(
+      `确定要删除项目「${project.title || '未命名项目'}」吗？此操作不可恢复。`,
+      '删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
     await deleteProject(project.id)
+    ElMessage.success('删除成功')
     await loadProjects()
   } catch (e) {
-    console.error('删除失败:', e)
+    if (e !== 'cancel') {
+      ElMessage.error('删除失败')
+      console.error(e)
+    }
   }
 }
 
 async function handleBatchDelete() {
-  const count = selectedIds.value.size
-  if (!confirm(`确定要删除选中的 ${count} 个项目吗？此操作不可恢复。`)) return
-  isDeleting.value = true
+  if (!selectedIds.value.length) return
   try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedIds.value.length} 个项目吗？此操作不可恢复。`,
+      '批量删除确认',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    isDeleting.value = true
     await batchDeleteProjects([...selectedIds.value])
-    selectedIds.value = new Set()
+    ElMessage.success('批量删除成功')
+    selectedIds.value = []
     await loadProjects()
   } catch (e) {
-    console.error('批量删除失败:', e)
+    if (e !== 'cancel') {
+      ElMessage.error('批量删除失败')
+      console.error(e)
+    }
   } finally {
     isDeleting.value = false
   }
 }
 
 function goHome() {
-  pptStore.setPhase('home')
+  pptStore.resetState()
 }
 </script>
 
 <template>
-  <div class="ppt-history">
-    <!-- Header -->
-    <header class="history-header">
-      <div class="header-left">
-        <button class="back-btn" @click="goHome">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-          返回首页
-        </button>
-        <h1>历史项目</h1>
-        <p class="subtitle">查看和管理你的所有项目</p>
-      </div>
-    </header>
-
-    <!-- Batch Actions -->
-    <div class="batch-bar">
-      <label class="select-all" @click="toggleSelectAll">
-        <span class="checkbox-icon" :class="{ checked: selectedIds.size === projects.length && projects.length > 0 }">
-          <svg v-if="selectedIds.size === projects.length && projects.length > 0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="12" height="12">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        </span>
-        全选
-      </label>
-      <div v-if="isBatchMode" class="batch-actions">
-        <span class="batch-count">已选择 {{ selectedIds.size }} 项</span>
-        <button class="batch-cancel" @click="selectedIds = new Set()">取消选择</button>
-        <button class="batch-delete-btn" :disabled="isDeleting" @click="handleBatchDelete">
-          {{ isDeleting ? '删除中...' : '批量删除' }}
-        </button>
-      </div>
-    </div>
-
-    <!-- Content -->
+  <div class="history-page">
     <div class="history-content">
-      <!-- Loading -->
-      <div v-if="isLoading" class="loading-state">
-        <div class="spin-loader"></div>
-        <p>加载中...</p>
+      <!-- 标题区 -->
+      <div class="history-header">
+        <div class="header-left">
+          <h1 class="history-title">历史项目</h1>
+          <p class="history-subtitle">查看和管理你的所有项目</p>
+        </div>
+        <el-button @click="goHome">
+          返回首页
+        </el-button>
       </div>
 
-      <!-- Error -->
-      <div v-else-if="errorMsg" class="error-state">
-        <p>{{ errorMsg }}</p>
-        <button @click="loadProjects">重试</button>
-      </div>
-
-      <!-- Empty -->
-      <div v-else-if="projects.length === 0" class="empty-state">
-        <div class="empty-icon">📊</div>
-        <h3>暂无历史项目</h3>
-        <p>创建你的第一个项目开始使用吧</p>
-        <button class="create-btn" @click="goHome">创建项目</button>
-      </div>
-
-      <!-- Project List -->
-      <div v-else class="project-list">
-        <div
-          v-for="project in projects"
-          :key="project.id"
-          class="project-card"
-          :class="{ 'card-selected': selectedIds.has(project.id) }"
-          @click="openProject(project)"
+      <!-- 工具栏 -->
+      <div class="toolbar">
+        <el-checkbox
+          :model-value="isAllSelected"
+          :indeterminate="isIndeterminate"
+          @change="toggleSelectAll"
         >
-          <!-- Checkbox -->
-          <div class="card-checkbox" @click.stop="toggleSelect(project.id)">
-            <span class="checkbox-icon" :class="{ checked: selectedIds.has(project.id) }">
-              <svg v-if="selectedIds.has(project.id)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="12" height="12">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-            </span>
-          </div>
+          全选
+        </el-checkbox>
 
-          <!-- Info -->
-          <div class="card-info">
-            <h3 class="card-title">{{ project.title || '未命名项目' }}</h3>
-            <div class="card-meta">
-              <span class="meta-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                  <line x1="3" y1="9" x2="21" y2="9"/>
-                </svg>
-                {{ project.page_count || 0 }} 页
-              </span>
-              <span class="meta-item">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                  <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12 6 12 12 16 14"/>
-                </svg>
-                {{ formatDate(project.updated_at) }}
-              </span>
+        <transition name="fade">
+          <div v-if="selectedIds.length > 0" class="batch-area">
+            <span class="batch-count">已选择 {{ selectedIds.length }} 项</span>
+            <el-button size="small" @click="selectedIds = []">取消选择</el-button>
+            <el-button
+              size="small"
+              type="danger"
+              :loading="isDeleting"
+              @click="handleBatchDelete"
+            >
+              批量删除
+            </el-button>
+          </div>
+        </transition>
+      </div>
+
+      <!-- 加载中 -->
+      <div v-if="isLoading" class="state-center">
+        <el-icon class="spin-icon" :size="32"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" opacity=".25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/></svg></el-icon>
+        <p style="color:#9ca3af;margin:8px 0 0">加载中...</p>
+      </div>
+
+      <!-- 空状态 -->
+      <el-empty
+        v-else-if="_allProjects.length === 0"
+        description="暂无历史项目，快去创建第一个吧"
+        :image-size="80"
+      >
+        <el-button type="primary" @click="goHome">创建项目</el-button>
+      </el-empty>
+
+      <!-- 项目列表 -->
+      <template v-else>
+        <div class="project-list">
+          <div
+            v-for="project in projects"
+            :key="project.id"
+            class="project-card"
+            :class="{ 'is-selected': selectedIds.includes(project.id) }"
+            @click="openProject(project)"
+          >
+            <!-- 复选框 -->
+            <div class="card-check" @click.stop>
+              <el-checkbox
+                :model-value="selectedIds.includes(project.id)"
+                @change="val => {
+                  if (val) selectedIds = [...selectedIds, project.id]
+                  else selectedIds = selectedIds.filter(id => id !== project.id)
+                }"
+              />
             </div>
-            <span class="status-badge" :class="getStatusClass(project)">
-              {{ getStatusText(project) }}
-            </span>
-          </div>
 
-          <!-- Cover Image -->
-          <div class="card-cover">
-            <template v-if="project.cover_image_url">
-              <img :src="project.cover_image_url" :alt="project.title" loading="lazy">
-            </template>
-            <template v-else>
-              <div class="cover-placeholder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="32" height="32">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                  <circle cx="8.5" cy="8.5" r="1.5"/>
-                  <polyline points="21 15 16 10 5 21"/>
-                </svg>
+            <!-- 主信息 -->
+            <div class="card-body">
+              <div class="card-title">{{ project.title || '未命名项目' }}</div>
+              <div class="card-meta">
+                <span class="meta-item">
+                  <el-icon><Document /></el-icon>
+                  {{ project.page_count || 0 }} 页
+                </span>
+                <span class="meta-item">
+                  <el-icon><Clock /></el-icon>
+                  {{ formatDate(project.updated_at) }}
+                </span>
               </div>
-            </template>
-          </div>
+            </div>
 
-          <!-- Actions -->
-          <div class="card-actions">
-            <button class="delete-btn" title="删除" @click="handleDelete($event, project)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-            </button>
-            <div class="enter-arrow">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
-                <polyline points="9 18 15 12 9 6"/>
-              </svg>
+            <!-- 右侧 -->
+            <div class="card-right">
+              <el-tag :type="getStatusType(project)" size="small" round>
+                {{ getStatusText(project) }}
+              </el-tag>
+
+              <!-- 封面缩略图 -->
+              <div class="card-cover">
+                <img v-if="project.cover_image_url" :src="project.cover_image_url" :alt="project.title" loading="lazy" />
+                <div v-else class="cover-empty">
+                  <el-icon :size="24" color="#d1d5db"><Document /></el-icon>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div class="card-actions" @click.stop>
+                <el-button
+                  circle
+                  size="small"
+                  type="danger"
+                  plain
+                  :icon="Delete"
+                  title="删除"
+                  @click="handleDelete(project)"
+                />
+                <el-button
+                  circle
+                  size="small"
+                  plain
+                  :icon="ArrowRight"
+                  title="进入项目"
+                  @click="openProject(project)"
+                />
+              </div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- 分页 -->
+        <div class="pagination-wrap">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :page-sizes="pageSizeOptions"
+            :total="total"
+            layout="prev, pager, next, sizes, total"
+            background
+            small
+            @current-change="handlePageChange"
+            @size-change="handleSizeChange"
+          />
+        </div>
+      </template>
     </div>
   </div>
 </template>
 
 <style scoped>
-.ppt-history {
-  min-height: 100%;
-  background: #111827;
-  color: #e5e7eb;
-  padding: 24px 32px;
-  max-width: 1200px;
+/* 整体铺满父容器，可滚动 */
+.history-page {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: #f5f7fa;
+  box-sizing: border-box;
+  padding: 32px 0 48px;
+}
+
+/* 居中内容区，约 2/3 宽度 */
+.history-content {
+  width: 66%;
+  min-width: 640px;
+  max-width: 1000px;
   margin: 0 auto;
 }
 
+/* 标题区 */
 .history-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   margin-bottom: 20px;
 }
 
-.header-left h1 {
-  font-size: 28px;
-  font-weight: 800;
-  color: #f9fafb;
-  margin: 12px 0 4px;
+.history-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 4px;
 }
 
-.subtitle {
-  font-size: 14px;
+.history-subtitle {
+  font-size: 13px;
   color: #9ca3af;
   margin: 0;
 }
 
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid #374151;
-  border-radius: 8px;
-  background: #1f2937;
-  color: #d1d5db;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 6px 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-family: inherit;
-}
-
-.back-btn:hover {
-  border-color: #6b7280;
-  background: #374151;
-  color: #f9fafb;
-}
-
-.batch-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 0 16px;
-  border-bottom: 1px solid #1f2937;
-  margin-bottom: 16px;
-}
-
-.select-all {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: #9ca3af;
-  cursor: pointer;
-  user-select: none;
-}
-
-.checkbox-icon {
-  width: 18px;
-  height: 18px;
-  border: 2px solid #4b5563;
-  border-radius: 4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-}
-
-.checkbox-icon.checked {
-  background: #3b82f6;
-  border-color: #3b82f6;
-  color: white;
-}
-
-.batch-actions {
+/* 工具栏 */
+.toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-left: auto;
+  padding: 10px 0 12px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 12px;
+  min-height: 36px;
+}
+
+.batch-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .batch-count {
   font-size: 13px;
-  color: #60a5fa;
+  color: #6b7280;
 }
 
-.batch-cancel {
-  border: 1px solid #374151;
-  border-radius: 6px;
-  background: transparent;
-  color: #9ca3af;
-  font-size: 12px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font-family: inherit;
-}
+/* fade 动画 */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
 
-.batch-delete-btn {
-  border: 1px solid #7f1d1d;
-  border-radius: 6px;
-  background: #7f1d1d;
-  color: #fca5a5;
-  font-size: 12px;
-  padding: 4px 10px;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.batch-delete-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.loading-state, .error-state, .empty-state {
+/* 状态 */
+.state-center {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 80px 0;
   gap: 12px;
+}
+
+.spin-icon {
   color: #9ca3af;
+  animation: spin 1s linear infinite;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.spin-loader {
-  width: 28px;
-  height: 28px;
-  border: 3px solid #374151;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.empty-icon {
-  font-size: 48px;
-}
-
-.create-btn {
-  margin-top: 8px;
-  border: none;
-  border-radius: 8px;
-  background: #3b82f6;
-  color: white;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 10px 20px;
-  cursor: pointer;
-  font-family: inherit;
-}
-
+/* 列表 */
 .project-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
+/* 卡片 */
 .project-card {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 20px 24px;
-  background: #1f2937;
-  border: 1px solid #374151;
-  border-radius: 12px;
+  gap: 14px;
+  padding: 16px 18px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
 .project-card:hover {
-  border-color: #4b5563;
-  background: #283444;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+  border-color: #d1d5db;
 }
 
-.project-card.card-selected {
-  border-color: #3b82f6;
-  background: #1e2a3e;
+.project-card.is-selected {
+  border-color: #a5b4fc;
+  background: #f5f3ff;
 }
 
-.card-checkbox {
+/* 复选框区域 */
+.card-check {
   flex-shrink: 0;
 }
 
-.card-info {
+/* 主信息 */
+.card-body {
   flex: 1;
   min-width: 0;
 }
 
 .card-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #f3f4f6;
-  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-bottom: 6px;
 }
 
 .card-meta {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 8px;
+  gap: 14px;
 }
 
 .meta-item {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 12px;
   color: #9ca3af;
 }
 
-.meta-item svg {
+/* 右侧区域 */
+.card-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex-shrink: 0;
 }
 
-.status-badge {
-  display: inline-block;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 10px;
-  border-radius: 999px;
-}
-
-.status-completed {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.status-pending-images {
-  background: rgba(251, 191, 36, 0.15);
-  color: #fbbf24;
-  border: 1px solid rgba(251, 191, 36, 0.3);
-}
-
-.status-in-progress {
-  background: rgba(96, 165, 250, 0.15);
-  color: #60a5fa;
-  border: 1px solid rgba(96, 165, 250, 0.3);
-}
-
+/* 封面缩略图 */
 .card-cover {
-  width: 180px;
-  height: 108px;
-  flex-shrink: 0;
-  border-radius: 8px;
+  width: 112px;
+  height: 72px;
+  border-radius: 4px;
   overflow: hidden;
-  background: #111827;
-  border: 1px solid #374151;
+  border: 1px solid #e5e7eb;
+  background: #f3f4f6;
+  flex-shrink: 0;
 }
 
 .card-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
 
-.cover-placeholder {
+.cover-empty {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #4b5563;
 }
 
+/* 操作按钮 */
 .card-actions {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
+  gap: 6px;
 }
 
-.delete-btn {
-  border: none;
-  background: transparent;
-  color: #6b7280;
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 6px;
-  transition: all 0.15s;
+.card-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
-.delete-btn:hover {
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.enter-arrow {
-  color: #6b7280;
-  transition: color 0.15s;
-}
-
-.project-card:hover .enter-arrow {
-  color: #d1d5db;
-}
-
-@media (max-width: 768px) {
-  .ppt-history {
-    padding: 16px;
-  }
-
-  .project-card {
-    flex-wrap: wrap;
-    padding: 16px;
-  }
-
-  .card-cover {
-    width: 100%;
-    height: 140px;
-    order: -1;
-  }
-
-  .card-actions {
-    flex-direction: row;
-    width: 100%;
-    justify-content: flex-end;
-  }
+/* 分页 */
+.pagination-wrap {
+  display: flex;
+  justify-content: center;
+  padding-top: 20px;
 }
 </style>

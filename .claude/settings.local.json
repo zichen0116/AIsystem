@@ -36,7 +36,9 @@
       "Bash(/d/DevelopTools/anaconda/python -c \"import oss2; import fastapi; print\\(''''both ok''''\\)\")",
       "Bash(/d/DevelopTools/anaconda/python -c \"from app.services.oss_service import upload_file, delete_file, download_to_temp; print\\(''OK''\\)\")",
       "Bash(npm run:*)",
-      "Bash(conda run:*)"
+      "Bash(conda run:*)",
+      "Bash(find:*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }
