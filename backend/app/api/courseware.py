@@ -103,9 +103,20 @@ async def upload_courseware(
     remark: str | None = Form(None),
 ):
     """上传课件文件到OSS并创建记录"""
+    ALLOWED_EXTENSIONS = {".pdf", ".ppt", ".pptx", ".doc", ".docx", ".mp4"}
+    MAX_SIZE = 50 * 1024 * 1024  # 50MB
+
+    # Validate file extension
+    import os
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"不支持的文件类型，仅允许: {', '.join(ALLOWED_EXTENSIONS)}")
+
     # Read file size BEFORE oss_upload (which consumes the stream)
     contents = await file.read()
     file_size = len(contents)
+    if file_size > MAX_SIZE:
+        raise HTTPException(413, "文件过大，最大允许 50MB")
     await file.seek(0)
 
     oss_result = await oss_upload(file, current_user.id)
@@ -237,11 +248,10 @@ async def update_courseware(
             detail="课件不存在"
         )
 
-    # 更新字段
-    for field in ["title", "content_json", "status", "file_url", "tags", "remark", "file_type"]:
-        value = getattr(data, field, None)
-        if value is not None:
-            setattr(courseware, field, value)
+    # 更新字段（使用 exclude_unset 以区分「未传」和「传了 null」）
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(courseware, field, value)
 
     await db.commit()
     await db.refresh(courseware)

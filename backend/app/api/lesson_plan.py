@@ -74,10 +74,13 @@ def _export_docx_from_content(title: str, content: str) -> FileResponse:
 
     tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
     doc.save(tmp.name)
+    from pathlib import Path
+    from starlette.background import BackgroundTask
     return FileResponse(
         tmp.name,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename=f"{title}.docx",
+        background=BackgroundTask(lambda: Path(tmp.name).unlink(missing_ok=True)),
     )
 
 

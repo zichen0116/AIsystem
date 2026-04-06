@@ -569,6 +569,7 @@ async def batch_delete_projects(
     )
     projects = result.scalars().all()
     for project in projects:
+        await invalidate_ppt_cover(project.id)
         await db.delete(project)
     await db.commit()
     return {"deleted": len(projects)}
