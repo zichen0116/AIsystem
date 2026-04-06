@@ -1,8 +1,9 @@
 """
 课件相关 Schema
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
+from typing import Optional
 from app.models.enums import CoursewareType, CoursewareStatus
 
 
@@ -19,10 +20,20 @@ class CoursewareCreate(CoursewareBase):
 
 class CoursewareUpdate(BaseModel):
     """更新课件请求"""
-    title: str | None = Field(None, min_length=1, max_length=255)
-    content_json: dict | None = None
-    status: CoursewareStatus | None = None
-    file_url: str | None = None
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    content_json: Optional[dict] = None
+    status: Optional[str] = None
+    file_url: Optional[str] = None
+    tags: Optional[str] = Field(None, max_length=500)
+    remark: Optional[str] = None
+    file_type: Optional[str] = None
+
+    @field_validator("file_type")
+    @classmethod
+    def validate_file_type(cls, v):
+        if v is not None and v not in ("pdf", "ppt", "word", "video", "image"):
+            raise ValueError("file_type must be one of: pdf, ppt, word, video, image")
+        return v
 
 
 class SlideContent(BaseModel):
@@ -81,4 +92,25 @@ class CoursewareResponse(CoursewareBase):
 class CoursewareListResponse(BaseModel):
     """课件列表响应"""
     items: list[CoursewareResponse]
+    total: int
+
+
+class CoursewareAggregateItem(BaseModel):
+    id: str                           # prefixed: ppt_123, lp_456, up_789
+    source_type: str                  # ppt / lesson_plan / uploaded
+    name: str
+    file_type: str                    # pdf / ppt / word / video / image
+    file_size: Optional[int] = None   # bytes
+    status: Optional[str] = None
+    cover_image: Optional[str] = None
+    updated_at: datetime
+    source_id: int                    # raw DB id
+    tags: Optional[str] = None
+    remark: Optional[str] = None
+    file_url: Optional[str] = None
+    page_count: Optional[int] = None  # only for PPT
+
+
+class CoursewareAggregateResponse(BaseModel):
+    items: list[CoursewareAggregateItem]
     total: int
