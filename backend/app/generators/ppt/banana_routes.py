@@ -35,7 +35,7 @@ from app.generators.ppt.page_utils import (
     split_generated_description,
 )
 from app.generators.ppt.banana_schemas import (
-    PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse,
+    PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse, PPTProjectListItem,
     PPTPageCreate, PPTPageUpdate, PPTPageResponse,
     PPTTaskResponse, PPTMaterialResponse, PPTReferenceFileResponse,
     PPTSessionResponse, ChatMessageRequest, PageReorderRequest,
@@ -173,6 +173,28 @@ def _extract_page_points(page: PPTPage) -> list[str]:
 
 def _get_active_extra_fields_config(project: PPTProject) -> list[dict]:
     return get_active_extra_fields_config(project.settings or {})
+
+def _extract_project_template_style(project: PPTProject) -> Optional[str]:
+    style = str(getattr(project, "template_style", "") or "").strip()
+    if style:
+        return style
+    settings_style = str((project.settings or {}).get("template_style") or "").strip()
+    return settings_style or None
+
+
+def _get_project_style_prompt(project: PPTProject) -> Optional[str]:
+    return _extract_project_template_style(project) or project.theme
+
+
+def _sync_project_template_style_to_settings(project: PPTProject) -> None:
+    settings = dict(project.settings or {})
+    style = str(getattr(project, "template_style", "") or "").strip()
+    if style:
+        settings["template_style"] = style
+    else:
+        settings.pop("template_style", None)
+    project.settings = settings
+
 
 
 def _apply_generated_description(page: PPTPage, generated_text: str, extra_fields_config: list[dict]) -> None:
@@ -382,35 +404,72 @@ async def create_project(
     db: AsyncSession = Depends(get_db)
 ):
     """创建PPT项目"""
+    settings = dict(data.settings or {})
+    template_style_raw = data.template_style if data.template_style is not None else settings.get("template_style")
+    template_style = str(template_style_raw or "").strip() or None
+
     project = PPTProject(
         user_id=current_user.id,
         title=data.title,
         description=data.description,
         creation_type=data.creation_type,
         theme=data.theme,
+        template_style=template_style,
         outline_text=data.outline_text,
-        settings=data.settings or {},
+        settings=settings,
         knowledge_library_ids=data.knowledge_library_ids or [],
         status="PLANNING"
     )
+    _sync_project_template_style_to_settings(project)
+
     db.add(project)
     await db.commit()
     await db.refresh(project)
     return project
 
 
-@router.get("/projects", response_model=list[PPTProjectResponse])
+@router.get("/projects", response_model=list[PPTProjectListItem])
 async def list_projects(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """列出当前用户的所有PPT项目"""
+    """列出当前用户的所有PPT项目（含页数和封面图）"""
     result = await db.execute(
         select(PPTProject)
         .where(PPTProject.user_id == current_user.id)
-        .order_by(PPTProject.created_at.desc())
+        .order_by(PPTProject.updated_at.desc())
     )
-    return result.scalars().all()
+    projects = result.scalars().all()
+
+    items = []
+    for project in projects:
+        # 查询页数和第一张有图的页面
+        page_result = await db.execute(
+            select(PPTPage)
+            .where(PPTPage.project_id == project.id)
+            .order_by(PPTPage.page_number)
+        )
+        pages = page_result.scalars().all()
+        cover_url = None
+        for p in pages:
+            if p.image_url:
+                cover_url = p.image_url
+                break
+
+        items.append(PPTProjectListItem(
+            id=project.id,
+            user_id=project.user_id,
+            title=project.title or project.outline_text or "未命名项目",
+            description=project.description,
+            creation_type=project.creation_type or "dialog",
+            status=project.status or "DRAFT",
+            template_style=project.template_style,
+            created_at=project.created_at,
+            updated_at=project.updated_at,
+            page_count=len(pages),
+            cover_image_url=cover_url,
+        ))
+    return items
 
 
 @router.get("/projects/{project_id}", response_model=PPTProjectResponse)
@@ -447,8 +506,24 @@ async def update_project(
         raise HTTPException(status_code=404, detail="项目不存在")
 
     update_data = data.model_dump(exclude_unset=True)
+
+    incoming_settings = dict(update_data.get("settings") or {}) if isinstance(update_data.get("settings"), dict) else None
+    has_template_style_update = "template_style" in update_data or (incoming_settings is not None and "template_style" in incoming_settings)
+
+    if incoming_settings is not None:
+        incoming_settings.pop("template_style", None)
+        update_data["settings"] = incoming_settings
+
+    if has_template_style_update:
+        incoming_template_style = update_data.get("template_style")
+        if incoming_template_style is None and isinstance(data.settings, dict):
+            incoming_template_style = data.settings.get("template_style")
+        update_data["template_style"] = str(incoming_template_style or "").strip() or None
+
     for field, value in update_data.items():
         setattr(project, field, value)
+
+    _sync_project_template_style_to_settings(project)
 
     await db.commit()
     await db.refresh(project)
@@ -513,7 +588,11 @@ async def update_project_settings(
     from app.generators.ppt.template_settings import merge_project_settings
 
     update_data = data.model_dump(exclude_unset=True)
+    if "template_style" in update_data:
+        project.template_style = str(update_data.pop("template_style") or "").strip() or None
+
     project.settings = merge_project_settings(project.settings, update_data)
+    _sync_project_template_style_to_settings(project)
 
     await db.commit()
     await db.refresh(project)
@@ -706,7 +785,7 @@ async def generate_outline(
     try:
         result_data = await banana_svc.parse_outline_text(
             outline_text,
-            theme=project.theme,
+            theme=_get_project_style_prompt(project),
             language=language
         )
 
@@ -747,7 +826,8 @@ async def generate_outline_stream(
 
             if idea_prompt:
                 # 构建生成大纲的提示（JSON格式，便于直接创建页面）
-                theme_hint = f"\n主题/风格：{project.theme}" if project.theme else ""
+                style_prompt = _get_project_style_prompt(project)
+                theme_hint = f"\nStyle: {style_prompt}" if style_prompt else ""
 
                 # 从 idea_prompt 中提取页数约束（如"8页"、"10页以内"）
                 import re
@@ -924,7 +1004,7 @@ async def generate_descriptions(
             }
             description = await banana_svc.generate_description(
                 page_data,
-                theme=project.theme,
+                theme=_get_project_style_prompt(project),
                 language=language,
                 extra_fields_config=extra_fields_config,
             )
@@ -989,7 +1069,7 @@ async def generate_descriptions_stream(
 
                 description = await banana_svc.generate_description(
                     page_data,
-                    theme=project.theme,
+                    theme=_get_project_style_prompt(project),
                     language=language,
                     detail_level=detail_level,
                     extra_fields_config=extra_fields_config,
@@ -1908,7 +1988,19 @@ JSON Schema:
 约束：
 - scores 和 confidence 取值 0-100
 - pending 非空时 ready_for_confirmation 必须为 false
-- 当 ready_for_confirmation=true 时，intent_summary 字段必须完整填写"""
+- 当 ready_for_confirmation=true 时，intent_summary 字段必须完整填写
+- 当 ready_for_confirmation=true 时，你的 reply 最后一句必须是：请点击右侧按钮「确认意图，进入大纲页」，进一步生成大纲。"""
+
+        # 注入历史已确认要点到 system prompt
+        hist_confirmed = set()
+        for s in sessions:
+            if s.role == 'assistant' and s.session_metadata:
+                old_state = s.session_metadata.get('intent_state', {})
+                for item in old_state.get('confirmed', []):
+                    if isinstance(item, str) and item.strip():
+                        hist_confirmed.add(item.strip())
+        if hist_confirmed:
+            intent_system_prompt += f"\n\n之前轮次已确认的要点：{', '.join(hist_confirmed)}。请在你的回复中保留这些已确认要点，不要丢弃。"
 
         response = await dashscope.chat_with_history(
             messages=messages,
@@ -1916,6 +2008,39 @@ JSON Schema:
         )
         raw_content = response if isinstance(response, str) else response.get("content", "")
         ai_content, intent_state = _parse_intent_state(raw_content)
+
+        # ---- 确定性合并：历史已确认要点 ∪ 当前轮已确认要点 ----
+        previous_confirmed = set()
+        for s in sessions:
+            if s.role == 'assistant' and s.session_metadata:
+                old_state = s.session_metadata.get('intent_state', {})
+                for item in old_state.get('confirmed', []):
+                    if isinstance(item, str) and item.strip():
+                        previous_confirmed.add(item.strip())
+        current_confirmed = set(
+            item for item in intent_state.get('confirmed', [])
+            if isinstance(item, str) and item.strip()
+        )
+        merged_confirmed = previous_confirmed | current_confirmed
+        intent_state['confirmed'] = list(merged_confirmed)
+
+        # ---- pending 与合并后 confirmed 校正：移除已被 confirmed 覆盖的维度 ----
+        merged_text = "\n".join(merged_confirmed)
+        dimension_covered = {
+            "受众基础层次": any(k in merged_text for k in ["受众", "年级", "学生", "基础"]),
+            "核心教学目标": any(k in merged_text for k in ["目标", "学习目标", "达成", "掌握"]),
+            "课时与目标页数": any(k in merged_text for k in ["课时", "时长", "页数", "时间", "页"]),
+            "互动与约束条件": any(k in merged_text for k in ["互动", "约束", "活动", "限制", "形式"]),
+        }
+        corrected_pending = [
+            p for p in intent_state.get('pending', [])
+            if not dimension_covered.get(p, False)
+        ]
+        intent_state['pending'] = corrected_pending
+
+        # 如果 pending 被清空且有足够 confirmed，标记可确认
+        if not corrected_pending and len(merged_confirmed) >= 4:
+            intent_state['ready_for_confirmation'] = True
 
     except Exception as e:
         ai_content = f"抱歉，发生了错误: {str(e)}"

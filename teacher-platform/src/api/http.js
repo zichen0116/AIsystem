@@ -77,7 +77,13 @@ export async function apiRequest(path, { method = 'GET', headers = {}, body } = 
   if (!res.ok) {
     let detail = ''
     try {
-      detail = contentType.includes('application/json') ? (await res.json())?.detail : await res.text()
+      if (contentType.includes('application/json')) {
+        const payload = await res.json()
+        const parsedDetail = payload?.detail ?? payload?.message ?? payload
+        detail = typeof parsedDetail === 'string' ? parsedDetail : JSON.stringify(parsedDetail)
+      } else {
+        detail = await res.text()
+      }
     } catch {
       detail = ''
     }

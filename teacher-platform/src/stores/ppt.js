@@ -87,6 +87,7 @@ export const usePptStore = defineStore('ppt', {
         this.projectId = response.id
         this.projectData = response
         this.creationType = data.creation_type
+        this.templateStyle = response.template_style || data.template_style || data?.settings?.template_style || ""
         return response
       } catch (error) {
         this.setError('create', error.message)
@@ -105,6 +106,7 @@ export const usePptStore = defineStore('ppt', {
         if (response.settings && typeof response.settings === 'object') {
           this.projectSettings = { ...this.projectSettings, ...response.settings }
         }
+        this.templateStyle = response.template_style || response.settings?.template_style || this.templateStyle
         return response
       } catch (error) {
         this.setError('fetch', error.message)
@@ -118,9 +120,13 @@ export const usePptStore = defineStore('ppt', {
           method: 'PUT',
           body: JSON.stringify(settingsData)
         })
-        this.projectSettings = { ...this.projectSettings, ...settingsData }
+        const mergedSettings = response?.settings && typeof response.settings === 'object'
+          ? { ...this.projectSettings, ...response.settings }
+          : { ...this.projectSettings, ...settingsData }
+        this.projectSettings = mergedSettings
+        this.templateStyle = response?.template_style || mergedSettings.template_style || this.templateStyle
         if (this.projectData) {
-          this.projectData = { ...this.projectData, settings: this.projectSettings }
+          this.projectData = { ...this.projectData, ...response, settings: mergedSettings }
         }
         return response
       } catch (error) {

@@ -24,6 +24,8 @@ let recognition = null
 const uploadedReferenceFiles = ref([])
 const userTemplates = ref([])
 
+const MAX_THEME_LENGTH = 50
+
 // 预设风格 - 描述来自 banana-slides
 const stylePresets = [
   { id: '1', name: '简约商务', color: '#0B1F3B', desc: '视觉描述：极致扁平化与强秩序网格，强调专业、稳重、克制。背景锁定海军蓝（#0B1F3B），标题文字纯白，强调色天蓝（#38BDF8）占比不超过3%。禁止渐变、发光、拟物纹理。光照为均匀演播室漫射光，无硬阴影。材质为平滑矢量色块，全稿默认不使用阴影。字体：无衬线体系，中英文统一基线。图表仅限2D扁平矢量，禁止饼图。', previewImage: '/preset-previews/business-simple.webp' },
@@ -257,6 +259,10 @@ function removeReferenceFile(index) {
   uploadedReferenceFiles.value.splice(index, 1)
 }
 
+function goToHistory() {
+  pptStore.setPhase('history')
+}
+
 // 上传图片自动识别风格
 async function handleStyleImageUpload(event) {
   const file = event.target.files?.[0]
@@ -284,10 +290,70 @@ async function handleStyleImageUpload(event) {
   event.target.value = ''
 }
 
+function parseBackendValidationDetails(rawMessage) {
+  const fallback = rawMessage || '请求失败，请稍后重试。'
+  if (!rawMessage) return [fallback]
+
+  let parsed = null
+  try {
+    parsed = JSON.parse(rawMessage)
+  } catch (_) {
+    return [fallback]
+  }
+
+  const details = Array.isArray(parsed)
+    ? parsed
+    : (parsed && Array.isArray(parsed.detail) ? parsed.detail : [])
+
+  if (!details.length) {
+    if (parsed && typeof parsed.detail === 'string') return [parsed.detail]
+    return [fallback]
+  }
+
+  const fieldLabelMap = {
+    'body.theme': 'theme（主题短标签）',
+    'body.template_style': 'template_style（风格描述）',
+    'body.settings.template_style': 'settings.template_style（风格描述）'
+  }
+
+  const messages = details
+    .map((item) => {
+      if (!item || typeof item !== 'object') return ''
+      const fieldPath = Array.isArray(item.loc) ? item.loc.join('.') : ''
+      const fieldLabel = fieldLabelMap[fieldPath] || fieldPath || '字段'
+      const maxLength = Number(item?.ctx?.max_length || 0)
+
+      if (item.type === 'string_too_long' && maxLength > 0 && fieldPath.endsWith('theme')) {
+        return `${fieldLabel} 最多 ${maxLength} 个字符；长风格描述请填写到 template_style。`
+      }
+      if (item.type === 'string_too_long' && maxLength > 0) {
+        return `${fieldLabel} 最多 ${maxLength} 个字符。`
+      }
+      if (item.msg) {
+        return `${fieldLabel}: ${item.msg}`
+      }
+      return ''
+    })
+    .filter(Boolean)
+
+  return messages.length ? messages : [fallback]
+}
+
 async function handleNext() {
   try {
     const templateImageUrl = resolveSelectedTemplateUrl()
+    const effectiveTheme = (mainText.value || '').trim() || null
     const effectiveTemplateStyle = useTextStyle.value ? (templateStyle.value || '').trim() : null
+
+    if (effectiveTheme && effectiveTheme.length > MAX_THEME_LENGTH) {
+      alert(`主题（theme）最多 ${MAX_THEME_LENGTH} 个字符，请精简 main-textarea 内容。`)
+      return
+    }
+
+    if (useTextStyle.value && !effectiveTemplateStyle) {
+      alert('请先填写风格描述，或关闭“文字描述风格”。')
+      return
+    }
     const effectiveTemplateId = useTextStyle.value
       ? null
       : (selectedTemplateId.value || selectedPresetTemplateId.value || null)
@@ -304,7 +370,8 @@ async function handleNext() {
       title: mainText.value.slice(0, 100) || '未命名PPT',
       creation_type: creationType.value,
       outline_text: mainText.value,
-      theme: effectiveTemplateStyle,
+      theme: effectiveTheme,
+      template_style: effectiveTemplateStyle,
       settings: settings
     }
 
@@ -327,13 +394,23 @@ async function handleNext() {
       pptStore.setPhase('outline')
     }
   } catch (error) {
-    console.error('创建项目失败:', error)
+    console.error('create project failed:', error)
+    const rawMessage = String(error?.message || '')
+    const detailLines = parseBackendValidationDetails(rawMessage)
+    alert(`创建项目失败：\n${detailLines.join('\n')}`)
   }
 }
 </script>
 
 <template>
   <div class="ppt-home">
+    <button class="history-entry-btn" @click="goToHistory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
+      历史项目
+    </button>
     <div class="shell">
       <section class="hero">
         <h1>智能 PPT 生成</h1>
@@ -539,6 +616,34 @@ async function handleNext() {
   flex: 1;
   overflow-y: auto;
   background: #ffffff;
+  position: relative;
+}
+
+.history-entry-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d5dfed;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #3f5f82;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  z-index: 10;
+}
+
+.history-entry-btn:hover {
+  border-color: #3b82f6;
+  background: #eef5ff;
+  color: #1e3a8a;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
 }
 
 .shell {

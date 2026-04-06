@@ -89,6 +89,21 @@ const generateBlockReason = computed(() => {
   return `请继续完善：${state.pending.join('、')}。`
 })
 
+const confirmBtnDisabled = computed(() => {
+  if (isGenerating.value) return true
+  if (state.intentConfirmed) return false
+  // 直接绑定 pending.length，不仅依赖 readyForConfirmation
+  if (state.pending.length > 0) return true
+  if (!state.readyForConfirmation) return true
+  return false
+})
+
+const confirmBtnText = computed(() => {
+  if (isGenerating.value) return '确认中...'
+  if (state.intentConfirmed) return '返回大纲页 →'
+  return '确认意图，进入大纲页'
+})
+
 function nowText() {
   return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
@@ -114,7 +129,10 @@ function applyIntentState(intentState, pushSummary = true) {
   if (!intentState || typeof intentState !== 'object') return
 
   if (Array.isArray(intentState.confirmed)) {
-    state.confirmed = intentState.confirmed.filter(item => typeof item === 'string' && item.trim())
+    const newConfirmed = intentState.confirmed.filter(item => typeof item === 'string' && item.trim())
+    const existingSet = new Set(state.confirmed)
+    newConfirmed.forEach(item => existingSet.add(item))
+    state.confirmed = [...existingSet]
   }
 
   if (Array.isArray(intentState.pending)) {
@@ -209,12 +227,19 @@ async function confirmIntentAndGo() {
     return
   }
 
+  // 已确认过意图，直接跳转大纲页
+  if (state.intentConfirmed) {
+    pptStore.setPhase('outline')
+    return
+  }
+
   isGenerating.value = true
 
   try {
-    // 调用后端确认意图
     await pptStore.confirmIntent(pptStore.projectId)
     state.intentConfirmed = true
+    state.readyForConfirmation = true
+    state.pending = []
     state.confidence = Math.max(state.confidence, 95)
     pushSnapshot('系统：意图已确认，准备进入大纲页。')
 
@@ -224,7 +249,6 @@ async function confirmIntentAndGo() {
       time: nowText()
     })
 
-    // 跳转到大纲页
     setTimeout(() => {
       pptStore.setPhase('outline')
     }, 800)
@@ -299,10 +323,13 @@ onMounted(async () => {
   if (!pptStore.projectId) return
 
   try {
-    // 优先从 confirmedIntent 恢复（意图已确认过，直接使用 store 数据）
+    // 优先从 confirmedIntent 恢复
     if (pptStore.confirmedIntent && Object.keys(pptStore.confirmedIntent).length > 0) {
       state.intentSummary = pptStore.confirmedIntent
       state.intentConfirmed = true
+      state.readyForConfirmation = true
+      state.confidence = Math.max(state.confidence, 95)
+      state.pending = []
     }
 
     const sessions = await getSessions(pptStore.projectId)
@@ -316,15 +343,24 @@ onMounted(async () => {
 
     state.round = sessions.reduce((maxRound, session) => Math.max(maxRound, Number(session.round) || 0), 0)
 
-    // 仅在意图尚未确认时，才从 sessions 恢复 confirmed/pending 等状态
-    // 如果意图已确认（pptStore.confirmedIntent 存在），意图看板直接展示确认后的内容
+    // 从所有历史 sessions 累积恢复 confirmed
     if (!pptStore.confirmedIntent || Object.keys(pptStore.confirmedIntent).length === 0) {
-      const lastAssistantWithState = [...sessions]
-        .reverse()
-        .find(session => session.role === 'assistant' && session.metadata?.intent_state)
+      const allConfirmed = new Set()
+      let latestIntentState = null
 
-      if (lastAssistantWithState?.metadata?.intent_state) {
-        applyIntentState(lastAssistantWithState.metadata.intent_state, false)
+      for (const session of sessions) {
+        if (session.role === 'assistant' && session.metadata?.intent_state) {
+          latestIntentState = session.metadata.intent_state
+          const confirmed = latestIntentState.confirmed || []
+          confirmed.forEach(item => {
+            if (typeof item === 'string' && item.trim()) allConfirmed.add(item)
+          })
+        }
+      }
+
+      if (latestIntentState) {
+        applyIntentState(latestIntentState, false)
+        state.confirmed = [...allConfirmed]
       }
     }
 
@@ -363,6 +399,12 @@ const draftContent = computed(() => {
     <!-- Top Bar -->
     <header class="topbar">
       <div class="identity">
+        <button class="back-btn" @click="goBack" title="返回首页">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          返回
+        </button>
         <h1>教学意图澄清工作台</h1>
         <p>将零散想法整理成可执行教学意图</p>
       </div>
@@ -595,8 +637,8 @@ const draftContent = computed(() => {
 
           <!-- Actions -->
           <div class="actions">
-            <button class="btn secondary" :disabled="state.intentConfirmed || isGenerating" @click="confirmIntentAndGo">
-              {{ isGenerating ? '确认中...' : '确认意图，进入大纲页' }}
+            <button class="btn secondary" :class="{ 'btn-confirmed': state.intentConfirmed }" :disabled="confirmBtnDisabled" @click="confirmIntentAndGo">
+              {{ confirmBtnText }}
             </button>
             <p class="handoff-note">确认后系统将根据你的意图在大纲页生成 PPT 大纲，你仍可以在大纲页进行调整。</p>
             <p v-if="!state.readyForConfirmation && !state.intentConfirmed" class="handoff-warning">{{ generateBlockReason }}</p>
@@ -643,6 +685,30 @@ const draftContent = computed(() => {
   line-height: 1.5;
   max-width: 780px;
   margin: 4px 0 0;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d5dfed;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #3f5f82;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  margin-bottom: 4px;
+}
+
+.back-btn:hover {
+  border-color: #3b82f6;
+  background: #eef5ff;
+  color: #1e3a8a;
+  transform: translateX(-2px);
 }
 
 .session-metrics {
@@ -1321,6 +1387,17 @@ const draftContent = computed(() => {
 .btn.secondary:hover:not(:disabled) {
   border-color: #3b82f6;
   box-shadow: 0 8px 18px rgba(59, 130, 246, 0.2);
+}
+
+.btn.btn-confirmed {
+  border-color: #059669;
+  color: #065f46;
+  background: linear-gradient(145deg, #ecfdf5 0%, #d1fae5 100%);
+}
+
+.btn.btn-confirmed:hover:not(:disabled) {
+  border-color: #047857;
+  box-shadow: 0 8px 18px rgba(5, 150, 105, 0.2);
 }
 
 .btn:disabled {

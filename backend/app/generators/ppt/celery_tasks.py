@@ -110,6 +110,24 @@ def _load_frontend_public_asset_bytes(asset_url: str) -> Optional[bytes]:
         return None
 
 
+def _resolve_project_style_prompt(project) -> Optional[str]:
+    style = str(getattr(project, "template_style", "") or "").strip()
+    if style:
+        return style
+    settings_style = str((project.settings or {}).get("template_style") or "").strip()
+    if settings_style:
+        return settings_style
+    return project.theme
+
+def _project_settings_with_template_style(project) -> dict:
+    settings = dict(project.settings or {})
+    style = str(getattr(project, "template_style", "") or "").strip()
+    if style:
+        settings["template_style"] = style
+    return settings
+
+
+
 def _resolve_frontend_public_asset_path(asset_url: str) -> Optional[Path]:
     if not asset_url or not asset_url.startswith("/"):
         return None
@@ -475,8 +493,9 @@ def generate_descriptions_task(self: Task, project_id: int, task_id_str: str = N
             await db.commit()
 
         banana_svc = get_banana_service()
-        theme = project.theme
-        extra_fields_config = get_active_extra_fields_config(project.settings or {})
+        theme = _resolve_project_style_prompt(project)
+        project_settings = _project_settings_with_template_style(project)
+        extra_fields_config = get_active_extra_fields_config(project_settings)
         completed = 0
 
         for page in pages:
@@ -565,12 +584,13 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
                 p.is_image_generating = True
             await db.commit()
 
-        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        resolution = (project.settings or {}).get("image_resolution", "2K")
+        project_settings = _project_settings_with_template_style(project)
+        aspect_ratio = project_settings.get("aspect_ratio", "16:9")
+        resolution = project_settings.get("image_resolution", "2K")
         oss_svc = _get_oss_service_safe()
         image_provider = get_image_provider_singleton()
-        extra_fields_config = get_active_extra_fields_config(project.settings or {})
-        template_ref_image = _load_project_template_bytes(project.settings or {}, oss_svc)
+        extra_fields_config = get_active_extra_fields_config(project_settings)
+        template_ref_image = _load_project_template_bytes(project_settings, oss_svc)
         completed = 0
         success_count = 0
         failure_count = 0
@@ -578,7 +598,7 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
 
         for page in pages:
             try:
-                prompt = build_page_image_prompt(page, extra_fields_config, project.settings or {})
+                prompt = build_page_image_prompt(page, extra_fields_config, project_settings)
 
                 # 素材参考图
                 ref_images = [template_ref_image] if template_ref_image else []
@@ -794,7 +814,8 @@ def export_pptx_task(self: Task, project_id: int, task_id_str: str = None):
             )
             pages = list(res.scalars().all())
 
-        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
+        project_settings = _project_settings_with_template_style(project)
+        aspect_ratio = project_settings.get("aspect_ratio", "16:9")
         oss_svc = _get_oss_service_safe()
         export_svc = get_ppt_export_service()
 
@@ -867,7 +888,8 @@ def export_pdf_task(self: Task, project_id: int, task_id_str: str = None):
             )
             pages = list(res.scalars().all())
 
-        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
+        project_settings = _project_settings_with_template_style(project)
+        aspect_ratio = project_settings.get("aspect_ratio", "16:9")
         oss_svc = _get_oss_service_safe()
         export_svc = get_ppt_export_service()
 
@@ -1016,7 +1038,8 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
             )
             pages = list(res.scalars().all())
 
-        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
+        project_settings = _project_settings_with_template_style(project)
+        aspect_ratio = project_settings.get("aspect_ratio", "16:9")
         oss_svc = _get_oss_service_safe()
         export_svc = get_ppt_export_service()
 
@@ -1218,8 +1241,9 @@ async def edit_page_image_async(
             page.is_image_generating = True
             await db.commit()
 
-        aspect_ratio = (project.settings or {}).get("aspect_ratio", "16:9")
-        resolution = (project.settings or {}).get("image_resolution", "2K")
+        project_settings = _project_settings_with_template_style(project)
+        aspect_ratio = project_settings.get("aspect_ratio", "16:9")
+        resolution = project_settings.get("image_resolution", "2K")
         oss_svc = _get_oss_service_safe()
         image_provider = get_image_provider_singleton()
 

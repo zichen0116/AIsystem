@@ -1,18 +1,28 @@
-严重：2FA 临时 token 的隔离假设与现有鉴权实现不一致，存在越权风险
-设计文档要求 2fa_pending token 不能访问其他接口（design.md#L84）。
-但当前鉴权链路里，decode_access_token 并不校验 type，且缺少 version 时默认 1（jwt.py#L50）；get_current_user 直接信任该结果（auth.py#L27）。
-实现文档也未要求改 decode_access_token/get_current_user 去拒绝 type=2fa_pending（plan 只新增 create/decode_2fa_pending_token，见 plan.md#L566）。
-2fa_pending token 被“硬拒绝”在 decode_access_token，还是在 get_current_user 里拒绝（两种都可，但需明确唯一策略）
-高：实现文档中的 schema 定义不完整，后续步骤会引用未定义类型
-实现文档 Task4 的 auth.py schema 示例到 Toggle2FA 就结束（plan.md#L350）。
-但后续又要求在登录 2FA 流程中使用 TwoFARequired / Login2FAVerify（plan.md#L607, plan.md#L536）。
-设计文档明确这两个 schema 应存在（design.md#L117）。
-高：Task 7 的代码块存在污染/重复，按文档复制会产生无效代码
-从 open2FAModal 后开始出现不完整重复片段（如孤立的 method: 'POST'），并整段重复手机号/邮箱/2FA 逻辑（plan.md#L1026, plan.md#L1042, plan.md#L1056）。
-这会直接降低可执行性，且容易引入重复声明。
-中：实现文档有轻微漂移/可维护性问题
-send-email-code 已改成仅 current_user，但 imports 仍包含 SendEmailCodeRequest（plan.md#L410, plan.md#L480）。
-这不是阻塞问题，但会误导执行者。
-低：步骤编号有重复，执行追踪容易混乱
-Task3 出现两个 Step 2（plan.md#L144, plan.md#L151）。
-Task8 在 Step 10 后又回到 Step 9（plan.md#L1631, plan.md#L1638）。
+High: 第 2 个 bug 还没完全兜住，pending 仍可能被“最后一轮 AI 输出”重置。
+实现计划只做了 confirmed 的确定性合并，没有对 pending 做与合并后 confirmed 一致的重算/校正。这样仍可能出现“已确认和待确认列表看起来被刷新”的体验问题。
+参考：2026-04-05-ppt-dialog-bugfix.md:37 2026-04-05-ppt-dialog-bugfix.md:49
+
+
+Medium: 按钮禁用条件与需求描述不完全一致。
+你的原需求是“待确认要点没确认完就不可点击并提示”，但计划仍以 readyForConfirmation 为主，没有直接绑定 pending.length。若后端某次状态不一致，前端可能放行。
+参考：2026-04-05-ppt-dialog-bugfix.md:127
+
+Medium: Task 5 偏“验收说明”，不是“修复动作”，对第 5 条 bug 兜底不足。
+该任务写了“无需修改”，但没有给出从欢迎页重新进入当前项目/恢复会话的明确路径，存在“回去了但再进不来对话历史”的残留风险。
+参考：2026-04-05-ppt-dialog-bugfix.md:687 2026-04-05-ppt-dialog-bugfix.md:700
+
+前端要展示对话历史记录的，用户能够选择过去的对话回顾整个流程，后端也要持久化，回顾历史项目参考原banana-slides项目的实现
+请按“参考原项目历史项目页”的方式实现 PPT 历史项目入口与回顾功能
+需求：
+1. 在 PPT 首页增加“历史项目”入口，点击进入历史项目页面。
+2. 历史项目页面采用横向卡片列表布局（参考我给的截图风格example1.png）：深色背景、大卡片、左侧项目信息、右侧封面缩略图、状态标签、进入按钮。
+3. 每张卡片至少展示：项目标题、页数、更新时间、项目状态（如已完成/待生成图片）、封面图（无图则占位）。
+4. 点击卡片可进入该项目并恢复流程（dialog/outline/description/preview），能回看对话历史与后续页面数据。
+5. 后端要持久化并可查询历史项目列表；优先复用现有项目表和已有 API，不够再补最小接口。
+6. 不做过度设计：先不做复杂筛选、分页、批量操作；先实现“能看、能进、能恢复”。
+7. 不新增 npm 依赖，保持现有技术栈与代码风格。
+
+执行要求：
+1. 先阅读并复用原项目已有历史项目实现（样式和交互尽量一致）。
+2. 给出修改文件清单与关键改动点。
+3. 完成后运行前端构建与基础自测，并给出验收结果。
