@@ -4,7 +4,7 @@ import {
   uploadCourseware as apiUpload,
   updateCourseware as apiUpdate,
   deleteCoursewareItem as apiDelete,
-  getDownloadUrl,
+  downloadProtectedCourseware,
 } from '../api/courseware.js'
 import { apiRequest } from '../api/http.js'
 import { deleteProject } from '../api/ppt.js'
@@ -104,11 +104,21 @@ export const useCoursewareStore = defineStore('courseware', {
       return newItem
     },
 
-    downloadCourseware(item) {
+    async downloadCourseware(item) {
       const [prefix, rawId] = _parseId(item.id)
       const sourceType = prefix === 'ppt' ? 'ppt' : prefix === 'lp' ? 'lesson_plan' : 'uploaded'
-      const url = getDownloadUrl(sourceType, Number(rawId))
-      window.open(url, '_blank')
+
+      if (sourceType === 'uploaded') {
+        if (!item.file_url) {
+          throw new Error('文件链接不存在')
+        }
+        window.open(item.file_url, '_blank')
+        return
+      }
+
+      const ext = sourceType === 'ppt' ? 'pptx' : 'docx'
+      const fileName = `${item.name || '课件'}.${ext}`
+      await downloadProtectedCourseware(sourceType, Number(rawId), fileName)
     },
   },
 })
