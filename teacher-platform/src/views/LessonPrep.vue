@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import LessonPrepPpt from './ppt/PptIndex.vue'
 import LessonPlanPage from './LessonPlanPage.vue'
@@ -7,9 +7,11 @@ import LessonPrepAnimation from './LessonPrepAnimation.vue'
 import LessonPrepKnowledge from './LessonPrepKnowledge.vue'
 import LessonPrepMindmap from './LessonPrepMindmap.vue'
 import LessonPrepData from './LessonPrepData.vue'
+import { usePptStore } from '../stores/ppt'
 
 const route = useRoute()
 const router = useRouter()
+const pptStore = usePptStore()
 
 const resetKeys = ref({
   ppt: 0,
@@ -36,6 +38,9 @@ const activeTab = computed(() => {
   return validTabs.includes(tab) ? tab : 'ppt'
 })
 
+const routeProjectId = computed(() => route.query.projectId || null)
+const routeLessonPlanId = computed(() => route.query.lessonPlanId || null)
+
 const currentComponent = computed(() => {
   const map = {
     ppt: LessonPrepPpt,
@@ -59,6 +64,31 @@ function setTab(id) {
   if (!validTabs.includes(id)) return
   router.replace({ path: '/lesson-prep', query: { ...route.query, tab: id } })
 }
+
+// Watch for projectId query param to open a PPT project directly
+watch(routeProjectId, async (newId) => {
+  if (newId && activeTab.value === 'ppt') {
+    try {
+      await pptStore.fetchProject(Number(newId))
+      await pptStore.fetchPages(Number(newId))
+
+      // Determine phase using same logic as PptHistory.getProjectPhase()
+      const project = pptStore.projectData
+      let phase = 'outline'
+      if (project?.cover_image_url) {
+        phase = 'preview'
+      } else if (pptStore.outlinePages.length === 0 && project?.creation_type === 'dialog') {
+        phase = 'dialog'
+      }
+      pptStore.setPhase(phase)
+    } catch (e) {
+      console.error('Failed to load PPT project from route:', e)
+    }
+
+    // Clear query params to avoid re-triggering
+    router.replace({ query: { tab: 'ppt' } })
+  }
+}, { immediate: true })
 </script>
 
 <template>
@@ -67,7 +97,12 @@ function setTab(id) {
       <main class="main-content">
         <div class="main-content-body">
           <keep-alive>
-            <component :is="currentComponent" :reset-key="currentResetKey" />
+            <component
+              :is="currentComponent"
+              :reset-key="currentResetKey"
+              :initial-project-id="routeProjectId"
+              :initial-lesson-plan-id="routeLessonPlanId"
+            />
           </keep-alive>
         </div>
       </main>

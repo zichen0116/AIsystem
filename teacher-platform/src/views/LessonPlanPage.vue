@@ -52,6 +52,7 @@ import LessonPlanWriter from '../components/lesson-plan-v2/LessonPlanWriter.vue'
 
 const props = defineProps({
   resetKey: { type: Number, default: 0 },
+  initialLessonPlanId: { type: [String, Number], default: null },
 })
 
 // ----- Core State -----
@@ -436,10 +437,17 @@ async function loadLatest() {
 }
 
 // ----- Lifecycle -----
-onMounted(() => {
+onMounted(async () => {
   isFirstMount = true
-  // 每次打开页面显示欢迎界面，不自动加载历史
-  startNewConversation()
+  if (props.initialLessonPlanId) {
+    await loadHistorySession({ id: props.initialLessonPlanId })
+    // Switch to writer mode to show the editor if content was loaded
+    if (currentMarkdown.value) {
+      enterWriterMode()
+    }
+  } else {
+    startNewConversation()
+  }
 })
 
 onActivated(() => {
