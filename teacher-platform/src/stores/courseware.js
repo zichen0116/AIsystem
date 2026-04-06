@@ -4,7 +4,7 @@ import {
   uploadCourseware as apiUpload,
   updateCourseware as apiUpdate,
   deleteCoursewareItem as apiDelete,
-  downloadCoursewareFile,
+  getDownloadUrl,
 } from '../api/courseware.js'
 import { apiRequest } from '../api/http.js'
 import { deleteProject } from '../api/ppt.js'
@@ -104,12 +104,11 @@ export const useCoursewareStore = defineStore('courseware', {
       return newItem
     },
 
-    async downloadCourseware(item) {
+    downloadCourseware(item) {
       const [prefix, rawId] = _parseId(item.id)
       const sourceType = prefix === 'ppt' ? 'ppt' : prefix === 'lp' ? 'lesson_plan' : 'uploaded'
-      const ext = item.file_type || ''
-      const fileName = `${item.name || '课件'}.${ext}`
-      await downloadCoursewareFile(sourceType, Number(rawId), fileName)
+      const url = getDownloadUrl(sourceType, Number(rawId))
+      window.open(url, '_blank')
     },
   },
 })
