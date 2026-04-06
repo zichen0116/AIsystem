@@ -1,62 +1,21 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useCoursewareStore } from '../stores/courseware'
+import dayjs from 'dayjs'
+import relativeTime from 'dayjs/plugin/relativeTime'
+import 'dayjs/locale/zh-cn'
 
+dayjs.extend(relativeTime)
+dayjs.locale('zh-cn')
+
+const router = useRouter()
 const coursewareStore = useCoursewareStore()
-const coursewareList = computed(() => coursewareStore.coursewareList)
 
+// --- Filters ---
 const filterType = ref('all')
 const filterDate = ref('all')
 const viewMode = ref('grid')
-const showAddModal = ref(false)
-const fileInputRef = ref(null)
-const selectedFiles = ref([])
-
-function triggerFileSelect() {
-  fileInputRef.value?.click()
-}
-
-function onFileSelected(e) {
-  const files = e.target.files
-  if (files?.length) {
-    selectedFiles.value = Array.from(files)
-  }
-  e.target.value = ''
-}
-
-function getTypeFromFilename(name) {
-  const ext = (name.split('.').pop() || '').toLowerCase()
-  if (['pdf'].includes(ext)) return 'pdf'
-  if (['ppt', 'pptx'].includes(ext)) return 'ppt'
-  if (['mp4', 'webm', 'mov'].includes(ext)) return 'video'
-  if (['doc', 'docx'].includes(ext)) return 'word'
-  return 'pdf'
-}
-
-function formatSize(bytes) {
-  if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return bytes + ' B'
-}
-
-function doUpload() {
-  if (!selectedFiles.value.length) return
-  const now = new Date()
-  const dateStr = now.getFullYear() + '年' + (now.getMonth() + 1) + '月' + now.getDate() + '日'
-  const items = selectedFiles.value.map((file, i) => ({
-    name: file.name.replace(/\.[^/.]+$/, '') || file.name,
-    type: getTypeFromFilename(file.name),
-    size: formatSize(file.size),
-    subject: '未分类',
-    grade: '—',
-    modifyDate: dateStr,
-    daysAgo: 0,
-    favorited: false
-  }))
-  coursewareStore.addCourseware(items)
-  selectedFiles.value = []
-  showAddModal.value = false
-}
 
 const typeOptions = [
   { value: 'all', label: '所有类型' },
@@ -73,39 +32,201 @@ const dateOptions = [
   { value: 'year', label: '近一年' }
 ]
 
-const filteredList = computed(() => {
-  let list = [...coursewareStore.coursewareList]
-  if (filterType.value !== 'all') {
-    list = list.filter(item => item.type === filterType.value)
-  }
-  if (filterDate.value !== 'all') {
-    list = list.filter(item => {
-      const d = item.daysAgo ?? 999
-      if (filterDate.value === 'week') return d <= 7
-      if (filterDate.value === 'month') return d <= 30
-      if (filterDate.value === 'year') return d <= 365
-      return true
-    })
-  }
-  return list
-})
+// --- Upload modal ---
+const showAddModal = ref(false)
+const fileInputRef = ref(null)
+const selectedFiles = ref([])
+const uploadTitle = ref('')
+const uploadTags = ref('')
+const uploadRemark = ref('')
+const isUploading = ref(false)
 
-const coursewarePage = ref(1)
-const coursewarePageSize = 10 // 5列 x 2行
-const coursewareTotalPages = computed(() => Math.max(1, Math.ceil(filteredList.value.length / coursewarePageSize)))
-const paginatedCourseware = computed(() => {
-  const start = (coursewarePage.value - 1) * coursewarePageSize
-  return filteredList.value.slice(start, start + coursewarePageSize)
-})
-function goToCoursewarePage(p) {
-  if (p >= 1 && p <= coursewareTotalPages.value) coursewarePage.value = p
+// --- Edit modal ---
+const showEditModal = ref(false)
+const editItem = ref(null)
+const editForm = ref({ title: '', tags: '', remark: '', file_type: '' })
+
+// --- Action menu ---
+const activeMenuId = ref(null)
+
+// --- Delete confirm ---
+const showDeleteConfirm = ref(false)
+const deleteTarget = ref(null)
+
+// --- Toast ---
+const toastMessage = ref('')
+const toastVisible = ref(false)
+
+function showToast(msg) {
+  toastMessage.value = msg
+  toastVisible.value = true
+  setTimeout(() => { toastVisible.value = false }, 3000)
 }
-watch([filterType, filterDate], () => { coursewarePage.value = 1 })
 
-function toggleFavorite(item) {
+// --- Data loading ---
+const filteredList = computed(() => coursewareStore.filteredCoursewareList)
+const loading = computed(() => coursewareStore.loading)
+
+function buildFilters() {
+  const filters = {}
+  if (filterType.value !== 'all') filters.file_type = filterType.value
+  if (filterDate.value !== 'all') filters.date_range = filterDate.value
+  return filters
+}
+
+watch([filterType, filterDate], () => {
+  coursewareStore.fetchFiltered(buildFilters())
+})
+
+onMounted(async () => {
+  await Promise.all([
+    coursewareStore.fetchAll(),
+    coursewareStore.fetchFiltered(buildFilters()),
+  ])
+})
+
+// --- Time formatting ---
+function formatTime(isoStr) {
+  if (!isoStr) return '\u2014'
+  const d = dayjs(isoStr)
+  const now = dayjs()
+  const diffDays = now.diff(d, 'day')
+  if (diffDays === 0) return '今天'
+  if (diffDays === 1) return '昨天'
+  if (diffDays < 7) return `${diffDays}天前`
+  return d.format('YYYY年M月D日')
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '\u2014'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+// --- Card click ---
+function handleCardClick(item) {
+  if (item.source_type === 'ppt') {
+    router.push({ path: '/lesson-prep', query: { tab: 'ppt', projectId: item.source_id } })
+  } else if (item.source_type === 'lesson_plan') {
+    router.push({ path: '/lesson-prep', query: { tab: 'lesson-plan', lessonPlanId: item.source_id } })
+  } else {
+    showToast('该课件为手动上传，暂不支持在线编辑')
+  }
+}
+
+// --- Action menu ---
+function toggleMenu(id, event) {
+  event.stopPropagation()
+  activeMenuId.value = activeMenuId.value === id ? null : id
+}
+
+function closeMenu() {
+  activeMenuId.value = null
+}
+
+// --- Edit ---
+function openEdit(item, event) {
+  event.stopPropagation()
+  closeMenu()
+  editItem.value = item
+  editForm.value = {
+    title: item.name || '',
+    tags: item.tags || '',
+    remark: item.remark || '',
+    file_type: item.file_type || '',
+  }
+  showEditModal.value = true
+}
+
+async function saveEdit() {
+  if (!editItem.value) return
+  try {
+    const data = { title: editForm.value.title }
+    if (editItem.value.source_type === 'uploaded') {
+      data.tags = editForm.value.tags
+      data.remark = editForm.value.remark
+      data.file_type = editForm.value.file_type
+    }
+    await coursewareStore.updateCoursewareItem(editItem.value.id, data)
+    showEditModal.value = false
+    showToast('修改成功')
+  } catch (e) {
+    showToast('修改失败: ' + e.message)
+  }
+}
+
+// --- Delete ---
+function confirmDelete(item, event) {
+  event.stopPropagation()
+  closeMenu()
+  deleteTarget.value = item
+  showDeleteConfirm.value = true
+}
+
+async function doDelete() {
+  if (!deleteTarget.value) return
+  try {
+    await coursewareStore.deleteCourseware(deleteTarget.value.id)
+    showDeleteConfirm.value = false
+    showToast('删除成功')
+  } catch (e) {
+    showToast('删除失败: ' + e.message)
+  }
+}
+
+// --- Download ---
+function handleDownload(item, event) {
+  event.stopPropagation()
+  closeMenu()
+  coursewareStore.downloadCourseware(item)
+}
+
+// --- Upload ---
+function triggerFileSelect() {
+  fileInputRef.value?.click()
+}
+
+function onFileSelected(event) {
+  const files = Array.from(event.target.files || [])
+  selectedFiles.value = files
+}
+
+async function doUpload() {
+  if (selectedFiles.value.length === 0) return
+  isUploading.value = true
+  try {
+    for (const file of selectedFiles.value) {
+      await coursewareStore.uploadCourseware(file, {
+        title: uploadTitle.value || undefined,
+        tags: uploadTags.value || undefined,
+        remark: uploadRemark.value || undefined,
+      })
+    }
+    showAddModal.value = false
+    selectedFiles.value = []
+    uploadTitle.value = ''
+    uploadTags.value = ''
+    uploadRemark.value = ''
+    showToast('上传成功')
+  } catch (e) {
+    showToast('上传失败: ' + e.message)
+  } finally {
+    isUploading.value = false
+  }
+}
+
+// --- Favorite ---
+function toggleFavorite(item, event) {
+  event.stopPropagation()
   coursewareStore.toggleFavorite(item.id)
 }
 
+function isFavorited(item) {
+  return coursewareStore.favorites.has(item.id)
+}
+
+// --- Helpers ---
 function getTypeTag(type) {
   const map = { pdf: 'PDF', ppt: 'PPT', video: '视频', word: 'Word' }
   return map[type] || type
@@ -116,19 +237,24 @@ function getTypeTagClass(type) {
   return map[type] || ''
 }
 
-function getThumbnailBg(type) {
-  const map = {
-    pdf: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-    ppt: 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)',
-    video: 'linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%)',
-    word: 'linear-gradient(135deg, #93c5fd 0%, #60a5fa 100%)'
+function getThumbnailBg(fileType) {
+  const colors = {
+    pdf: 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)',
+    ppt: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
+    video: 'linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%)',
+    word: 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
+    image: 'linear-gradient(135deg, #55efc4 0%, #00b894 100%)',
   }
-  return map[type] || '#f1f5f9'
+  return colors[fileType] || colors.pdf
+}
+
+function getSourceLabel(sourceType) {
+  return sourceType === 'uploaded' ? '手动上传' : 'AI生成'
 }
 </script>
 
 <template>
-  <div class="courseware-page">
+  <div class="courseware-page" @click="closeMenu">
     <div class="courseware-content">
       <div class="toolbar">
         <div class="toolbar-left">
@@ -156,23 +282,46 @@ function getThumbnailBg(type) {
         </div>
       </div>
 
-      <div class="courseware-grid" :class="viewMode">
-        <div v-for="item in paginatedCourseware" :key="item.id" class="courseware-card">
-          <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.type) }">
-            <span :class="['type-tag', getTypeTagClass(item.type)]">{{ getTypeTag(item.type) }}</span>
+      <!-- Loading state -->
+      <div v-if="loading" class="empty-state">
+        <p>加载中...</p>
+      </div>
+
+      <!-- Empty state -->
+      <div v-else-if="filteredList.length === 0" class="empty-state">
+        <p>暂无课件，点击添加课件上传或前往备课生成</p>
+      </div>
+
+      <!-- Courseware grid -->
+      <div v-else class="courseware-grid" :class="viewMode">
+        <div
+          v-for="item in filteredList"
+          :key="item.id"
+          class="courseware-card"
+          @click="handleCardClick(item)"
+        >
+          <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.file_type) }">
+            <img v-if="item.cover_image" :src="item.cover_image" class="cover-img" />
+            <span :class="['type-tag', getTypeTagClass(item.file_type)]">{{ getTypeTag(item.file_type) }}</span>
+            <button class="card-menu thumbnail-menu" @click="toggleMenu(item.id, $event)">&#8942;</button>
+            <!-- Action dropdown -->
+            <div v-if="activeMenuId === item.id" class="action-menu" @click.stop>
+              <button class="action-item" @click="openEdit(item, $event)">编辑信息</button>
+              <button class="action-item" @click="handleDownload(item, $event)">下载</button>
+              <button class="action-item action-danger" @click="confirmDelete(item, $event)">删除</button>
+            </div>
           </div>
           <div class="card-body">
             <div class="card-header-row">
               <h3 class="card-title">{{ item.name }}</h3>
-              <button class="card-menu">⋮</button>
             </div>
-            <p class="card-subject">{{ item.subject }} · {{ item.grade }}</p>
+            <p class="card-subject">{{ getSourceLabel(item.source_type) }}</p>
             <div class="card-footer-row">
-              <p class="card-meta">🕐 {{ item.modifyDate }} · {{ item.size }}</p>
+              <p class="card-meta">{{ formatTime(item.updated_at) }} · {{ formatSize(item.file_size) }}</p>
               <button
                 class="favorite-btn"
-                :class="{ favorited: item.favorited }"
-                @click.stop="toggleFavorite(item)"
+                :class="{ favorited: isFavorited(item) }"
+                @click="toggleFavorite(item, $event)"
                 title="收藏"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round" stroke-linecap="round">
@@ -183,21 +332,8 @@ function getThumbnailBg(type) {
           </div>
         </div>
       </div>
-      <div v-if="coursewareTotalPages > 1" class="courseware-pagination">
-        <button type="button" class="page-btn" :disabled="coursewarePage <= 1" @click="goToCoursewarePage(coursewarePage - 1)">‹</button>
-        <button
-          v-for="p in coursewareTotalPages"
-          :key="p"
-          type="button"
-          class="page-btn"
-          :class="{ active: coursewarePage === p }"
-          @click="goToCoursewarePage(p)"
-        >
-          {{ p }}
-        </button>
-        <button type="button" class="page-btn" :disabled="coursewarePage >= coursewareTotalPages" @click="goToCoursewarePage(coursewarePage + 1)">›</button>
-      </div>
 
+      <!-- Upload modal -->
       <Teleport to="body">
         <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
           <div class="modal-box">
@@ -214,13 +350,83 @@ function getThumbnailBg(type) {
               <p>点击上传文件</p>
               <p class="hint">支持 PDF、PPT、MP4 或 DOC 格式</p>
             </div>
+            <div class="modal-field">
+              <label>标题（可选）</label>
+              <input v-model="uploadTitle" type="text" class="modal-input" placeholder="自定义课件标题" />
+            </div>
+            <div class="modal-field">
+              <label>标签（可选）</label>
+              <input v-model="uploadTags" type="text" class="modal-input" placeholder="例如：数学,高一" />
+            </div>
+            <div class="modal-field">
+              <label>备注（可选）</label>
+              <input v-model="uploadRemark" type="text" class="modal-input" placeholder="备注信息" />
+            </div>
             <div class="modal-actions">
               <button class="cancel-btn" @click="showAddModal = false">取消</button>
-              <button class="confirm-btn" :disabled="!selectedFiles.length" @click="doUpload">上传</button>
+              <button class="confirm-btn" :disabled="!selectedFiles.length || isUploading" @click="doUpload">
+                {{ isUploading ? '上传中...' : '上传' }}
+              </button>
             </div>
             <p v-if="selectedFiles.length" class="selected-files-hint">已选 {{ selectedFiles.length }} 个文件</p>
           </div>
         </div>
+      </Teleport>
+
+      <!-- Edit modal -->
+      <Teleport to="body">
+        <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
+          <div class="modal-box">
+            <h3>编辑课件信息</h3>
+            <div class="modal-field">
+              <label>标题</label>
+              <input v-model="editForm.title" type="text" class="modal-input" />
+            </div>
+            <template v-if="editItem && editItem.source_type === 'uploaded'">
+              <div class="modal-field">
+                <label>标签</label>
+                <input v-model="editForm.tags" type="text" class="modal-input" />
+              </div>
+              <div class="modal-field">
+                <label>备注</label>
+                <input v-model="editForm.remark" type="text" class="modal-input" />
+              </div>
+              <div class="modal-field">
+                <label>文件类型</label>
+                <select v-model="editForm.file_type" class="modal-input">
+                  <option value="pdf">PDF</option>
+                  <option value="ppt">PPT</option>
+                  <option value="word">Word</option>
+                  <option value="video">视频</option>
+                  <option value="image">图片</option>
+                </select>
+              </div>
+            </template>
+            <div class="modal-actions">
+              <button class="cancel-btn" @click="showEditModal = false">取消</button>
+              <button class="confirm-btn" @click="saveEdit">保存</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- Delete confirmation -->
+      <Teleport to="body">
+        <div v-if="showDeleteConfirm" class="modal-overlay" @click.self="showDeleteConfirm = false">
+          <div class="modal-box">
+            <h3>确认删除</h3>
+            <p class="delete-msg">确定要删除「{{ deleteTarget?.name }}」吗？此操作不可撤销。</p>
+            <div class="modal-actions">
+              <button class="cancel-btn" @click="showDeleteConfirm = false">取消</button>
+              <button class="confirm-btn confirm-danger" @click="doDelete">删除</button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
+      <!-- Toast -->
+      <Teleport to="body">
+        <div v-if="toastVisible" class="toast">{{ toastMessage }}</div>
       </Teleport>
     </div>
   </div>
@@ -582,6 +788,142 @@ function getThumbnailBg(type) {
   margin: 8px 0 0;
   font-size: 0.875rem;
   color: #64748b;
+}
+
+/* --- Cover image --- */
+.cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* --- Thumbnail action menu button --- */
+.thumbnail-menu {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  font-size: 1.1rem;
+  color: #475569;
+  cursor: pointer;
+  line-height: 1;
+  z-index: 2;
+}
+
+.thumbnail-menu:hover {
+  background: #fff;
+}
+
+/* --- Action dropdown --- */
+.action-menu {
+  position: absolute;
+  top: 36px;
+  left: 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+  min-width: 120px;
+  overflow: hidden;
+}
+
+.action-item {
+  display: block;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 14px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.action-item:hover {
+  background: #f1f5f9;
+}
+
+.action-danger {
+  color: #dc2626;
+}
+
+.action-danger:hover {
+  background: #fef2f2;
+}
+
+/* --- Empty state --- */
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  color: #94a3b8;
+  font-size: 15px;
+}
+
+/* --- Modal fields --- */
+.modal-field {
+  margin-bottom: 16px;
+}
+
+.modal-field label {
+  display: block;
+  font-size: 13px;
+  color: #475569;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.modal-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+.modal-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* --- Delete confirmation --- */
+.delete-msg {
+  color: #475569;
+  font-size: 14px;
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.confirm-danger {
+  background: #dc2626;
+}
+
+.confirm-danger:hover {
+  background: #b91c1c;
+}
+
+/* --- Toast --- */
+.toast {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1e293b;
+  color: #fff;
+  padding: 12px 28px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 9999;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 @media (max-width: 1100px) {
