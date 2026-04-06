@@ -60,10 +60,25 @@ export async function deleteCoursewareItem(id) {
 }
 
 /**
- * 下载课件
+ * 下载课件（带认证）
  * @param {string} sourceType - uploaded / ppt / lesson_plan
  * @param {number} sourceId
+ * @param {string} fileName - 下载保存的文件名
  */
-export function getDownloadUrl(sourceType, sourceId) {
-  return resolveApiUrl(`${API}/download?source_type=${sourceType}&source_id=${sourceId}`)
+export async function downloadCoursewareFile(sourceType, sourceId, fileName) {
+  const url = `${API}/download?source_type=${sourceType}&source_id=${sourceId}`
+  const resp = await authFetch(url)
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    throw new Error(err.detail || '下载失败')
+  }
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = fileName || '课件'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(blobUrl)
 }
