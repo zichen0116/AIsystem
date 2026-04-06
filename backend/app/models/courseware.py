@@ -2,7 +2,7 @@
 课件模型（核心表）
 """
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Integer
+from sqlalchemy import String, DateTime, ForeignKey, Integer, BigInteger, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.database import Base
@@ -47,6 +47,11 @@ class Courseware(Base):
         default="PLANNING"
     )
     file_url: Mapped[str] = mapped_column(String(500), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    file_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # pdf/ppt/word/video/image
+    tags: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    remark: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
