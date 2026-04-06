@@ -1,14 +1,19 @@
 <script setup>
-import { ref, computed, inject, watch } from 'vue'
+import { ref, computed, inject, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { useCoursewareStore } from '../stores/courseware'
 import { apiRequest } from '../api/http'
+import dayjs from 'dayjs'
 
 const router = useRouter()
 const userStore = useUserStore()
 const coursewareStore = useCoursewareStore()
 const openLoginModal = inject('openLoginModal', null)
+
+onMounted(async () => {
+  await coursewareStore.fetchAll()
+})
 const activeSideItem = ref('profile')
 const sidebarCollapsed = inject('sidebarCollapsed', ref(false))
 const favoriteFilter = ref('all')
@@ -283,17 +288,17 @@ const favoriteFilters = computed(() => {
   const list = favoritesList.value
   return [
     { id: 'all', label: '全部', count: list.length },
-    { id: 'pdf', label: 'PDF', count: list.filter(i => i.type === 'pdf').length },
-    { id: 'ppt', label: 'PPT', count: list.filter(i => i.type === 'ppt').length },
-    { id: 'video', label: '视频', count: list.filter(i => i.type === 'video').length },
-    { id: 'word', label: 'Word', count: list.filter(i => i.type === 'word').length }
+    { id: 'pdf', label: 'PDF', count: list.filter(i => i.file_type === 'pdf').length },
+    { id: 'ppt', label: 'PPT', count: list.filter(i => i.file_type === 'ppt').length },
+    { id: 'video', label: '视频', count: list.filter(i => i.file_type === 'video').length },
+    { id: 'word', label: 'Word', count: list.filter(i => i.file_type === 'word').length }
   ]
 })
 
 const filteredFavorites = computed(() => {
   const list = favoritesList.value
   if (favoriteFilter.value === 'all') return list
-  return list.filter(i => i.type === favoriteFilter.value)
+  return list.filter(i => i.file_type === favoriteFilter.value)
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredFavorites.value.length / itemsPerPage)))
@@ -558,17 +563,17 @@ const sideItems = [
 
             <div class="favorites-grid" :class="viewMode">
               <div v-for="item in paginatedFavorites" :key="item.id" class="favorite-card courseware-style">
-                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.type) }">
-                  <span :class="['type-tag', getTypeTagClass(item.type)]">{{ getTypeTag(item.type) }}</span>
+                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.file_type) }">
+                  <span :class="['type-tag', getTypeTagClass(item.file_type)]">{{ getTypeTag(item.file_type) }}</span>
                 </div>
                 <div class="card-body">
                   <div class="card-header-row">
                     <h3 class="card-title">{{ item.name }}</h3>
                     <button class="card-menu">⋮</button>
                   </div>
-                  <p class="card-subject">{{ item.subject }} · {{ item.grade }}</p>
+                  <p class="card-subject">{{ item.source_type === 'uploaded' ? '手动上传' : 'AI生成' }}</p>
                   <div class="card-footer-row">
-                    <p class="card-meta">🕐 {{ item.modifyDate }} · {{ item.size }}</p>
+                    <p class="card-meta">🕐 {{ item.updated_at ? dayjs(item.updated_at).format('YYYY-MM-DD') : '—' }} · {{ item.file_size ? (item.file_size / 1024 / 1024).toFixed(1) + ' MB' : '—' }}</p>
                     <button
                       class="favorite-btn favorited"
                       @click.stop="toggleFavorite(item)"
