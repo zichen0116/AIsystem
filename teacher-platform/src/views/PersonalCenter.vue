@@ -327,14 +327,27 @@ function getTypeTagClass(type) {
   return map[type] || ''
 }
 
-function getThumbnailBg(type) {
-  const map = {
-    pdf: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-    ppt: 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)',
-    video: 'linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%)',
-    word: 'linear-gradient(135deg, #93c5fd 0%, #60a5fa 100%)'
-  }
-  return map[type] || '#f1f5f9'
+const CARD_PALETTES = [
+  'linear-gradient(135deg, #a8d8ea 0%, #7ec8c8 100%)',
+  'linear-gradient(135deg, #f3c4fb 0%, #c9a0dc 100%)',
+  'linear-gradient(135deg, #fbc4ab 0%, #e8998d 100%)',
+  'linear-gradient(135deg, #b5ead7 0%, #8ac6a7 100%)',
+  'linear-gradient(135deg, #ffd6a5 0%, #f0b27a 100%)',
+  'linear-gradient(135deg, #c7ceea 0%, #9fa8da 100%)',
+  'linear-gradient(135deg, #fce4ec 0%, #f48fb1 100%)',
+  'linear-gradient(135deg, #dcedc8 0%, #aed581 100%)',
+  'linear-gradient(135deg, #b3e5fc 0%, #81d4fa 100%)',
+  'linear-gradient(135deg, #ffe0b2 0%, #ffcc80 100%)',
+  'linear-gradient(135deg, #e1bee7 0%, #ba68c8 100%)',
+  'linear-gradient(135deg, #c8e6c9 0%, #81c784 100%)',
+]
+function _hashId(id) {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+function getThumbnailBg(itemId) {
+  return CARD_PALETTES[_hashId(itemId) % CARD_PALETTES.length]
 }
 
 function toggleFavorite(item) {
@@ -563,7 +576,7 @@ const sideItems = [
 
             <div class="favorites-grid" :class="viewMode">
               <div v-for="item in paginatedFavorites" :key="item.id" class="favorite-card courseware-style">
-                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.file_type) }">
+                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.id) }">
                   <span :class="['type-tag', getTypeTagClass(item.file_type)]">{{ getTypeTag(item.file_type) }}</span>
                 </div>
                 <div class="card-body">

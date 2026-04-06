@@ -237,15 +237,27 @@ function getTypeTagClass(type) {
   return map[type] || ''
 }
 
-function getThumbnailBg(fileType) {
-  const colors = {
-    pdf: 'linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%)',
-    ppt: 'linear-gradient(135deg, #f39c12 0%, #e67e22 100%)',
-    video: 'linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%)',
-    word: 'linear-gradient(135deg, #74b9ff 0%, #0984e3 100%)',
-    image: 'linear-gradient(135deg, #55efc4 0%, #00b894 100%)',
-  }
-  return colors[fileType] || colors.pdf
+const CARD_PALETTES = [
+  'linear-gradient(135deg, #a8d8ea 0%, #7ec8c8 100%)',  // 薄荷蓝
+  'linear-gradient(135deg, #f3c4fb 0%, #c9a0dc 100%)',  // 薰衣草紫
+  'linear-gradient(135deg, #fbc4ab 0%, #e8998d 100%)',  // 珊瑚粉
+  'linear-gradient(135deg, #b5ead7 0%, #8ac6a7 100%)',  // 抹茶绿
+  'linear-gradient(135deg, #ffd6a5 0%, #f0b27a 100%)',  // 杏橘色
+  'linear-gradient(135deg, #c7ceea 0%, #9fa8da 100%)',  // 雾蓝紫
+  'linear-gradient(135deg, #fce4ec 0%, #f48fb1 100%)',  // 樱花粉
+  'linear-gradient(135deg, #dcedc8 0%, #aed581 100%)',  // 嫩叶绿
+  'linear-gradient(135deg, #b3e5fc 0%, #81d4fa 100%)',  // 天空蓝
+  'linear-gradient(135deg, #ffe0b2 0%, #ffcc80 100%)',  // 暖阳橙
+  'linear-gradient(135deg, #e1bee7 0%, #ba68c8 100%)',  // 丁香紫
+  'linear-gradient(135deg, #c8e6c9 0%, #81c784 100%)',  // 翡翠绿
+]
+function _hashId(id) {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+function getThumbnailBg(itemId) {
+  return CARD_PALETTES[_hashId(itemId) % CARD_PALETTES.length]
 }
 
 function getSourceLabel(sourceType) {
@@ -300,7 +312,7 @@ function getSourceLabel(sourceType) {
           class="courseware-card"
           @click="handleCardClick(item)"
         >
-          <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.file_type) }">
+          <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.id) }">
             <img v-if="item.cover_image" :src="item.cover_image" class="cover-img" />
             <span :class="['type-tag', getTypeTagClass(item.file_type)]">{{ getTypeTag(item.file_type) }}</span>
             <button class="card-menu thumbnail-menu" @click="toggleMenu(item.id, $event)">&#8942;</button>
