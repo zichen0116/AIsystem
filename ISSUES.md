@@ -1,28 +1,9 @@
-High: 第 2 个 bug 还没完全兜住，pending 仍可能被“最后一轮 AI 输出”重置。
-实现计划只做了 confirmed 的确定性合并，没有对 pending 做与合并后 confirmed 一致的重算/校正。这样仍可能出现“已确认和待确认列表看起来被刷新”的体验问题。
-参考：2026-04-05-ppt-dialog-bugfix.md:37 2026-04-05-ppt-dialog-bugfix.md:49
+High: 路由参数方案在计划内前后不一致，Claude Code 很容易按错一版实现。2026-04-06-courseware-management.md#L997 里卡片点击传的是 tab + projectId/lessonPlanId，但 2026-04-06-courseware-management-design.md#L204 定的是 mode=ppt&projectId 和 mode=lesson-plan&id，而计划后面的路由处理又写成读 projectId 和 lessonPlanId，2026-04-06-courseware-management.md#L1243。这会直接导致实现分裂。建议在计划里只保留一套参数契约，和设计文档完全一致。
+
+High: Task 1 的模型修改示例和仓库当前 ORM 风格不一致，按计划抄会写错。2026-04-06-courseware-management.md#L48 开始用的是 Column(...) 写法，但真实模型是 SQLAlchemy 2 typed style Mapped + mapped_column，courseware.py#L7。这不是小问题，Claude Code 如果照计划机械执行，第一步就可能把模型风格写乱。建议把计划里的代码片段改成仓库现有风格，避免误导。
 
 
-Medium: 按钮禁用条件与需求描述不完全一致。
-你的原需求是“待确认要点没确认完就不可点击并提示”，但计划仍以 readyForConfirmation 为主，没有直接绑定 pending.length。若后端某次状态不一致，前端可能放行。
-参考：2026-04-05-ppt-dialog-bugfix.md:127
+Medium: 计划里有几处“看起来能写，其实和现有代码不完全对得上”的实现细节，建议先修正文案，不然 Claude Code 会踩坑。
+2026-04-06-courseware-management.md#L435 这段想在 oss_upload(file, user_id) 之后再 seek/tell 取文件大小，但现有 oss_service.py#L60 已经把文件流读掉了，这个写法不稳。
+2026-04-06-courseware-management.md#L1279 用 project.cover_image_url 判断 PPT 跳转 phase，但当前 pptStore.fetchProject() 拿到的 projectData 并没有这个字段，ppt.js#L98。这里应该直接复用 PptHistory 现成判断逻辑，别在计划里写一个不存在的字段。
 
-Medium: Task 5 偏“验收说明”，不是“修复动作”，对第 5 条 bug 兜底不足。
-该任务写了“无需修改”，但没有给出从欢迎页重新进入当前项目/恢复会话的明确路径，存在“回去了但再进不来对话历史”的残留风险。
-参考：2026-04-05-ppt-dialog-bugfix.md:687 2026-04-05-ppt-dialog-bugfix.md:700
-
-前端要展示对话历史记录的，用户能够选择过去的对话回顾整个流程，后端也要持久化，回顾历史项目参考原banana-slides项目的实现
-请按“参考原项目历史项目页”的方式实现 PPT 历史项目入口与回顾功能
-需求：
-1. 在 PPT 首页增加“历史项目”入口，点击进入历史项目页面。
-2. 历史项目页面采用横向卡片列表布局（参考我给的截图风格example1.png）：深色背景、大卡片、左侧项目信息、右侧封面缩略图、状态标签、进入按钮。
-3. 每张卡片至少展示：项目标题、页数、更新时间、项目状态（如已完成/待生成图片）、封面图（无图则占位）。
-4. 点击卡片可进入该项目并恢复流程（dialog/outline/description/preview），能回看对话历史与后续页面数据。
-5. 后端要持久化并可查询历史项目列表；优先复用现有项目表和已有 API，不够再补最小接口。
-6. 不做过度设计：先不做复杂筛选、分页、批量操作；先实现“能看、能进、能恢复”。
-7. 不新增 npm 依赖，保持现有技术栈与代码风格。
-
-执行要求：
-1. 先阅读并复用原项目已有历史项目实现（样式和交互尽量一致）。
-2. 给出修改文件清单与关键改动点。
-3. 完成后运行前端构建与基础自测，并给出验收结果。
