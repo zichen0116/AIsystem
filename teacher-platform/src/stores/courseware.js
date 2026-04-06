@@ -1,28 +1,129 @@
 import { defineStore } from 'pinia'
+import {
+  fetchAllCourseware,
+  uploadCourseware as apiUpload,
+  updateCourseware as apiUpdate,
+  deleteCoursewareItem as apiDelete,
+  downloadProtectedCourseware,
+} from '../api/courseware.js'
+import { apiRequest } from '../api/http.js'
+import { deleteProject } from '../api/ppt.js'
 
 export const useCoursewareStore = defineStore('courseware', {
   state: () => ({
-    coursewareList: [
-      { id: 1, name: '高等微积分与线性代数', type: 'pdf', size: '12.4 MB', subject: '数学', grade: '12年级', modifyDate: '2026年2月15日', daysAgo: 0, favorited: true },
-      { id: 2, name: '光合作用与细胞呼吸', type: 'ppt', size: '45.0 MB', subject: '生物', grade: '10年级', modifyDate: '2026年2月14日', daysAgo: 1, favorited: true },
-      { id: 3, name: 'Python入门编程', type: 'video', size: '210 MB', subject: '计算机科学', grade: '选修课', modifyDate: '2026年2月12日', daysAgo: 3, favorited: false },
-      { id: 4, name: '第二次世界大战历史', type: 'pdf', size: '1.2 MB', subject: '历史', grade: '11年级', modifyDate: '2026年2月8日', daysAgo: 7, favorited: false },
-      { id: 5, name: '量子力学基础', type: 'word', size: '8.4 MB', subject: '物理', grade: '12年级', modifyDate: '2026年2月5日', daysAgo: 10, favorited: false }
-    ]
+    allCoursewareList: [],       // full unfiltered list (for favorites)
+    filteredCoursewareList: [],  // current filtered view
+    loading: false,
+    error: null,
+    favorites: new Set(),        // in-memory only
   }),
+
   getters: {
-    favoritedList: (state) => state.coursewareList.filter(item => item.favorited)
-  },
-  actions: {
-    toggleFavorite(id) {
-      const item = this.coursewareList.find(i => i.id === id)
-      if (item) item.favorited = !item.favorited
+    favoritedList(state) {
+      return state.allCoursewareList.filter(item => state.favorites.has(item.id))
     },
-    addCourseware(items) {
-      const baseId = Math.max(0, ...this.coursewareList.map(i => i.id)) + 1
-      items.forEach((item, i) => {
-        this.coursewareList.unshift({ ...item, id: baseId + i })
-      })
-    }
-  }
+  },
+
+  actions: {
+    async fetchAll() {
+      try {
+        const data = await fetchAllCourseware()
+        this.allCoursewareList = data.items || []
+      } catch (e) {
+        console.error('fetchAll failed:', e)
+      }
+    },
+
+    async fetchFiltered(filters = {}) {
+      this.loading = true
+      this.error = null
+      try {
+        const data = await fetchAllCourseware(filters)
+        this.filteredCoursewareList = data.items || []
+      } catch (e) {
+        this.error = e.message
+      } finally {
+        this.loading = false
+      }
+    },
+
+    toggleFavorite(id) {
+      if (this.favorites.has(id)) {
+        this.favorites.delete(id)
+      } else {
+        this.favorites.add(id)
+      }
+      // Trigger reactivity (Set is not reactive by default in Pinia)
+      this.favorites = new Set(this.favorites)
+    },
+
+    async deleteCourseware(id) {
+      const [prefix, rawId] = _parseId(id)
+      if (prefix === 'ppt') {
+        await deleteProject(Number(rawId))
+      } else if (prefix === 'lp') {
+        await apiRequest(`/api/v1/lesson-plan/${rawId}`, { method: 'DELETE' })
+      } else {
+        await apiDelete(Number(rawId))
+      }
+      // Remove from both lists
+      this.allCoursewareList = this.allCoursewareList.filter(i => i.id !== id)
+      this.filteredCoursewareList = this.filteredCoursewareList.filter(i => i.id !== id)
+      this.favorites.delete(id)
+      this.favorites = new Set(this.favorites)
+    },
+
+    async updateCoursewareItem(id, data) {
+      const [prefix, rawId] = _parseId(id)
+      if (prefix === 'ppt') {
+        await apiRequest(`/api/v1/ppt/projects/${rawId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ title: data.title }),
+        })
+      } else if (prefix === 'lp') {
+        await apiRequest(`/api/v1/lesson-plan/${rawId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ title: data.title }),
+        })
+      } else {
+        await apiUpdate(Number(rawId), data)
+      }
+      // Update in both lists
+      const updateItem = (item) => {
+        if (item.id !== id) return item
+        return { ...item, ...data, name: data.title || item.name }
+      }
+      this.allCoursewareList = this.allCoursewareList.map(updateItem)
+      this.filteredCoursewareList = this.filteredCoursewareList.map(updateItem)
+    },
+
+    async uploadCourseware(file, meta) {
+      const newItem = await apiUpload(file, meta)
+      this.allCoursewareList.unshift(newItem)
+      this.filteredCoursewareList.unshift(newItem)
+      return newItem
+    },
+
+    async downloadCourseware(item) {
+      const [prefix, rawId] = _parseId(item.id)
+      const sourceType = prefix === 'ppt' ? 'ppt' : prefix === 'lp' ? 'lesson_plan' : 'uploaded'
+
+      if (sourceType === 'uploaded') {
+        if (!item.file_url) {
+          throw new Error('文件链接不存在')
+        }
+        window.open(item.file_url, '_blank')
+        return
+      }
+
+      const ext = sourceType === 'ppt' ? 'pptx' : 'docx'
+      const fileName = `${item.name || '课件'}.${ext}`
+      await downloadProtectedCourseware(sourceType, Number(rawId), fileName)
+    },
+  },
 })
+
+function _parseId(id) {
+  const idx = id.indexOf('_')
+  return [id.slice(0, idx), id.slice(idx + 1)]
+}

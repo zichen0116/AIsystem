@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.auth import get_current_user
 from app.core.config import get_settings
+from app.services.redis_service import invalidate_ppt_cover, get_ppt_cover, set_ppt_cover
 from app.models.user import User
 from app.generators.ppt.banana_models import (
     PPTProject, PPTPage, PPTTask, PPTMaterial,
@@ -443,18 +444,23 @@ async def list_projects(
 
     items = []
     for project in projects:
-        # 查询页数和第一张有图的页面
-        page_result = await db.execute(
-            select(PPTPage)
-            .where(PPTPage.project_id == project.id)
-            .order_by(PPTPage.page_number)
+        # 使用 Redis 缓存封面图
+        cover_url = await get_ppt_cover(project.id)
+        if cover_url is None:
+            page_result = await db.execute(
+                select(PPTPage.image_url)
+                .where(PPTPage.project_id == project.id, PPTPage.image_url.isnot(None))
+                .order_by(PPTPage.page_number)
+                .limit(1)
+            )
+            cover_url = page_result.scalar_one_or_none() or ""
+            await set_ppt_cover(project.id, cover_url)
+
+        # 查询页数
+        page_count_result = await db.execute(
+            select(func.count()).select_from(PPTPage).where(PPTPage.project_id == project.id)
         )
-        pages = page_result.scalars().all()
-        cover_url = None
-        for p in pages:
-            if p.image_url:
-                cover_url = p.image_url
-                break
+        page_count = page_count_result.scalar_one()
 
         items.append(PPTProjectListItem(
             id=project.id,
@@ -466,8 +472,8 @@ async def list_projects(
             template_style=project.template_style,
             created_at=project.created_at,
             updated_at=project.updated_at,
-            page_count=len(pages),
-            cover_image_url=cover_url,
+            page_count=page_count,
+            cover_image_url=cover_url or None,
         ))
     return items
 
@@ -545,6 +551,7 @@ async def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
+    await invalidate_ppt_cover(project_id)
     await db.delete(project)
     await db.commit()
 
@@ -562,6 +569,7 @@ async def batch_delete_projects(
     )
     projects = result.scalars().all()
     for project in projects:
+        await invalidate_ppt_cover(project.id)
         await db.delete(project)
     await db.commit()
     return {"deleted": len(projects)}
@@ -727,6 +735,7 @@ async def delete_page(
 
     await db.delete(page)
     await db.commit()
+    await invalidate_ppt_cover(project_id)
 
 
 @router.post("/projects/{project_id}/pages/reorder")
@@ -754,6 +763,7 @@ async def reorder_pages(
             page.page_number = idx + 1
 
     await db.commit()
+    await invalidate_ppt_cover(project_id)
     return {"status": "ok"}
 
 

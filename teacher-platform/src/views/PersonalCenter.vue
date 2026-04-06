@@ -1,14 +1,19 @@
 <script setup>
-import { ref, computed, inject, watch } from 'vue'
+import { ref, computed, inject, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { useCoursewareStore } from '../stores/courseware'
 import { apiRequest } from '../api/http'
+import dayjs from 'dayjs'
 
 const router = useRouter()
 const userStore = useUserStore()
 const coursewareStore = useCoursewareStore()
 const openLoginModal = inject('openLoginModal', null)
+
+onMounted(async () => {
+  await coursewareStore.fetchAll()
+})
 const activeSideItem = ref('profile')
 const sidebarCollapsed = inject('sidebarCollapsed', ref(false))
 const favoriteFilter = ref('all')
@@ -283,17 +288,17 @@ const favoriteFilters = computed(() => {
   const list = favoritesList.value
   return [
     { id: 'all', label: '全部', count: list.length },
-    { id: 'pdf', label: 'PDF', count: list.filter(i => i.type === 'pdf').length },
-    { id: 'ppt', label: 'PPT', count: list.filter(i => i.type === 'ppt').length },
-    { id: 'video', label: '视频', count: list.filter(i => i.type === 'video').length },
-    { id: 'word', label: 'Word', count: list.filter(i => i.type === 'word').length }
+    { id: 'pdf', label: 'PDF', count: list.filter(i => i.file_type === 'pdf').length },
+    { id: 'ppt', label: 'PPT', count: list.filter(i => i.file_type === 'ppt').length },
+    { id: 'video', label: '视频', count: list.filter(i => i.file_type === 'video').length },
+    { id: 'word', label: 'Word', count: list.filter(i => i.file_type === 'word').length }
   ]
 })
 
 const filteredFavorites = computed(() => {
   const list = favoritesList.value
   if (favoriteFilter.value === 'all') return list
-  return list.filter(i => i.type === favoriteFilter.value)
+  return list.filter(i => i.file_type === favoriteFilter.value)
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(filteredFavorites.value.length / itemsPerPage)))
@@ -322,14 +327,27 @@ function getTypeTagClass(type) {
   return map[type] || ''
 }
 
-function getThumbnailBg(type) {
-  const map = {
-    pdf: 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
-    ppt: 'linear-gradient(135deg, #fed7aa 0%, #fdba74 100%)',
-    video: 'linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%)',
-    word: 'linear-gradient(135deg, #93c5fd 0%, #60a5fa 100%)'
-  }
-  return map[type] || '#f1f5f9'
+const CARD_PALETTES = [
+  'linear-gradient(135deg, #a8d8ea 0%, #7ec8c8 100%)',
+  'linear-gradient(135deg, #f3c4fb 0%, #c9a0dc 100%)',
+  'linear-gradient(135deg, #fbc4ab 0%, #e8998d 100%)',
+  'linear-gradient(135deg, #b5ead7 0%, #8ac6a7 100%)',
+  'linear-gradient(135deg, #ffd6a5 0%, #f0b27a 100%)',
+  'linear-gradient(135deg, #c7ceea 0%, #9fa8da 100%)',
+  'linear-gradient(135deg, #fce4ec 0%, #f48fb1 100%)',
+  'linear-gradient(135deg, #dcedc8 0%, #aed581 100%)',
+  'linear-gradient(135deg, #b3e5fc 0%, #81d4fa 100%)',
+  'linear-gradient(135deg, #ffe0b2 0%, #ffcc80 100%)',
+  'linear-gradient(135deg, #e1bee7 0%, #ba68c8 100%)',
+  'linear-gradient(135deg, #c8e6c9 0%, #81c784 100%)',
+]
+function _hashId(id) {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = ((h << 5) - h + id.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+function getThumbnailBg(itemId) {
+  return CARD_PALETTES[_hashId(itemId) % CARD_PALETTES.length]
 }
 
 function toggleFavorite(item) {
@@ -558,17 +576,17 @@ const sideItems = [
 
             <div class="favorites-grid" :class="viewMode">
               <div v-for="item in paginatedFavorites" :key="item.id" class="favorite-card courseware-style">
-                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.type) }">
-                  <span :class="['type-tag', getTypeTagClass(item.type)]">{{ getTypeTag(item.type) }}</span>
+                <div class="card-thumbnail" :style="{ background: getThumbnailBg(item.id) }">
+                  <span :class="['type-tag', getTypeTagClass(item.file_type)]">{{ getTypeTag(item.file_type) }}</span>
                 </div>
                 <div class="card-body">
                   <div class="card-header-row">
                     <h3 class="card-title">{{ item.name }}</h3>
                     <button class="card-menu">⋮</button>
                   </div>
-                  <p class="card-subject">{{ item.subject }} · {{ item.grade }}</p>
+                  <p class="card-subject">{{ item.source_type === 'uploaded' ? '手动上传' : 'AI生成' }}</p>
                   <div class="card-footer-row">
-                    <p class="card-meta">🕐 {{ item.modifyDate }} · {{ item.size }}</p>
+                    <p class="card-meta">🕐 {{ item.updated_at ? dayjs(item.updated_at).format('YYYY-MM-DD') : '—' }} · {{ item.file_size ? (item.file_size / 1024 / 1024).toFixed(1) + ' MB' : '—' }}</p>
                     <button
                       class="favorite-btn favorited"
                       @click.stop="toggleFavorite(item)"

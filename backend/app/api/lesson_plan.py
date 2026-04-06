@@ -48,6 +48,42 @@ router = APIRouter(prefix="/lesson-plan", tags=["lesson-plan"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
+# --------------- DOCX export helper ---------------
+
+def _export_docx_from_content(title: str, content: str) -> FileResponse:
+    """Generate a DOCX file from title and markdown content, return as FileResponse."""
+    import tempfile
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    doc.add_heading(title, level=1)
+    for line in content.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("### "):
+            doc.add_heading(line[4:], level=3)
+        elif line.startswith("## "):
+            doc.add_heading(line[3:], level=2)
+        elif line.startswith("# "):
+            doc.add_heading(line[2:], level=1)
+        elif line.startswith("- "):
+            doc.add_paragraph(line[2:], style="List Bullet")
+        else:
+            doc.add_paragraph(line)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+    doc.save(tmp.name)
+    from pathlib import Path
+    from starlette.background import BackgroundTask
+    return FileResponse(
+        tmp.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=f"{title}.docx",
+        background=BackgroundTask(lambda: Path(tmp.name).unlink(missing_ok=True)),
+    )
+
+
 # --------------- SSE helpers ---------------
 
 async def _sse_generate(plan_id: int, session_id: str, user_id: int, messages: list[dict]):

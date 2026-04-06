@@ -663,6 +663,9 @@ async def generate_images_async(project_id: int, page_ids: list = None, task_id_
                             is_active=True,
                         ))
                         await db2.commit()
+
+                        from app.services.redis_service import invalidate_ppt_cover
+                        await invalidate_ppt_cover(project_id)
                         success_count += 1
 
             except Exception as e:
@@ -1370,6 +1373,9 @@ async def edit_page_image_async(
                     is_active=True,
                 ))
                 await db3.commit()
+
+                from app.services.redis_service import invalidate_ppt_cover
+                await invalidate_ppt_cover(project_id)
 
         if task_id_str:
             async with AsyncSessionLocal() as db4:

@@ -16,6 +16,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 # 导入模型基类
 from app.core.database import Base
 from app.models import *  # noqa: E402, F401
+import importlib.util as _ilu  # noqa: E402
+_spec = _ilu.spec_from_file_location(
+    "banana_models",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "generators", "ppt", "banana_models.py"),
+)
+_banana = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_banana)  # registers PPT tables on Base.metadata
 
 # Alembic Config 对象
 config = context.config

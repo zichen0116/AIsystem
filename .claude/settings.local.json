@@ -38,7 +38,8 @@
       "Bash(npm run:*)",
       "Bash(conda run:*)",
       "Bash(find:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(npx vue-tsc:*)"
     ]
   }
 }
