@@ -979,6 +979,7 @@ onUnmounted(async () => {
 <template>
   <Teleport to="body">
     <button
+      v-if="!drawerOpen"
       ref="fabRef"
       type="button"
       class="dh-fab"
