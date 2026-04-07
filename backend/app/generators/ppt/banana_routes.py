@@ -14,7 +14,7 @@ import zipfile
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
-from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query, Path
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query, Path, Form
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2659,34 +2659,52 @@ async def upload_project_template(
 @router.post("/projects/renovation")
 async def create_renovation_project(
     file: UploadFile = File(...),
+    keep_layout: bool = Form(False),
+    template_style: Optional[str] = Form(None),
+    language: str = Form("zh"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """创建PPT翻新项目（异步）"""
+    """创建PPT翻新项目（上传文件 → 转换 → 渲染页面 → 异步解析）"""
     from app.generators.ppt.file_service import get_oss_service
+    from app.generators.ppt.renovation_service import get_renovation_service
     import tempfile
     import os
 
-    # 保存上传的文件
-    with tempfile.NamedTemporaryFile(delete=False, suffix=file.filename) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    # 校验文件类型
+    file_ext = _normalize_file_ext(file.filename, file.content_type)
+    if file_ext not in ("pdf", "ppt", "pptx"):
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file_ext}，仅支持 pdf/ppt/pptx")
 
+    # 保存上传文件到临时目录
+    tmp_dir = tempfile.mkdtemp(prefix="ppt_renovation_")
+    tmp_path = os.path.join(tmp_dir, file.filename)
     try:
-        file_ext = _normalize_file_ext(file.filename, file.content_type)
+        content = await file.read()
+        with open(tmp_path, "wb") as f:
+            f.write(content)
 
-        # 上传到 OSS
         oss = get_oss_service()
-        oss_key = f"ppt/renovation/{current_user.id}/{uuid.uuid4()}/{file.filename}"
-        url = oss.upload_file(tmp_path, oss_key)
+        renovation_svc = get_renovation_service()
+        oss_prefix = f"ppt/renovation/{current_user.id}/{uuid.uuid4()}"
+
+        # 上传原始文件到 OSS
+        original_oss_key = f"{oss_prefix}/original.{file_ext}"
+        original_url = oss.upload_file(tmp_path, original_oss_key)
 
         # 创建项目
         project = PPTProject(
             user_id=current_user.id,
             title=f"翻新项目_{datetime.now().strftime('%Y%m%d%H%M%S')}",
             creation_type="renovation",
-            status="PARSE"
+            status="PARSE",
+            settings={
+                "keep_layout": keep_layout,
+                "language": language,
+                "oss_prefix": oss_prefix,
+                "aspect_ratio": "16:9",
+            },
+            template_style=template_style,
         )
         db.add(project)
         await db.commit()
@@ -2697,14 +2715,74 @@ async def create_renovation_project(
             project_id=project.id,
             user_id=current_user.id,
             filename=file.filename,
-            oss_path=oss_key,
-            url=url,
+            oss_path=original_oss_key,
+            url=original_url,
             file_type=file_ext,
-            parse_status="pending"
+            file_size=len(content),
+            parse_status="pending",
         )
         db.add(ref_file)
         await db.commit()
         await db.refresh(ref_file)
+
+        # 如果是 PPT/PPTX → LibreOffice 转 PDF
+        pdf_path = tmp_path
+        if file_ext in ("ppt", "pptx"):
+            try:
+                pdf_path = renovation_svc.convert_to_pdf(tmp_path, file_ext)
+            except (FileNotFoundError, RuntimeError) as e:
+                project.status = "FAILED"
+                await db.commit()
+                raise HTTPException(status_code=500, detail=str(e))
+
+            # 上传转换后的 PDF 到 OSS
+            pdf_oss_key = f"{oss_prefix}/converted.pdf"
+            oss.upload_file(pdf_path, pdf_oss_key)
+
+        # 渲染 PDF 逐页 PNG
+        images_dir = os.path.join(tmp_dir, "pages")
+        os.makedirs(images_dir, exist_ok=True)
+        image_paths = renovation_svc.render_pdf_to_images(pdf_path, images_dir)
+
+        if not any(p is not None for p in image_paths):
+            project.status = "FAILED"
+            await db.commit()
+            raise HTTPException(status_code=500, detail="PDF 无法渲染出任何页面")
+
+        # 提取宽高比
+        aspect_ratio = renovation_svc.get_pdf_aspect_ratio(pdf_path)
+        project.settings = {**project.settings, "aspect_ratio": aspect_ratio}
+
+        # 为每页创建 PPTPage + PageImageVersion
+        for i, img_path in enumerate(image_paths):
+            page = PPTPage(
+                project_id=project.id,
+                page_number=i + 1,
+                title=f"第 {i + 1} 页",
+                config={"points": []},
+                renovation_status="pending",
+            )
+            db.add(page)
+            await db.flush()
+
+            if img_path:
+                # 上传页面图片到 OSS
+                img_oss_key = f"{oss_prefix}/pages/page_{i + 1}.png"
+                img_url = oss.upload_file(img_path, img_oss_key)
+                page.image_url = img_url
+
+                # 创建初始图片版本
+                img_version = PageImageVersion(
+                    page_id=page.id,
+                    user_id=current_user.id,
+                    version=1,
+                    image_url=img_url,
+                    operation="renovation_upload",
+                    is_active=True,
+                )
+                db.add(img_version)
+
+        await db.commit()
 
         # 创建翻新解析任务
         task_id = str(uuid.uuid4())
@@ -2712,20 +2790,33 @@ async def create_renovation_project(
             project_id=project.id,
             task_id=task_id,
             task_type="renovation_parse",
-            status="PENDING"
+            status="PENDING",
         )
         db.add(task)
         await db.commit()
 
         from app.generators.ppt.celery_tasks import renovation_parse_task
-        renovation_parse_task.delay(project_id=project.id, file_id=ref_file.id, task_id_str=task_id)
+        renovation_parse_task.delay(
+            project_id=project.id,
+            file_id=ref_file.id,
+            task_id_str=task_id,
+        )
 
-        return {"project_id": project.id, "task_id": task_id, "file_id": ref_file.id}
+        page_count = len(image_paths)
+        return {
+            "project_id": project.id,
+            "task_id": task_id,
+            "file_id": ref_file.id,
+            "page_count": page_count,
+        }
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("翻新项目创建失败")
+        raise HTTPException(status_code=500, detail=f"翻新项目创建失败: {str(e)}")
     finally:
-        # 清理临时文件
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ============= Pages - Regenerate for Renovation =============
@@ -2737,58 +2828,119 @@ async def regenerate_page_renovation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """翻新模式单页重新解析"""
-    from app.generators.ppt.ppt_parse_service import get_ppt_parse_service
+    """翻新模式单页重新解析（基于原始单页 PDF）"""
+    from app.generators.ppt.renovation_service import get_renovation_service
+    from app.generators.ppt.file_service import get_oss_service
+    import tempfile
+    import os
 
+    # 获取项目
     result = await db.execute(
-        select(PPTPage)
-        .where(PPTPage.id == page_id, PPTPage.project_id == project_id)
+        select(PPTProject).where(PPTProject.id == project_id, PPTProject.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    if project.creation_type != "renovation":
+        raise HTTPException(status_code=400, detail="仅翻新项目支持此操作")
+
+    # 获取页面
+    result = await db.execute(
+        select(PPTPage).where(PPTPage.id == page_id, PPTPage.project_id == project_id)
     )
     page = result.scalar_one_or_none()
     if not page:
         raise HTTPException(status_code=404, detail="页面不存在")
 
-    # 获取项目的参考文件
-    result = await db.execute(
-        select(PPTReferenceFile)
-        .where(PPTReferenceFile.project_id == project_id)
-        .order_by(PPTReferenceFile.created_at.desc())
-        .limit(1)
-    )
-    ref_file = result.scalar_one_or_none()
+    # 从 project.settings 获取参数
+    settings = project.settings or {}
+    oss_prefix = settings.get("oss_prefix", "")
+    keep_layout = settings.get("keep_layout", False)
+    language = settings.get("language", "zh")
 
-    if not ref_file or not ref_file.oss_path:
-        raise HTTPException(status_code=400, detail="没有找到参考文件")
+    if not oss_prefix:
+        raise HTTPException(status_code=500, detail="项目配置缺少 oss_prefix")
 
-    parse_service = get_ppt_parse_service()
+    # 下载单页 PDF
+    split_pdf_oss_key = f"{oss_prefix}/split_pages/page_{page.page_number}.pdf"
+    oss = get_oss_service()
+    renovation_svc = get_renovation_service()
 
+    tmp_path = None
     try:
-        # 下载参考文件
-        from app.generators.ppt.file_service import get_oss_service
-        import tempfile
-
-        oss = get_oss_service()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ref_file.filename) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp_path = tmp.name
 
-        oss.download_file(ref_file.oss_path, tmp_path)
+        if not oss.file_exists(split_pdf_oss_key):
+            raise HTTPException(status_code=500, detail=f"单页 PDF 不存在: page_{page.page_number}.pdf")
 
-        # 解析文件
-        content, error = await parse_service.parse_file(tmp_path, ref_file.filename)
+        oss.download_file(split_pdf_oss_key, tmp_path)
 
-        if error:
-            raise HTTPException(status_code=500, detail=f"解析失败: {error}")
+        # 重新解析
+        content = await renovation_svc.process_single_page(
+            tmp_path, page.image_url, keep_layout, language,
+        )
 
-        # 更新页面描述
-        page.description = content
+        # 写回页面
+        page.title = content.get("title", "")
+        page.description = content.get("description", "")
+        page.config = {**(page.config or {}), "points": content.get("points", [])}
+        page.renovation_status = "completed"
+        page.renovation_error = None
         await db.commit()
 
-        return {"status": "completed", "description": content}
+        # 重新聚合项目级 outline_text / description_text
+        result = await db.execute(
+            select(PPTPage)
+            .where(PPTPage.project_id == project_id)
+            .order_by(PPTPage.page_number)
+        )
+        all_pages = list(result.scalars().all())
+
+        outline_parts = []
+        desc_parts = []
+        for p in all_pages:
+            if p.renovation_status == "completed":
+                points = (p.config or {}).get("points", [])
+                points_text = "\n".join(f"- {pt}" for pt in points)
+                outline_parts.append(f"第{p.page_number}页：{p.title or ''}\n{points_text}")
+                desc_parts.append(f"--- 第{p.page_number}页 ---\n{p.description or ''}")
+
+        project.outline_text = "\n\n".join(outline_parts)
+        project.description_text = "\n\n".join(desc_parts)
+
+        # 如果之前 project 是 FAILED 且现在有成功页，更新为 DESCRIPTIONS_GENERATED
+        success_count = sum(1 for p in all_pages if p.renovation_status == "completed")
+        if success_count > 0 and project.status == "FAILED":
+            project.status = "DESCRIPTIONS_GENERATED"
+
+        await db.commit()
+        await db.refresh(page)
+
+        return {
+            "status": "completed",
+            "page": {
+                "id": page.id,
+                "page_number": page.page_number,
+                "title": page.title,
+                "description": page.description,
+                "renovation_status": page.renovation_status,
+                "renovation_error": page.renovation_error,
+            },
+        }
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"解析失败: {str(e)}")
+        logger.exception("单页翻新重试失败 page_id=%s", page_id)
+        page.renovation_status = "failed"
+        page.renovation_error = str(e)
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"单页重试失败: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # ============= Local Export Serving (OSS fallback) =============
