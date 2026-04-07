@@ -59,6 +59,7 @@ from app.generators.ppt.banana_schemas import (
     GenerateOutlineRequest, GenerateOutlineStreamRequest,
     GenerateDescriptionsStreamRequest, ExportRequest, ExportTaskResponse,
     MaterialGenerateRequest,
+    FileGenerationResponse,
 )
 
 router = APIRouter(prefix="/ppt", tags=["PPT生成"])
@@ -1807,6 +1808,133 @@ async def generate_material(
     )
 
     return {"task_id": task_id, "status": "processing"}
+
+
+# ============= File Generation =============
+
+@router.post("/projects/file-generation", response_model=FileGenerationResponse)
+async def file_generation(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    file: Optional[UploadFile] = File(None),
+    source_text: Optional[str] = Form(None),
+    title: str = Form("未命名PPT"),
+    theme: Optional[str] = Form(None),
+    template_style: Optional[str] = Form(None),
+    settings: Optional[str] = Form(None),
+):
+    """
+    文件生成一站式入口。
+
+    支持三种输入方式：
+    - 仅上传文件（pdf/doc/docx）
+    - 仅粘贴文本
+    - 文件 + 文本组合
+    """
+    # 校验：至少提供一种输入
+    has_file = file is not None and file.filename
+    has_text = bool(source_text and source_text.strip())
+    if not has_file and not has_text:
+        raise HTTPException(status_code=400, detail="请上传文件或输入文本内容")
+
+    # 校验文件类型
+    ALLOWED_FILE_EXTS = {"pdf", "doc", "docx"}
+    file_ext = None
+    if has_file:
+        file_ext = _normalize_file_ext(file.filename, file.content_type)
+        if file_ext not in ALLOWED_FILE_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的文件类型: {file_ext}，仅支持 pdf/doc/docx",
+            )
+
+    # 解析 settings JSON
+    parsed_settings = {}
+    if settings:
+        try:
+            parsed_settings = json.loads(settings)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="settings 格式错误，需要有效的JSON")
+
+    # 1. 创建项目
+    project = PPTProject(
+        user_id=current_user.id,
+        title=title,
+        creation_type="file",
+        theme=theme,
+        template_style=template_style or parsed_settings.get("template_style"),
+        settings=parsed_settings,
+        knowledge_library_ids=[],
+        status="GENERATING",
+    )
+    _sync_project_template_style_to_settings(project)
+    db.add(project)
+    await db.flush()
+
+    # 2. 保存参考文件（如有）
+    ref_file_id = None
+    if has_file:
+        content = await file.read()
+        oss_key = f"ppt/{project.id}/reference/{uuid.uuid4()}/{file.filename}"
+
+        # 上传到 OSS
+        from app.generators.ppt.file_service import get_oss_service
+        try:
+            oss_svc = get_oss_service()
+            file_url = oss_svc.upload_bytes(content, oss_key)
+        except Exception:
+            # OSS 不可用时保存到本地
+            local_dir = os.path.join(
+                os.path.dirname(__file__), "..", "..", "..", "exports", "uploads"
+            )
+            os.makedirs(local_dir, exist_ok=True)
+            local_path = os.path.join(local_dir, f"{uuid.uuid4()}_{file.filename}")
+            with open(local_path, "wb") as f:
+                f.write(content)
+            file_url = local_path
+            oss_key = local_path
+
+        ref_file = PPTReferenceFile(
+            project_id=project.id,
+            user_id=current_user.id,
+            filename=file.filename,
+            oss_path=oss_key,
+            url=file_url,
+            file_type=file_ext,
+            file_size=len(content),
+            parse_status="pending",
+        )
+        db.add(ref_file)
+        await db.flush()
+        ref_file_id = ref_file.id
+
+    # 3. 创建任务记录
+    task_id = str(uuid.uuid4())
+    task = PPTTask(
+        project_id=project.id,
+        task_id=task_id,
+        task_type="file_generation",
+        status="PENDING",
+        progress=0,
+    )
+    db.add(task)
+    await db.commit()
+
+    # 4. 启动 Celery 任务
+    from app.generators.ppt.celery_tasks import file_generation_task
+    file_generation_task.delay(
+        project_id=project.id,
+        file_id=ref_file_id,
+        source_text=source_text if has_text else None,
+        task_id_str=task_id,
+    )
+
+    return FileGenerationResponse(
+        project_id=project.id,
+        task_id=task_id,
+        status="processing",
+        reference_file_id=ref_file_id,
+    )
 
 
 # ============= Reference Files =============
