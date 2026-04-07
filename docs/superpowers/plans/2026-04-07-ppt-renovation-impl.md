@@ -4,7 +4,7 @@
 
 **Goal:** 实现完整的 PPT 翻新后端流水线，支持上传 PDF/PPT/PPTX → 逐页解析 → 结构化内容提取 → 部分成功 → 单页重试。
 
-**Architecture:** 新建 `renovation_service.py` 封装翻新核心逻辑（LibreOffice 转换、PDF 渲染/拆分、AI 内容提取），重写 `banana_routes.py` 中的翻新路由和 `celery_tasks.py` 中的翻新任务。PPTPage 新增 2 字段、PPTProject 新增 1 字段，通过 Alembic migration 落库。
+**Architecture:** 新建 `renovation_service.py` 作为翻新薄层，封装翻新专属逻辑（LibreOffice 转换、PDF 渲染、AI 内容提取、layout caption），复用现有 `ppt_parse_service.py` 的 `parse_file()` 和 `split_pdf_to_pages()` 做文件解析和 PDF 拆分。重写 `banana_routes.py` 中的翻新路由和 `celery_tasks.py` 中的翻新任务。PPTPage 新增 2 字段、PPTProject 新增 1 字段，通过 Alembic migration 落库。
 
 **Tech Stack:** FastAPI, SQLAlchemy 2 (async), Celery, PyMuPDF (fitz), DashScope (qwen-plus / qwen-vl-plus), 阿里云 OSS, LibreOffice, MinerU API (可选)
 
@@ -258,8 +258,6 @@ class RenovationService:
         self.llm_model = s.LLM_MODEL or "qwen-plus"
         self.vision_model = s.VISION_MODEL or "qwen-vl-plus"
         self.dashscope_base_url = "https://dashscope.aliyuncs.com/api/v1"
-        self.mineru_token = os.getenv("MINERU_TOKEN", "")
-        self.mineru_api_base = os.getenv("MINERU_API_BASE", "https://mineru.net")
 
     # ----- LibreOffice 转换 -----
 
@@ -383,108 +381,24 @@ class RenovationService:
         else:
             return "9:16"
 
-    # ----- PDF 拆分 -----
+    # ----- PDF 拆分 / 解析 — 委托 ppt_parse_service -----
 
-    def split_pdf_to_pages(self, pdf_path: str, output_dir: str) -> list[str]:
-        """PDF → 逐页 PDF"""
-        import fitz
-
-        doc = fitz.open(pdf_path)
-        paths: list[str] = []
-
-        for page_num in range(len(doc)):
-            new_doc = fitz.open()
-            new_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
-            out_path = os.path.join(output_dir, f"page_{page_num + 1}.pdf")
-            new_doc.save(out_path)
-            new_doc.close()
-            paths.append(out_path)
-
-        doc.close()
-        return paths
-
-    # ----- PDF → Markdown -----
+    async def split_pdf_to_pages(self, pdf_path: str, output_dir: str) -> list[str]:
+        """PDF → 逐页 PDF，委托 ppt_parse_service"""
+        from app.generators.ppt.ppt_parse_service import get_ppt_parse_service
+        svc = get_ppt_parse_service()
+        return await svc.split_pdf_to_pages(pdf_path, output_dir)
 
     async def parse_page_markdown(self, page_pdf_path: str, filename: str) -> tuple[str | None, str | None]:
         """
-        单页 PDF → markdown
+        单页 PDF → markdown，委托 ppt_parse_service.parse_file()
 
-        优先 MinerU API，fallback 到 fitz 文本提取。
+        ppt_parse_service 已经内置 MinerU 优先 + fitz fallback 逻辑。
         Returns: (markdown_content, error_message)
         """
-        if self.mineru_token:
-            try:
-                md, err = await self._parse_via_mineru(page_pdf_path, filename)
-                if md:
-                    return md, None
-                logger.warning("MinerU 解析失败 (%s)，fallback 到 fitz: %s", filename, err)
-            except Exception as e:
-                logger.warning("MinerU 异常 (%s)，fallback 到 fitz: %s", filename, e)
-
-        return self._parse_via_fitz(page_pdf_path)
-
-    async def _parse_via_mineru(self, file_path: str, filename: str) -> tuple[str | None, str | None]:
-        """MinerU API 解析"""
-        headers = {"Authorization": f"Bearer {self.mineru_token}"}
-        file_size = os.path.getsize(file_path)
-
-        async with httpx.AsyncClient() as client:
-            # 获取上传 URL
-            resp = await client.post(
-                f"{self.mineru_api_base}/api/v4/file-urls/batch",
-                headers=headers,
-                json={"files": [{"file_name": filename, "file_size": file_size}]},
-                timeout=30,
-            )
-            if resp.status_code != 200:
-                return None, f"MinerU 上传 URL 获取失败: {resp.text}"
-
-            info = resp.json()["data"][0]
-            upload_url = info["upload_url"]
-            file_key = info["file_key"]
-
-            # 上传文件
-            with open(file_path, "rb") as f:
-                file_data = f.read()
-            up_resp = await client.put(upload_url, content=file_data, timeout=60)
-            if up_resp.status_code not in (200, 201):
-                return None, f"MinerU 文件上传失败: {up_resp.status_code}"
-
-            # 轮询结果
-            result_url = f"{self.mineru_api_base}/api/v4/extract-results/batch/{file_key}"
-            for _ in range(30):
-                await asyncio.sleep(10)
-                r = await client.get(result_url, headers=headers, timeout=30)
-                if r.status_code == 200:
-                    data = r.json()
-                    if data.get("status") == "completed":
-                        md_url = data["data"]["result_files"][0]["url"]
-                        md_resp = await client.get(md_url, timeout=60)
-                        if md_resp.status_code == 200:
-                            return md_resp.text, None
-                        return None, f"下载 markdown 失败: {md_resp.status_code}"
-                    elif data.get("status") == "failed":
-                        return None, f"MinerU 解析失败: {data.get('message', '未知错误')}"
-
-            return None, "MinerU 解析超时"
-
-    def _parse_via_fitz(self, pdf_path: str) -> tuple[str | None, str | None]:
-        """fitz 文本提取 fallback"""
-        try:
-            import fitz
-            doc = fitz.open(pdf_path)
-            texts = []
-            for page in doc:
-                text = page.get_text() or ""
-                if text.strip():
-                    texts.append(text.strip())
-            doc.close()
-
-            if not texts:
-                return None, "PDF 页面无文本内容"
-            return "\n\n".join(texts), None
-        except Exception as e:
-            return None, f"fitz 文本提取失败: {e}"
+        from app.generators.ppt.ppt_parse_service import get_ppt_parse_service
+        svc = get_ppt_parse_service()
+        return await svc.parse_file(page_pdf_path, filename)
 
     # ----- AI 内容提取 -----
 
@@ -1312,6 +1226,7 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
+import pytest_asyncio
 
 # 确保 backend/ 在 sys.path 中
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -1390,8 +1305,8 @@ class TestRenovationServiceParseJson:
         assert result["title"] == "Test"
 
 
-class TestRenovationServiceFitzFallback:
-    """fitz fallback 测试"""
+class TestRenovationServiceDelegation:
+    """验证 renovation_service 委托 ppt_parse_service"""
 
     def _make_service(self):
         with patch("app.core.config.get_settings") as mock_settings:
@@ -1403,30 +1318,26 @@ class TestRenovationServiceFitzFallback:
             from app.generators.ppt.renovation_service import RenovationService
             return RenovationService()
 
-    def test_fitz_fallback_no_text(self):
+    @pytest.mark.asyncio
+    async def test_parse_page_markdown_delegates_to_parse_service(self):
         svc = self._make_service()
-        # 模拟一个空 PDF
-        with patch("fitz.open") as mock_open:
-            mock_doc = MagicMock()
-            mock_page = MagicMock()
-            mock_page.get_text.return_value = ""
-            mock_doc.__iter__ = MagicMock(return_value=iter([mock_page]))
-            mock_open.return_value = mock_doc
-            md, err = svc._parse_via_fitz("/tmp/empty.pdf")
-            assert md is None
-            assert "无文本" in err
-
-    def test_fitz_fallback_with_text(self):
-        svc = self._make_service()
-        with patch("fitz.open") as mock_open:
-            mock_doc = MagicMock()
-            mock_page = MagicMock()
-            mock_page.get_text.return_value = "Hello World"
-            mock_doc.__iter__ = MagicMock(return_value=iter([mock_page]))
-            mock_open.return_value = mock_doc
-            md, err = svc._parse_via_fitz("/tmp/test.pdf")
-            assert md == "Hello World"
+        mock_parse_svc = MagicMock()
+        mock_parse_svc.parse_file = AsyncMock(return_value=("# Hello", None))
+        with patch("app.generators.ppt.renovation_service.get_ppt_parse_service", return_value=mock_parse_svc):
+            md, err = await svc.parse_page_markdown("/tmp/page_1.pdf", "page_1.pdf")
+            assert md == "# Hello"
             assert err is None
+            mock_parse_svc.parse_file.assert_called_once_with("/tmp/page_1.pdf", "page_1.pdf")
+
+    @pytest.mark.asyncio
+    async def test_split_pdf_delegates_to_parse_service(self):
+        svc = self._make_service()
+        mock_parse_svc = MagicMock()
+        mock_parse_svc.split_pdf_to_pages = AsyncMock(return_value=["/tmp/p1.pdf", "/tmp/p2.pdf"])
+        with patch("app.generators.ppt.renovation_service.get_ppt_parse_service", return_value=mock_parse_svc):
+            paths = await svc.split_pdf_to_pages("/tmp/source.pdf", "/tmp/out")
+            assert len(paths) == 2
+            mock_parse_svc.split_pdf_to_pages.assert_called_once()
 
 
 # ============= Celery 任务逻辑测试 =============
