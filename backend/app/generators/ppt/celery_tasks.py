@@ -1652,3 +1652,94 @@ def generate_material_task(
             raise
 
     return asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# 文件生成 - 辅助函数
+# ---------------------------------------------------------------------------
+
+def _normalize_parse_result(parse_result) -> tuple[str, dict]:
+    """
+    将 ParserFactory 返回的 ParseResult 标准化为大纲生成输入。
+
+    Returns:
+        (normalized_text, parsed_content_dict)
+    """
+    chunks_meta = []
+    text_parts = []
+
+    for chunk in parse_result.chunks:
+        text_parts.append(chunk.content)
+        chunks_meta.append({
+            "content": chunk.content,
+            **chunk.metadata,
+        })
+
+    normalized_text = "\n\n".join(text_parts)
+
+    parsed_content = {
+        "normalized_text": normalized_text,
+        "chunks_meta": chunks_meta,
+        "images": list(parse_result.images),
+    }
+
+    return normalized_text, parsed_content
+
+
+def _combine_outline_source(
+    normalized_text: str | None,
+    source_text: str | None,
+) -> str:
+    """
+    组合文件解析结果和用户文本为统一的大纲输入源。
+
+    规则：
+    - 有文件无文本 → 文件内容
+    - 无文件有文本 → 用户文本
+    - 两者都有 → 文件为主，用户文本为补充
+    """
+    has_file = bool(normalized_text and normalized_text.strip())
+    has_text = bool(source_text and source_text.strip())
+
+    if has_file and has_text:
+        return f"{normalized_text}\n\n---\n用户补充说明：\n{source_text}"
+    elif has_file:
+        return normalized_text
+    elif has_text:
+        return source_text
+    else:
+        return ""
+
+
+def _parse_outline_pages(data) -> list[dict]:
+    """
+    将 AI 生成的大纲 JSON 解析为 flat 页面列表。
+
+    支持三种格式：
+    1. list[{title, points}]          — simple
+    2. list[{part, pages: [...]}]     — part-based
+    3. dict{pages: [...]}             — wrapped
+    """
+    if isinstance(data, dict):
+        if "pages" in data:
+            return _parse_outline_pages(data["pages"])
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    pages = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if "pages" in item and "part" in item:
+            # part-based format
+            part_name = item["part"]
+            for p in item["pages"]:
+                if isinstance(p, dict):
+                    p["part"] = part_name
+                    pages.append(p)
+        else:
+            pages.append(item)
+
+    return pages
