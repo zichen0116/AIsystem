@@ -29,14 +29,17 @@ const otherPrimaryItems = computed(() => {
   if (isAdmin.value) {
     return [
       { id: 'admin-data', path: '/admin', label: '数据中台', icon: 'dashboard' },
-      { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
-      { id: 'personal-center', path: '/admin/profile', label: '个人中心', icon: 'user' },
       {
         id: 'admin-digital-human',
         path: '/admin',
         label: adminDigitalHumanStore.visible ? '隐藏数字人' : '显示数字人',
         icon: 'digital-human'
-      }
+      },
+      { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
+      { id: 'admin-users', path: '/admin/users', label: '用户管理', icon: 'admin-users' },
+      { id: 'admin-audit', path: '/admin/audit', label: '资源审计', icon: 'admin-audit' },
+      { id: 'admin-logs', path: '/admin/logs', label: '系统日志', icon: 'admin-logs' },
+      { id: 'personal-center', path: '/admin/profile', label: '个人中心', icon: 'user' }
     ]
   }
   return primaryItems.filter(i => i.id !== 'lesson-prep')
@@ -44,8 +47,16 @@ const otherPrimaryItems = computed(() => {
 
 function isPrimaryActive(item) {
   if (item.id === 'admin-data') {
-    // 仅在数据中台首页高亮，不在个人中心路由高亮
     return route.path === '/admin'
+  }
+  if (item.id === 'admin-users') {
+    return route.path === '/admin/users' || route.path.startsWith('/admin/users/')
+  }
+  if (item.id === 'admin-audit') {
+    return route.path === '/admin/audit' || route.path.startsWith('/admin/audit/')
+  }
+  if (item.id === 'admin-logs') {
+    return route.path === '/admin/logs' || route.path.startsWith('/admin/logs/')
   }
   if (item.id === 'personal-center' && isAdmin.value) {
     return route.path.startsWith('/admin/profile')
@@ -350,6 +361,49 @@ function toggleAdminDigitalHumanVoice() {
               <circle cx="9" cy="10" r="1.2" fill="currentColor" stroke="none" />
               <circle cx="15" cy="10" r="1.2" fill="currentColor" stroke="none" />
               <path d="M8 15c1.1 1 2.4 1.5 4 1.5s2.9-.5 4-1.5" />
+            </svg>
+            <!-- 用户管理：多人 -->
+            <svg
+              v-else-if="item.icon === 'admin-users'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <!-- 资源审计：剪贴板 -->
+            <svg
+              v-else-if="item.icon === 'admin-audit'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+              <rect x="9" y="3" width="6" height="4" rx="1" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+            <!-- 系统日志：列表 -->
+            <svg
+              v-else-if="item.icon === 'admin-logs'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M8 13h8M8 17h8M8 9h2" />
             </svg>
             <svg
               v-else-if="item.icon === 'user'"
