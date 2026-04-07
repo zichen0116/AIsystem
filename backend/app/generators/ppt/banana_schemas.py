@@ -267,9 +267,18 @@ class PPTReferenceFileResponse(BaseModel):
     parse_status: str
     parse_error: Optional[str]
     parsed_outline: Optional[dict]
+    parsed_content: Optional[dict] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FileGenerationResponse(BaseModel):
+    """文件生成一站式入口响应"""
+    project_id: int
+    task_id: str
+    status: str = "processing"
+    reference_file_id: Optional[int] = None
 
 
 # ============= Session Schemas =============

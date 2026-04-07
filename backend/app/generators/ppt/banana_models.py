@@ -285,6 +285,9 @@ class PPTReferenceFile(Base):
     # 解析结果 (从旧PPT/PDF提取的大纲/内容)
     parsed_outline: Mapped[dict] = mapped_column(JSONB, nullable=True)
 
+    parsed_content: Mapped[dict] = mapped_column(JSONB, nullable=True)
+    """文件生成用：{normalized_text, chunks_meta, images}"""
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
