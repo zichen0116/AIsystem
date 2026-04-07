@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick, reactive } from 'vue'
 import { usePptStore } from '@/stores/ppt'
-import { chat, getSessions } from '@/api/ppt'
+import { getSessions } from '@/api/ppt'
 
 const pptStore = usePptStore()
 
@@ -40,7 +40,7 @@ const context = computed(() => {
   // 优先用 state.intentSummary（确认后从 confirmedIntent 恢复的），其次用 pptStore.confirmedIntent
   const summary = state.intentSummary && Object.keys(state.intentSummary).length > 0
     ? state.intentSummary
-    : (pptStore.confirmedIntent || {})
+    : (pptStore.intentSummary || {})
   return {
     template: pptStore.selectedPresetTemplateId || '未选择',
     topic: summary.topic || pptStore.outlineText?.slice(0, 20) || '待输入',
@@ -49,6 +49,42 @@ const context = computed(() => {
   }
 })
 
+function resolveProjectTopic() {
+  return String(pptStore.projectData?.theme || pptStore.outlineText || '').trim()
+}
+
+function buildInitialAiMessage() {
+  const topic = resolveProjectTopic()
+  if (topic) {
+    return `我已经收到主题“${topic}”了。为了把这份 PPT 做得更贴合你的课堂，我们继续确认几个关键点：
+
+1. 学生情况：学生是哪个年级，基础大概怎样？
+2. 课时安排：这节课计划多长时间，PPT 想控制在多少页左右？
+3. 教学目标：这节课最希望学生学会什么，或者带走什么？`
+  }
+
+  return `我已经收到你的想法了。为了把这份 PPT 做得更贴合课堂，我们继续确认几个关键点：
+
+1. 学生情况：学生是哪个年级，基础大概怎样？
+2. 课时安排：这节课计划多长时间，PPT 想控制在多少页左右？
+3. 教学目标：这节课最希望学生学会什么，或者带走什么？`
+}
+
+function syncIntentState(intentState, pushSummary = true) {
+  const normalized = pptStore.applyIntentPayload(intentState, resolveProjectTopic())
+  state.confirmed = normalized.confirmed
+  state.pending = normalized.pending
+  state.scores = { ...normalized.scores }
+  state.confidence = normalized.confidence
+  state.readyForConfirmation = normalized.ready_for_confirmation
+  state.intentConfirmed = normalized.status === 'CONFIRMED'
+  state.intentSummary = normalized.intent_summary
+  state.round = normalized.round || state.round
+  if (pushSummary && normalized.summary) {
+    pushSnapshot(`第${normalized.round || state.round || 1}轮：${normalized.summary}`)
+  }
+}
+
 // Messages
 const messages = ref([
   {
@@ -56,6 +92,10 @@ const messages = ref([
     content: '太好了，收到你的主题了！为了把这个 PPT 做得真正适合你的课堂，我来和你聊几个小问题，不用紧张，我们慢慢来 :\n\n1. 学生情况：方便说说你的学生是哪个年级/什么专业吗？他们对这个主题大概了解多少？\n2. 课时安排：这节课大概多长时间呀？页数上有没有什么想法？\n3. 教学风格：你喜欢偏严谨一点的风格，还是轻松活泼一些的呢？'
   }
 ])
+
+if (messages.value.length > 0) {
+  messages.value[0].content = buildInitialAiMessage()
+}
 
 const canSend = computed(() => userMessage.value.trim().length > 0 && !isSending.value)
 
@@ -127,6 +167,8 @@ function formatTime(value) {
 
 function applyIntentState(intentState, pushSummary = true) {
   if (!intentState || typeof intentState !== 'object') return
+  syncIntentState(intentState, pushSummary)
+  return
 
   if (Array.isArray(intentState.confirmed)) {
     const newConfirmed = intentState.confirmed.filter(item => typeof item === 'string' && item.trim())
@@ -182,11 +224,11 @@ async function sendMessage() {
       throw new Error('项目未创建，请返回首页重新开始。')
     }
 
-    const response = await chat(pptStore.projectId, text)
+    const response = await pptStore.sendChat(pptStore.projectId, text)
     state.round = Number.isFinite(response?.round) ? Number(response.round) : (state.round + 1)
 
-    if (response?.intent_state) {
-      applyIntentState(response.intent_state)
+    if (response?.intent_state || response?.intent) {
+      applyIntentState(response.intent_state || response.intent)
     }
 
     // 保存意图摘要
@@ -236,11 +278,10 @@ async function confirmIntentAndGo() {
   isGenerating.value = true
 
   try {
-    await pptStore.confirmIntent(pptStore.projectId)
-    state.intentConfirmed = true
-    state.readyForConfirmation = true
-    state.pending = []
-    state.confidence = Math.max(state.confidence, 95)
+    const response = await pptStore.confirmIntent(pptStore.projectId)
+    if (response?.intent) {
+      syncIntentState(response.intent, false)
+    }
     pushSnapshot('系统：意图已确认，准备进入大纲页。')
 
     messages.value.push({
@@ -271,7 +312,7 @@ function goToOutline() {
 }
 
 function goBack() {
-  pptStore.setPhase('home')
+  pptStore.resetState()
 }
 
 function fillQuickAction(text) {
@@ -324,16 +365,17 @@ onMounted(async () => {
 
   try {
     // 优先从 confirmedIntent 恢复
-    if (pptStore.confirmedIntent && Object.keys(pptStore.confirmedIntent).length > 0) {
-      state.intentSummary = pptStore.confirmedIntent
-      state.intentConfirmed = true
-      state.readyForConfirmation = true
-      state.confidence = Math.max(state.confidence, 95)
-      state.pending = []
-    }
+    syncIntentState(pptStore.intentState, false)
 
     const sessions = await getSessions(pptStore.projectId)
-    if (!Array.isArray(sessions) || sessions.length === 0) return
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      messages.value = [{
+        role: 'ai',
+        content: buildInitialAiMessage(),
+        time: nowText()
+      }]
+      return
+    }
 
     messages.value = sessions.map((session) => ({
       role: session.role === 'assistant' ? 'ai' : 'user',
@@ -344,7 +386,7 @@ onMounted(async () => {
     state.round = sessions.reduce((maxRound, session) => Math.max(maxRound, Number(session.round) || 0), 0)
 
     // 从所有历史 sessions 累积恢复 confirmed
-    if (!pptStore.confirmedIntent || Object.keys(pptStore.confirmedIntent).length === 0) {
+    if (!pptStore.isIntentConfirmed) {
       const allConfirmed = new Set()
       let latestIntentState = null
 
@@ -399,11 +441,11 @@ const draftContent = computed(() => {
     <!-- Top Bar -->
     <header class="topbar">
       <div class="identity">
-        <button class="back-btn" @click="goBack" title="返回首页">
+        <button class="back-btn" @click="goBack" title="返回主页">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
-          返回
+          主页
         </button>
         <h1>教学意图澄清工作台</h1>
         <p>将零散想法整理成可执行教学意图</p>

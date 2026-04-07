@@ -85,6 +85,7 @@ function getStatusType(project) {
 
 function getProjectPhase(project) {
   if (project.cover_image_url) return 'preview'
+  if (project.status === 'INTENT_CONFIRMED') return 'outline'
   if (project.page_count > 0) return 'outline'
   if (project.creation_type === 'dialog') return 'dialog'
   return 'outline'
@@ -99,11 +100,7 @@ function formatDate(dateStr) {
 
 async function openProject(project) {
   try {
-    await pptStore.fetchProject(project.id)
-    await pptStore.fetchPages(project.id)
-    if (project.creation_type === 'dialog') {
-      try { await pptStore.fetchIntent(project.id) } catch (_) {}
-    }
+    await pptStore.loadProjectWorkspace(project.id)
     pptStore.setPhase(getProjectPhase(project))
   } catch (e) {
     ElMessage.error('打开项目失败')

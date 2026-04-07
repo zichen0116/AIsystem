@@ -28,12 +28,24 @@ from app.services.redis_service import invalidate_ppt_cover, get_ppt_cover, set_
 from app.models.user import User
 from app.generators.ppt.banana_models import (
     PPTProject, PPTPage, PPTTask, PPTMaterial,
-    PPTReferenceFile, PPTSession, UserTemplate, PageImageVersion
+    PPTReferenceFile, PPTSession, UserTemplate, PageImageVersion, PPTProjectIntent
 )
 from app.generators.ppt.page_utils import (
     extract_page_points,
     get_active_extra_fields_config,
     split_generated_description,
+)
+from app.generators.ppt.intent_service import (
+    DEFAULT_INTENT_PENDING,
+    DEFAULT_INTENT_SCORES,
+    INTENT_STATUS_CONFIRMED,
+    apply_intent_state_to_record,
+    build_session_intent_metadata,
+    confirm_intent_state,
+    create_intent_state,
+    merge_intent_state,
+    parse_intent_response,
+    serialize_intent_record,
 )
 from app.generators.ppt.banana_schemas import (
     PPTProjectCreate, PPTProjectUpdate, PPTProjectResponse, PPTProjectListItem,
@@ -42,6 +54,7 @@ from app.generators.ppt.banana_schemas import (
     PPTSessionResponse, ChatMessageRequest, PageReorderRequest,
     ProjectSettingsUpdate, UserTemplateCreate, UserTemplateUpdate,
     UserTemplateResponse, PageImageVersionResponse,
+    PPTIntentStateResponse, PPTIntentEnvelopeResponse, PPTIntentConfirmResponse,
     RefineOutlineRequest, RefineDescriptionsRequest, EditImageRequest,
     GenerateOutlineRequest, GenerateOutlineStreamRequest,
     GenerateDescriptionsStreamRequest, ExportRequest, ExportTaskResponse,
@@ -396,6 +409,110 @@ def _parse_intent_state(raw_response: str) -> tuple[str, dict]:
         "intent_summary": intent_summary,
     }
 
+
+def _project_intent_topic(project: PPTProject) -> str | None:
+    return str(project.theme or project.outline_text or "").strip() or None
+
+
+def _normalize_session_intent_state(raw_state: object, project: PPTProject, round_number: int) -> dict:
+    base = create_intent_state(_project_intent_topic(project))
+    if not isinstance(raw_state, dict):
+        base["round"] = round_number
+        return base
+
+    merged = merge_intent_state(base, raw_state, fallback_topic=_project_intent_topic(project))
+    merged["round"] = max(int(merged.get("round") or 0), int(round_number or 0))
+
+    confirmed_at = raw_state.get("confirmed_at")
+    if isinstance(confirmed_at, str):
+        try:
+            merged["confirmed_at"] = datetime.fromisoformat(confirmed_at)
+        except ValueError:
+            merged["confirmed_at"] = None
+    return merged
+
+
+async def _get_or_create_project_intent(
+    db: AsyncSession,
+    project: PPTProject,
+    user_id: int,
+    sessions: list[PPTSession] | None = None,
+) -> PPTProjectIntent:
+    result = await db.execute(
+        select(PPTProjectIntent).where(PPTProjectIntent.project_id == project.id)
+    )
+    intent = result.scalar_one_or_none()
+    if intent:
+        if not intent.topic and _project_intent_topic(project):
+            intent.topic = _project_intent_topic(project)
+        should_backfill = bool(
+            sessions
+            and not any([
+                intent.audience,
+                intent.goal,
+                intent.duration,
+                intent.constraints,
+                intent.style,
+                intent.interaction,
+                intent.extra,
+            ])
+            and not intent.confirmed_points
+        )
+        if should_backfill:
+            intent_state = create_intent_state(_project_intent_topic(project))
+            for session in sessions or []:
+                if session.role != "assistant" or not session.session_metadata:
+                    continue
+                session_state = session.session_metadata.get("intent_state")
+                if not isinstance(session_state, dict):
+                    continue
+                intent_state = merge_intent_state(
+                    intent_state,
+                    _normalize_session_intent_state(session_state, project, session.round),
+                    fallback_topic=_project_intent_topic(project),
+                )
+            if project.status == "INTENT_CONFIRMED" and not intent_state.get("pending"):
+                try:
+                    intent_state = confirm_intent_state(intent_state)
+                except ValueError:
+                    pass
+            apply_intent_state_to_record(
+                intent,
+                intent_state,
+                round_number=int(intent_state.get("round") or 0),
+            )
+        return intent
+
+    intent = PPTProjectIntent(project_id=project.id, user_id=user_id)
+    intent_state = create_intent_state(_project_intent_topic(project))
+
+    for session in sessions or []:
+        if session.role != "assistant" or not session.session_metadata:
+            continue
+        session_state = session.session_metadata.get("intent_state")
+        if not isinstance(session_state, dict):
+            continue
+        intent_state = merge_intent_state(
+            intent_state,
+            _normalize_session_intent_state(session_state, project, session.round),
+            fallback_topic=_project_intent_topic(project),
+        )
+
+    if project.status == "INTENT_CONFIRMED" and not intent_state.get("pending"):
+        try:
+            intent_state = confirm_intent_state(intent_state)
+        except ValueError:
+            pass
+
+    apply_intent_state_to_record(
+        intent,
+        intent_state,
+        round_number=int(intent_state.get("round") or 0),
+    )
+    db.add(intent)
+    await db.flush()
+    return intent
+
 # ============= Project CRUD =============
 
 @router.post("/projects", response_model=PPTProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -424,6 +541,8 @@ async def create_project(
     _sync_project_template_style_to_settings(project)
 
     db.add(project)
+    await db.flush()
+    await _get_or_create_project_intent(db, project, current_user.id)
     await db.commit()
     await db.refresh(project)
     return project
@@ -1926,6 +2045,8 @@ async def chat(
         .order_by(PPTSession.created_at)
     )
     sessions = result.scalars().all()
+    project_intent = await _get_or_create_project_intent(db, project, current_user.id, sessions)
+    current_intent_state = serialize_intent_record(project_intent)
 
     # 构建消息历史
     messages = []
@@ -2012,57 +2133,42 @@ JSON Schema:
         if hist_confirmed:
             intent_system_prompt += f"\n\n之前轮次已确认的要点：{', '.join(hist_confirmed)}。请在你的回复中保留这些已确认要点，不要丢弃。"
 
+        initial_topic = _project_intent_topic(project)
+        if initial_topic:
+            intent_system_prompt += (
+                f"\n\n当前项目在欢迎页已经记录的主题/初始需求是：{initial_topic}。"
+                "这部分应视为已知前提，除非用户主动推翻，否则不要再次追问主题本身。"
+            )
+
+        existing_summary = current_intent_state.get("intent_summary", {})
+        summary_lines = [
+            f"{field}: {value}"
+            for field, value in existing_summary.items()
+            if isinstance(value, str) and value.strip()
+        ]
+        if summary_lines:
+            intent_system_prompt += "\n\n当前项目级意图状态摘要：\n" + "\n".join(summary_lines)
+
         response = await dashscope.chat_with_history(
             messages=messages,
             system_prompt=intent_system_prompt
         )
         raw_content = response if isinstance(response, str) else response.get("content", "")
-        ai_content, intent_state = _parse_intent_state(raw_content)
-
-        # ---- 确定性合并：历史已确认要点 ∪ 当前轮已确认要点 ----
-        previous_confirmed = set()
-        for s in sessions:
-            if s.role == 'assistant' and s.session_metadata:
-                old_state = s.session_metadata.get('intent_state', {})
-                for item in old_state.get('confirmed', []):
-                    if isinstance(item, str) and item.strip():
-                        previous_confirmed.add(item.strip())
-        current_confirmed = set(
-            item for item in intent_state.get('confirmed', [])
-            if isinstance(item, str) and item.strip()
+        ai_content, parsed_intent_state = parse_intent_response(raw_content, _project_intent_topic(project))
+        parsed_intent_state["round"] = max_round + 1
+        intent_state = merge_intent_state(
+            current_intent_state,
+            parsed_intent_state,
+            fallback_topic=_project_intent_topic(project),
         )
-        merged_confirmed = previous_confirmed | current_confirmed
-        intent_state['confirmed'] = list(merged_confirmed)
-
-        # ---- pending 与合并后 confirmed 校正：移除已被 confirmed 覆盖的维度 ----
-        merged_text = "\n".join(merged_confirmed)
-        dimension_covered = {
-            "受众基础层次": any(k in merged_text for k in ["受众", "年级", "学生", "基础"]),
-            "核心教学目标": any(k in merged_text for k in ["目标", "学习目标", "达成", "掌握"]),
-            "课时与目标页数": any(k in merged_text for k in ["课时", "时长", "页数", "时间", "页"]),
-            "互动与约束条件": any(k in merged_text for k in ["互动", "约束", "活动", "限制", "形式"]),
-        }
-        corrected_pending = [
-            p for p in intent_state.get('pending', [])
-            if not dimension_covered.get(p, False)
-        ]
-        intent_state['pending'] = corrected_pending
-
-        # 如果 pending 被清空且有足够 confirmed，标记可确认
-        if not corrected_pending and len(merged_confirmed) >= 4:
-            intent_state['ready_for_confirmation'] = True
+        intent_state["round"] = max_round + 1
 
     except Exception as e:
         ai_content = f"抱歉，发生了错误: {str(e)}"
-        intent_state = {
-            "confirmed": [],
-            "pending": DEFAULT_INTENT_PENDING,
-            "scores": DEFAULT_INTENT_SCORES.copy(),
-            "confidence": 40,
-            "ready_for_confirmation": False,
-            "summary": "调用异常，建议重试",
-            "intent_summary": {},
-        }
+        intent_state = current_intent_state or create_intent_state(_project_intent_topic(project))
+        intent_state["confidence"] = 40
+        intent_state["summary"] = "调用异常，建议重试"
+        intent_state["round"] = max_round + 1
 
     # 保存 AI 回复
     ai_session = PPTSession(
@@ -2070,22 +2176,33 @@ JSON Schema:
         user_id=current_user.id,
         role="assistant",
         content=ai_content,
-        session_metadata={"intent_state": intent_state},
+        session_metadata=build_session_intent_metadata(intent_state),
         round=max_round + 1
     )
     db.add(ai_session)
+    await db.flush()
+
+    apply_intent_state_to_record(
+        project_intent,
+        intent_state,
+        round_number=ai_session.round,
+        source_session_id=ai_session.id,
+    )
+    if project_intent.status == INTENT_STATUS_CONFIRMED:
+        project.status = "INTENT_CONFIRMED"
+
     await db.commit()
     await db.refresh(ai_session)
 
     return {
         "message": ai_content,
         "round": ai_session.round,
-        "intent_state": intent_state,
+        "intent_state": serialize_intent_record(project_intent),
         "intent_summary": intent_state.get("intent_summary", {}),
     }
 
 
-@router.post("/projects/{project_id}/intent/confirm")
+@router.post("/projects/{project_id}/intent/confirm", response_model=PPTIntentConfirmResponse)
 async def confirm_intent(
     project_id: int,
     current_user: User = Depends(get_current_user),
@@ -2100,30 +2217,34 @@ async def confirm_intent(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    # 获取最新一条 assistant 消息中的 intent_summary
     result = await db.execute(
-        select(PPTSession)
-        .where(
-            PPTSession.project_id == project_id,
-            PPTSession.role == "assistant",
-            PPTSession.session_metadata.op("?")("intent_state")
-        )
-        .order_by(PPTSession.created_at.desc())
-        .limit(1)
+        select(PPTProjectIntent).where(PPTProjectIntent.project_id == project_id)
     )
-    last_session = result.scalar_one_or_none()
+    project_intent = result.scalar_one_or_none()
+    if not project_intent:
+        project_intent = await _get_or_create_project_intent(db, project, current_user.id)
 
-    intent_summary = {}
-    if last_session and last_session.session_metadata.get("intent_state", {}).get("intent_summary"):
-        intent_summary = last_session.session_metadata["intent_state"]["intent_summary"]
-
+    try:
+        intent_state = confirm_intent_state(serialize_intent_record(project_intent))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    apply_intent_state_to_record(
+        project_intent,
+        intent_state,
+        round_number=project_intent.clarification_round,
+        source_session_id=project_intent.last_source_session_id,
+    )
     project.status = "INTENT_CONFIRMED"
     await db.commit()
 
-    return {"status": "ok", "intent_summary": intent_summary}
+    return {
+        "status": "ok",
+        "intent": serialize_intent_record(project_intent),
+        "intent_summary": serialize_intent_record(project_intent)["intent_summary"],
+    }
 
 
-@router.get("/projects/{project_id}/intent")
+@router.get("/projects/{project_id}/intent", response_model=PPTIntentEnvelopeResponse)
 async def get_intent(
     project_id: int,
     current_user: User = Depends(get_current_user),
@@ -2138,24 +2259,17 @@ async def get_intent(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
-    # 获取最新一条 assistant 消息中的 intent_summary
-    result = await db.execute(
+    sessions_result = await db.execute(
         select(PPTSession)
-        .where(
-            PPTSession.project_id == project_id,
-            PPTSession.role == "assistant",
-            PPTSession.session_metadata.op("?")("intent_state")
-        )
-        .order_by(PPTSession.created_at.desc())
-        .limit(1)
+        .where(PPTSession.project_id == project_id)
+        .order_by(PPTSession.created_at)
     )
-    last_session = result.scalar_one_or_none()
+    sessions = sessions_result.scalars().all()
+    project_intent = await _get_or_create_project_intent(db, project, current_user.id, sessions)
+    await db.commit()
 
-    intent_summary = {}
-    if last_session and last_session.session_metadata.get("intent_state", {}).get("intent_summary"):
-        intent_summary = last_session.session_metadata["intent_state"]["intent_summary"]
-
-    return {"intent_summary": intent_summary}
+    intent = serialize_intent_record(project_intent)
+    return {"intent": intent, "intent_summary": intent["intent_summary"]}
 
 
 @router.post("/projects/{project_id}/dialog/generate-outline")

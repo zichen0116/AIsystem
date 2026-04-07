@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
-import { createProject, getUserTemplates, extractStyleFromImage } from '@/api/ppt'
+import { getUserTemplates, extractStyleFromImage } from '@/api/ppt'
 import { uploadReferenceFile } from '@/api/ppt'
 
 const pptStore = usePptStore()
@@ -375,15 +375,8 @@ async function handleNext() {
       settings: settings
     }
 
-    const response = await createProject(data)
-    pptStore.projectId = response.id
-    pptStore.projectData = response
-    pptStore.creationType = creationType.value
-    pptStore.selectedPresetTemplateId = effectiveTemplateId
-    pptStore.templateStyle = effectiveTemplateStyle || ''
-    pptStore.aspectRatio = aspectRatio.value
-    pptStore.outlineText = mainText.value
-    pptStore.projectSettings = { ...pptStore.projectSettings, ...response.settings, ...settings }
+    await pptStore.createProject(data)
+    pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
 
     // Navigate to appropriate phase
     if (creationType.value === 'dialog') {

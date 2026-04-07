@@ -65,6 +65,7 @@ class PPTProject(Base):
     pages: Mapped[list["PPTPage"]] = relationship("PPTPage", back_populates="project", cascade="all, delete-orphan")
     tasks: Mapped[list["PPTTask"]] = relationship("PPTTask", back_populates="project", cascade="all, delete-orphan")
     sessions: Mapped[list["PPTSession"]] = relationship("PPTSession", back_populates="project", cascade="all, delete-orphan")
+    intent: Mapped["PPTProjectIntent"] = relationship("PPTProjectIntent", back_populates="project", cascade="all, delete-orphan", uselist=False)
 
     def __repr__(self):
         return f"<PPTProject(id={self.id}, title={self.title}, status={self.status})>"
@@ -328,6 +329,54 @@ class PPTSession(Base):
 
     def __repr__(self):
         return f"<PPTSession(id={self.id}, project_id={self.project_id}, role={self.role}, round={self.round})>"
+
+
+class PPTProjectIntent(Base):
+    """
+    项目级教学意图聚合表。
+
+    对话消息负责保留历史，这张表负责保留当前可恢复、可确认的结构化意图状态。
+    """
+
+    __tablename__ = "ppt_project_intents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(Integer, ForeignKey("ppt_projects.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    topic: Mapped[str] = mapped_column(Text, nullable=True)
+    audience: Mapped[str] = mapped_column(Text, nullable=True)
+    goal: Mapped[str] = mapped_column(Text, nullable=True)
+    duration: Mapped[str] = mapped_column(Text, nullable=True)
+    constraints: Mapped[str] = mapped_column(Text, nullable=True)
+    style: Mapped[str] = mapped_column(Text, nullable=True)
+    interaction: Mapped[str] = mapped_column(Text, nullable=True)
+    extra: Mapped[str] = mapped_column(Text, nullable=True)
+
+    confirmed_points: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    pending_items: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+
+    score_goal: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+    score_audience: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+    score_structure: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+    score_interaction: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False, default=35)
+
+    summary_text: Mapped[str] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="CLARIFYING")
+    clarification_round: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_source_session_id: Mapped[int] = mapped_column(Integer, ForeignKey("ppt_sessions.id", ondelete="SET NULL"), nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    project: Mapped["PPTProject"] = relationship("PPTProject", back_populates="intent")
+    user: Mapped["User"] = relationship("User")
+    last_source_session: Mapped["PPTSession"] = relationship("PPTSession")
+
+    def __repr__(self):
+        return f"<PPTProjectIntent(project_id={self.project_id}, status={self.status})>"
 
 
 class UserTemplate(Base):
