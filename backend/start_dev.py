@@ -5,8 +5,11 @@
 import subprocess
 import sys
 import os
+import socket
 import time
 import signal
+import urllib.error
+import urllib.request
 
 # 颜色输出
 GREEN = '\033[92m'
@@ -22,6 +25,45 @@ def print_status(status, message):
         "ERROR": RED
     }
     print(f"{colors.get(status, '')}[{status}]{RESET} {message}")
+
+
+def is_port_open(host, port, timeout=1.0):
+    """检查 TCP 端口是否可连接"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def is_http_ready(url, timeout=2.0):
+    """检查 HTTP 健康接口是否可用"""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def wait_for_condition(name, checker, retries=30, interval=1, process=None):
+    """轮询直到条件满足，避免固定等待导致的启动竞态"""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f"{name} exited before ready")
+        try:
+            if checker():
+                print_status("INFO", f"{name} 已就绪")
+                return True
+        except Exception as exc:  # pragma: no cover - 防御性分支
+            last_error = exc
+        if attempt < retries:
+            time.sleep(interval)
+
+    message = f"{name} 未在 {retries * interval} 秒内就绪"
+    if last_error is not None:
+        message = f"{message}: {last_error}"
+    raise TimeoutError(message)
 
 
 class ProcessManager:
@@ -50,10 +92,6 @@ class ProcessManager:
         
         proc = subprocess.Popen(command, **kwargs)
         self.processes.append((name, proc))
-        
-        if need_wait:
-            time.sleep(3)  # 等待服务启动
-        
         return proc
     
     def stop_all(self):
@@ -109,9 +147,9 @@ def main():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            time.sleep(2)
         else:
             print_status("INFO", "Redis 已运行")
+        wait_for_condition("Redis", lambda: is_port_open("127.0.0.1", 6379))
         
         # 2. 启动 PostgreSQL（如果还没启动）
         print_status("INFO", "检查 PostgreSQL...")
@@ -131,16 +169,22 @@ def main():
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-            time.sleep(3)
         else:
             print_status("INFO", "PostgreSQL 已运行")
-        
+        wait_for_condition("PostgreSQL", lambda: is_port_open("127.0.0.1", 5432), retries=60)
+
         # 3. 启动 FastAPI
-        manager.start_process(
+        fastapi_proc = manager.start_process(
             "FastAPI",
             [sys.executable, "run.py"],
             cwd=backend_dir,
-            need_wait=True
+            need_wait=False
+        )
+        wait_for_condition(
+            "FastAPI",
+            lambda: is_http_ready("http://127.0.0.1:8000/health"),
+            retries=60,
+            process=fastapi_proc,
         )
         
         # 4. 启动 Celery Worker
@@ -149,7 +193,7 @@ def main():
             [sys.executable, "-m", "celery", "-A", "app.celery", 
              "worker", "--loglevel=info"],
             cwd=backend_dir,
-            need_wait=True
+            need_wait=False
         )
         
         # 打印启动信息
