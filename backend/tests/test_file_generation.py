@@ -131,3 +131,101 @@ class TestParseOutlinePages:
 
         assert _parse_outline_pages([]) == []
         assert _parse_outline_pages({}) == []
+
+
+class TestFileGenerationTask:
+    """Test the file_generation_task end-to-end (mocked AI + DB)."""
+
+    @pytest.mark.asyncio
+    async def test_text_only_creates_pages(self):
+        """Pure text input should generate outline and create pages."""
+        from app.core.database import AsyncSessionLocal
+        from app.generators.ppt.banana_models import PPTProject, PPTPage, PPTTask
+        from sqlalchemy import select
+
+        # Create a test project + task
+        async with AsyncSessionLocal() as db:
+            project = PPTProject(
+                user_id=1,
+                title="Test File Gen",
+                creation_type="file",
+                status="GENERATING",
+                settings={},
+                knowledge_library_ids=[],
+            )
+            db.add(project)
+            await db.flush()
+
+            task = PPTTask(
+                project_id=project.id,
+                task_id="test-filegen-001",
+                task_type="file_generation",
+                status="PENDING",
+                progress=0,
+            )
+            db.add(task)
+            await db.commit()
+            project_id = project.id
+
+        # Mock AI to return a simple outline
+        mock_outline = [
+            {"title": "Title Slide", "points": ["subtitle"]},
+            {"title": "Chapter 1", "points": ["point A", "point B"]},
+        ]
+
+        import nest_asyncio
+        nest_asyncio.apply()
+
+        with patch(
+            "app.generators.ppt.celery_tasks.get_banana_service"
+        ) as mock_svc_factory:
+            mock_svc = MagicMock()
+            mock_svc.parse_outline_text = AsyncMock(return_value=mock_outline)
+            mock_svc_factory.return_value = mock_svc
+
+            from app.generators.ppt.celery_tasks import file_generation_task
+            file_generation_task(
+                project_id=project_id,
+                file_id=None,
+                source_text="这是关于人工智能的课程大纲",
+                task_id_str="test-filegen-001",
+            )
+
+        # Verify results
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(
+                select(PPTProject).where(PPTProject.id == project_id)
+            )
+            project = res.scalar_one()
+            assert project.status == "PLANNING"
+            assert project.outline_text is not None
+
+            res = await db.execute(
+                select(PPTPage)
+                .where(PPTPage.project_id == project_id)
+                .order_by(PPTPage.page_number)
+            )
+            pages = res.scalars().all()
+            assert len(pages) == 2
+            assert pages[0].title == "Title Slide"
+            assert pages[1].config.get("points") == ["point A", "point B"]
+
+            res = await db.execute(
+                select(PPTTask).where(PPTTask.task_id == "test-filegen-001")
+            )
+            task = res.scalar_one()
+            assert task.status == "COMPLETED"
+            assert task.progress == 100
+
+        # Cleanup
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                PPTPage.__table__.delete().where(PPTPage.project_id == project_id)
+            )
+            await db.execute(
+                PPTTask.__table__.delete().where(PPTTask.project_id == project_id)
+            )
+            await db.execute(
+                PPTProject.__table__.delete().where(PPTProject.id == project_id)
+            )
+            await db.commit()
