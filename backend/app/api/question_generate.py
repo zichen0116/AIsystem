@@ -1,13 +1,16 @@
-from typing import List, Literal, Optional, Any, Dict
+from typing import List, Literal, Optional, Any, Dict, cast
 import json
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator
 
-from app.services.html_llm import _call_llm
+from app.core.config import settings
+from app.services.html_llm import _call_llm, call_llm_chat
 
 
 router = APIRouter(prefix="/question-generate", tags=["question-generate"])
+
+ALLOWED_Q_TYPES = frozenset({"mc", "tf", "sa", "essay"})
 
 
 class QuestionGenerateRequest(BaseModel):
@@ -15,25 +18,80 @@ class QuestionGenerateRequest(BaseModel):
     difficulty: Literal["easy", "medium", "hard"] = Field(
         "medium", description="难度等级：easy/medium/hard"
     )
-    types: List[Literal["mc", "tf", "sa", "essay"]] = Field(
-        ..., description="需要生成的题目类型列表"
+    types: Optional[List[Literal["mc", "tf", "sa", "essay"]]] = Field(
+        None,
+        description="需要生成的题目类型列表；若提供 type_counts 可由服务端自动推导",
     )
-    count: int = Field(
-        1,
+    count: Optional[int] = Field(
+        None,
         ge=1,
         le=50,
-        description="题目数量，1-50 之间的整数",
+        description="题目总数；若提供 type_counts 则与 type_counts 之和一致",
+    )
+    type_counts: Optional[Dict[str, int]] = Field(
+        None,
+        description="各题型数量（mc/tf/sa/essay）；提供时按该分配命题，总数 1–50",
     )
     source: Optional[str] = Field(
         None,
         description="来源材料 / 知识点文本（可选，来自前端输入或文件解析）",
     )
 
-    @validator("types")
-    def validate_types(cls, v: List[str]) -> List[str]:
-        if not v:
+    @model_validator(mode="after")
+    def normalize_types_and_count(self) -> "QuestionGenerateRequest":
+        if self.type_counts:
+            for k, v in self.type_counts.items():
+                if k not in ALLOWED_Q_TYPES:
+                    raise ValueError(f"非法题型: {k}")
+                if v < 1:
+                    raise ValueError(f"题型 {k} 的数量至少为 1")
+            total = sum(self.type_counts.values())
+            if total > 50:
+                raise ValueError("题目总数不能超过 50")
+            object.__setattr__(self, "types", list(self.type_counts.keys()))
+            object.__setattr__(self, "count", total)
+            return self
+        if not self.types:
             raise ValueError("至少选择一种题目类型")
-        return v
+        cnt = self.count if self.count is not None else 1
+        object.__setattr__(self, "count", cnt)
+        return self
+
+
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class QuestionClarifyRequest(BaseModel):
+    messages: List[ChatTurn] = Field(..., description="当前对话，含用户与助手轮次")
+    material_text: Optional[str] = Field(
+        None,
+        description="用户在本页输入或上传解析得到的补充材料（供判断是否可开始生成）",
+    )
+
+
+class QuestionSpecPayload(BaseModel):
+    """大模型在 ready=true 时返回的命题参数（经服务端校验）。"""
+
+    subject: str
+    knowledge_points: str = Field(
+        ...,
+        description="考察的知识点或范围说明（将并入生成时的 source）",
+    )
+    types: List[Literal["mc", "tf", "sa", "essay"]]
+    counts_per_type: Dict[str, int]
+    difficulty: Literal["easy", "medium", "hard"]
+    wants_upload: bool = Field(
+        ...,
+        description="用户是否打算使用上传文件作为命题依据",
+    )
+
+
+class QuestionClarifyResponse(BaseModel):
+    ready: bool
+    assistant_message: str
+    spec: Optional[QuestionSpecPayload] = None
 
 
 class QuestionOption(BaseModel):
@@ -153,18 +211,246 @@ def _postprocess_questions(questions: List[GeneratedQuestion]) -> List[Generated
     return fixed
 
 
+_CLARIFY_SYSTEM = """你是「试题生成」助手，通过多轮对话向教师确认命题需求。你必须用中文交流。
+
+需要确认的 6 项信息（缺一不可才能开始生成）：
+1. 学科（subject）
+2. 知识点或考察范围（knowledge_points）：用户用文字描述要考什么；若打算完全依赖上传文件，可简要写「见上传材料」
+3. 题型（types）：从 mc(单选)、tf(判断)、sa(简答)、essay(论述) 中选至少一种
+4. 每种已选题型的数量（counts_per_type）：键为 mc/tf/sa/essay，值为正整数；未选的题型不要出现在字典里；总数 1–50
+5. 难度（difficulty）：easy / medium / hard
+6. 是否要上传文件作为命题依据（wants_upload）：布尔值。若用户打算上传，必须等页面上已有材料文本（系统会告诉你「当前补充材料是否非空」）；若材料仍为空，你应继续追问请对方上传或粘贴，此时 ready 必须为 false。
+
+【重要】多轮追问时，每一轮 assistant_message 里只能包含**一个**问题（一句问话），禁止在同一条回复里并列多个问号、禁止编号列表式连问（如「1.…2.…3.…」）。若多项未齐，只问**优先级最高**的那一项，下一轮再问下一项。
+
+未齐多项时，按下面顺序每次只问一条（缺什么就从前往后找第一条缺的来问）：
+- 先问学科 → 再问知识点 → 再问需要哪些题型 → 题型已定后再问每种各几题 → 再问难度 → 再问是否上传文件。
+- 若用户已表示要上传但补充材料仍为空：本轮只问与上传/粘贴相关的一句话，不要同时问其它项。
+
+规则：
+- 每次只输出一个 JSON 对象，不要 Markdown、不要代码围栏、不要其它说明。
+- 【格式硬性要求】整条回复中第一个非空白字符必须是左大括号 {，最后一个非空白字符必须是右大括号 }；不要在 JSON 前后增加任何寒暄、解释或「好的」等自然语言（自然语言只写在 JSON 字符串字段 assistant_message 的值里）。
+- 若任一项未明确，或用户想上传但补充材料仍为空：ready=false，assistant_message 字段内仅为**一个**简短、自然的中文问句（可加一句礼貌承接，但只能有一个核心问题）。
+- 若已全部明确，且（wants_upload 为 false，或补充材料非空）：ready=true，填写 spec，assistant_message 可一两句确认即将生成（不要生成题目内容）。
+- spec.knowledge_points 要完整写出用户确认的知识点描述（可与对话摘要合并）。
+
+JSON 形状（二选一）：
+{"ready": false, "assistant_message": "..."}
+或
+{"ready": true, "assistant_message": "...", "spec": {
+  "subject": "...",
+  "knowledge_points": "...",
+  "types": ["mc"],
+  "counts_per_type": {"mc": 5},
+  "difficulty": "medium",
+  "wants_upload": false
+}}
+"""
+
+
+def _material_nonempty(material_text: Optional[str]) -> bool:
+    return bool((material_text or "").strip())
+
+
+def _try_parse_clarify_json(raw: str) -> Optional[dict]:
+    if not raw:
+        return None
+    try:
+        return json.loads(raw.strip())
+    except json.JSONDecodeError:
+        extracted = _extract_first_json_object(raw)
+        if not extracted:
+            return None
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
+            return None
+
+
+def _recover_assistant_prose_when_not_json(llm_text: str) -> Optional[str]:
+    """
+    若模型未按约定输出 JSON、但整段是自然语言，可展示给用户以免误报「你没说清楚」。
+    一旦含有未解析成功的 {{ 则视为结构损坏，不展示原文以免混乱。
+    """
+    t = (llm_text or "").strip()
+    if len(t) < 6:
+        return None
+    if "{" in t:
+        return None
+    out = t.replace("```", "").strip()
+    if len(out) > 1800:
+        out = out[:1800] + "…"
+    return out or None
+
+
+def _build_spec_from_dict(spec_raw: dict) -> Optional[QuestionSpecPayload]:
+    try:
+        types = spec_raw.get("types") or []
+        counts = spec_raw.get("counts_per_type") or {}
+        if not isinstance(types, list) or not isinstance(counts, dict):
+            return None
+        types_norm: List[Any] = []
+        for t in types:
+            if t not in ALLOWED_Q_TYPES:
+                return None
+            types_norm.append(t)
+        if not types_norm:
+            return None
+        counts_norm: Dict[str, int] = {}
+        for k, v in counts.items():
+            if k not in ALLOWED_Q_TYPES:
+                return None
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                return None
+            if iv < 1:
+                return None
+            counts_norm[str(k)] = iv
+        for t in types_norm:
+            if t not in counts_norm:
+                return None
+        for k in counts_norm:
+            if k not in types_norm:
+                return None
+        total = sum(counts_norm.values())
+        if total > 50 or total < 1:
+            return None
+        diff = spec_raw.get("difficulty")
+        if diff not in ("easy", "medium", "hard"):
+            return None
+        subj = (spec_raw.get("subject") or "").strip()
+        if not subj:
+            return None
+        kp = (spec_raw.get("knowledge_points") or "").strip()
+        if not kp:
+            return None
+        wu_raw = spec_raw.get("wants_upload")
+        if isinstance(wu_raw, bool):
+            wu = wu_raw
+        elif isinstance(wu_raw, str):
+            s = wu_raw.strip().lower()
+            wu = s in ("true", "1", "yes", "y", "是", "要", "需要", "上传", "好")
+        elif isinstance(wu_raw, (int, float)):
+            wu = bool(int(wu_raw))
+        else:
+            return None
+        return QuestionSpecPayload(
+            subject=subj,
+            knowledge_points=kp,
+            types=cast(List[Literal["mc", "tf", "sa", "essay"]], types_norm),
+            counts_per_type=counts_norm,
+            difficulty=cast(Literal["easy", "medium", "hard"], diff),
+            wants_upload=wu,
+        )
+    except Exception:
+        return None
+
+
+@router.post("/clarify", response_model=QuestionClarifyResponse)
+async def clarify_question_requirements(body: QuestionClarifyRequest) -> Any:
+    """
+    多轮对话收集命题所需的 6 项信息；未齐全时返回追问，齐全时返回 spec 供前端调用正式生成接口。
+    """
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages 不能为空")
+
+    if not (settings.HTML_LLM_API_KEY or "").strip():
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 HTML_LLM_API_KEY，无法连接命题助手。请在 backend/.env 中填写后重启服务。",
+        )
+
+    mat_flag = "是" if _material_nonempty(body.material_text) else "否"
+    sys_with_ctx = (
+        _CLARIFY_SYSTEM
+        + f"\n\n【系统状态】当前页面「补充材料」（用户粘贴或上传解析文本）是否非空：{mat_flag}。"
+    )
+
+    api_messages: List[Dict[str, str]] = [{"role": "system", "content": sys_with_ctx}]
+    for turn in body.messages:
+        api_messages.append({"role": turn.role, "content": turn.content})
+
+    llm_text = await call_llm_chat(api_messages, max_tokens=2000, json_object=True)
+    if not llm_text:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "大模型接口未返回有效正文。请在后端控制台查看以「LLM call_llm_chat」开头的日志；"
+                "并检查 HTML_LLM_BASE_URL、HTML_LLM_MODEL、密钥与余额/限流。"
+            ),
+        )
+
+    data = _try_parse_clarify_json(llm_text)
+    if not data:
+        prose = _recover_assistant_prose_when_not_json(llm_text)
+        if prose:
+            return QuestionClarifyResponse(ready=False, assistant_message=prose, spec=None)
+        print(
+            "question-generate/clarify: JSON parse failed, raw (truncated):",
+            llm_text[:900],
+        )
+        return QuestionClarifyResponse(
+            ready=False,
+            assistant_message=(
+                "助手返回格式异常（应为 JSON），不是您输入的问题；请再点一次「发送」重试。"
+                "若多次失败，请检查 HTML_LLM 模型是否支持严格 JSON 输出。"
+            ),
+            spec=None,
+        )
+
+    assistant_message = (data.get("assistant_message") or "").strip() or "请补充命题需求。"
+    ready = bool(data.get("ready"))
+
+    if not ready:
+        return QuestionClarifyResponse(
+            ready=False, assistant_message=assistant_message, spec=None
+        )
+
+    spec_raw = data.get("spec")
+    if not isinstance(spec_raw, dict):
+        return QuestionClarifyResponse(
+            ready=False,
+            assistant_message="还缺少完整的命题参数，请按学科、知识点、题型与每种题量、难度、是否上传文件说明一下。",
+            spec=None,
+        )
+
+    spec = _build_spec_from_dict(spec_raw)
+    if not spec:
+        return QuestionClarifyResponse(
+            ready=False,
+            assistant_message="部分参数不合法或未对齐，请说明各题型（单选/判断/简答/论述）各需要几道题，总数不超过 50。",
+            spec=None,
+        )
+
+    if spec.wants_upload and not _material_nonempty(body.material_text):
+        return QuestionClarifyResponse(
+            ready=False,
+            assistant_message="您希望依据上传文件命题，请先点击上传或把材料粘贴到补充材料框中，再发送一条消息（例如「已粘贴」）。",
+            spec=None,
+        )
+
+    return QuestionClarifyResponse(
+        ready=True, assistant_message=assistant_message, spec=spec
+    )
+
+
 @router.post("", response_model=QuestionGenerateResponse)
 async def generate_questions(payload: QuestionGenerateRequest) -> Any:
     """
     根据学科、题目类型、难度、数量和可选来源材料，调用 DeepSeek（通过 HTML_LLM_* 配置）
     生成试题列表。
     """
-    # 计算各题型应生成的题目数：尽量平均分配，若无法整除则从前几种题型开始每个多 1 题
-    type_counts: Dict[str, int] = {}
-    base = payload.count // len(payload.types)
-    remainder = payload.count % len(payload.types)
-    for idx, t in enumerate(payload.types):
-        type_counts[t] = base + (1 if idx < remainder else 0)
+    # 各题型数量：优先使用 type_counts；否则在 types 间尽量平均分配
+    type_counts: Dict[str, int]
+    if payload.type_counts:
+        type_counts = {k: int(v) for k, v in payload.type_counts.items()}
+    else:
+        type_counts = {}
+        base = payload.count // len(payload.types)
+        remainder = payload.count % len(payload.types)
+        for idx, t in enumerate(payload.types):
+            type_counts[t] = base + (1 if idx < remainder else 0)
 
     # 构造系统提示，定义输出格式
     system_prompt = (
