@@ -1,8 +1,106 @@
 """大模型对话服务。支持任意 OpenAI 兼容的 Chat API（OpenAI / 智谱 / 通义 / DeepSeek 等）。"""
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List, Dict, Any
 import json
 import httpx
 from app.core.config import settings
+
+
+def _choice_text_content(data: Dict[str, Any]) -> str:
+    """从 chat/completions 的 JSON 中取出助手文本；兼容 content 为字符串或多段文本数组。"""
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    msg = (choices[0] or {}).get("message") or {}
+    c = msg.get("content")
+    if c is None:
+        return ""
+    if isinstance(c, str):
+        return c.strip()
+    if isinstance(c, list):
+        parts: List[str] = []
+        for p in c:
+            if isinstance(p, dict):
+                if p.get("type") == "text" and p.get("text"):
+                    parts.append(str(p["text"]))
+                elif "text" in p:
+                    parts.append(str(p.get("text") or ""))
+            elif isinstance(p, str):
+                parts.append(p)
+        return "".join(parts).strip()
+    return str(c).strip()
+
+
+async def call_llm_chat(
+    messages: List[Dict[str, Any]],
+    max_tokens: int = 2000,
+    *,
+    json_object: bool = False,
+) -> str:
+    """
+    多轮对话调用大模型；messages 为 OpenAI 格式（须含 system 与若干 user/assistant）。
+    json_object=True 时优先走 JSON 模式；若接口拒识、或 200 但 content 为空，会自动改走普通请求再试。
+    失败返回空字符串。
+    """
+    if not settings.HTML_LLM_API_KEY:
+        return ""
+    base = (settings.HTML_LLM_BASE_URL or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {settings.HTML_LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    plain_payload: Dict[str, Any] = {
+        "model": settings.HTML_LLM_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }
+    attempt_payloads: List[Dict[str, Any]] = [plain_payload]
+    if json_object:
+        attempt_payloads.insert(
+            0,
+            {**plain_payload, "response_format": {"type": "json_object"}},
+        )
+
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        for pi, payload in enumerate(attempt_payloads):
+            try:
+                r = await client.post(url, json=payload, headers=headers)
+                if (
+                    r.status_code in (400, 422)
+                    and payload.get("response_format") is not None
+                ):
+                    print(
+                        "LLM call_llm_chat: json_object rejected:",
+                        r.status_code,
+                        (r.text or "")[:500],
+                    )
+                    continue
+                r.raise_for_status()
+                data = r.json()
+            except httpx.HTTPStatusError as e:
+                print(
+                    "LLM call_llm_chat HTTP error:",
+                    e.response.status_code,
+                    e.response.text[:800] if e.response is not None else "",
+                )
+                if pi < len(attempt_payloads) - 1:
+                    continue
+                return ""
+            except Exception as e:
+                print("LLM call_llm_chat general error:", repr(e))
+                return ""
+
+            text = _choice_text_content(data)
+            if text:
+                return text
+            print(
+                "LLM call_llm_chat: 200 OK but empty content; attempt",
+                pi,
+                "body snippet:",
+                json.dumps(data, ensure_ascii=False)[:900],
+            )
+            # 例如 JSON 模式下部分厂商仍返回空串，继续尝试下一套 payload（通常是不带 response_format）
+    return ""
 
 
 async def _call_llm(system: str, user: str, max_tokens: int = 1500) -> str:

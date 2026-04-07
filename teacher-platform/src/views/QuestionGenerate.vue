@@ -1,25 +1,29 @@
 <script setup>
-import { ref, computed, nextTick, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { apiRequest, getToken } from '../api/http.js'
+import assistantAvatarUrl from '../assets/zhushou.jpg'
 
+/** 用于保存试卷、导出 PDF 文件名等（在成功生成后由接口或 spec 写入） */
 const form = ref({
-  subject: '计算机科学',
-  difficulty: 'medium', // easy | medium | hard
-  types: {
-    mc: true,
-    tf: false,
-    sa: false,
-    essay: true
-  },
-  count: 10,
-  source: ''
+  subject: '',
+  difficulty: 'medium' // easy | medium | hard
 })
+
+const CLARIFY_INTRO =
+  '你好！我们可以一步步确认命题需求：我会每次只问一个问题，你回答后我再问下一项，直到信息齐全后自动生成试题。也可以先随便说说你的想法，我们从缺的那一项开始问。'
+
+const chatMessages = ref([{ role: 'assistant', content: CLARIFY_INTRO }])
+const chatInput = ref('')
+const clarifyLoading = ref(false)
 
 const hasGenerated = ref(false)
 const uploading = ref(false)
 const generating = ref(false)
+/** 用户粘贴的补充材料（与上传解析结果一并参与追问判断与正式生成） */
+const sourceDraft = ref('')
 const uploadPreview = ref('')
 const uploadedFilename = ref('')
+const chatScrollRef = ref(null)
 const questions = ref([])
 const errorMsg = ref('')
 const previewRef = ref(null)
@@ -140,6 +144,27 @@ onMounted(() => {
   fetchSavedPapersList()
 })
 
+async function scrollChatToBottom() {
+  await nextTick()
+  const el = chatScrollRef.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+watch(
+  chatMessages,
+  () => {
+    scrollChatToBottom()
+  },
+  { deep: true }
+)
+
+const materialText = computed(() => {
+  if (sourceDraft.value && uploadPreview.value) {
+    return `${sourceDraft.value}\n\n【以下为上传文档解析内容】\n${uploadPreview.value}`
+  }
+  return sourceDraft.value || uploadPreview.value || ''
+})
+
 function formatSavedTime(iso) {
   if (!iso) return ''
   const date = new Date(iso)
@@ -160,6 +185,13 @@ function startNewPaper() {
   questions.value = []
   errorMsg.value = ''
   hideGenerateCard.value = false
+  chatMessages.value = [{ role: 'assistant', content: CLARIFY_INTRO }]
+  chatInput.value = ''
+  sourceDraft.value = ''
+  uploadPreview.value = ''
+  uploadedFilename.value = ''
+  form.value.subject = ''
+  form.value.difficulty = 'medium'
 }
 
 async function loadSavedPaper(p) {
@@ -269,30 +301,6 @@ function isTfTrue(ans) {
   return s === 'true' || s === 't' || s === '1' || s.includes('正确')
 }
 
-function toggleDifficulty(level) {
-  form.value.difficulty = level
-}
-
-function toggleType(key) {
-  form.value.types[key] = !form.value.types[key]
-}
-
-const difficultyLabel = computed(() => {
-  const map = { easy: '简单', medium: '中等', hard: '困难' }
-  return map[form.value.difficulty]
-})
-
-const hasSource = computed(() => {
-  return !!form.value.source || !!uploadPreview.value
-})
-
-const finalSource = computed(() => {
-  if (form.value.source && uploadPreview.value) {
-    return `${form.value.source}\n\n【以下为上传文档解析内容】\n${uploadPreview.value}`
-  }
-  return form.value.source || uploadPreview.value || ''
-})
-
 function selectFile() {
   const input = document.createElement('input')
   input.type = 'file'
@@ -333,7 +341,7 @@ async function handleUpload(file) {
   }
 }
 
-async function handleGenerate() {
+async function runGenerateFromSpec(spec) {
   errorMsg.value = ''
   hideGenerateCard.value = false
   if (hasUnsavedQuestionEdits.value) {
@@ -342,22 +350,17 @@ async function handleGenerate() {
   clearQuestionEditDrafts()
   generating.value = true
   try {
-    const selectedTypes = Object.entries(form.value.types)
-      .filter(([, v]) => v)
-      .map(([k]) => k)
-
-    if (!selectedTypes.length) {
-      errorMsg.value = '请至少选择一种题目类型'
-      generating.value = false
-      return
-    }
+    const extra =
+      materialText.value.trim() !== ''
+        ? `\n\n【补充材料（用户粘贴或上传解析）】\n${materialText.value}`
+        : ''
+    const sourceBody = [spec.knowledge_points, extra].filter(Boolean).join('\n')
 
     const payload = {
-      subject: form.value.subject || '未指定学科',
-      difficulty: form.value.difficulty,
-      types: selectedTypes,
-      count: form.value.count || 1,
-      source: finalSource.value || null
+      subject: spec.subject || '未指定学科',
+      difficulty: spec.difficulty,
+      type_counts: spec.counts_per_type,
+      source: sourceBody.trim() || null
     }
 
     const resp = await fetch('/api/v1/question-generate', {
@@ -389,6 +392,8 @@ async function handleGenerate() {
       questions.value = []
     }
 
+    form.value.subject = data.subject || spec.subject
+    form.value.difficulty = data.difficulty || spec.difficulty
     hasGenerated.value = true
   } catch (e) {
     console.error(e)
@@ -398,24 +403,116 @@ async function handleGenerate() {
   }
 }
 
+async function sendClarifyMessage() {
+  const text = (chatInput.value || '').trim()
+  if (!text || clarifyLoading.value || generating.value) return
+
+  errorMsg.value = ''
+  hideGenerateCard.value = false
+  chatInput.value = ''
+  chatMessages.value = [...chatMessages.value, { role: 'user', content: text }]
+  clarifyLoading.value = true
+
+  try {
+    const resp = await fetch('/api/v1/question-generate/clarify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chatMessages.value.map((m) => ({
+          role: m.role,
+          content: m.content
+        })),
+        material_text: materialText.value || null
+      })
+    })
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}))
+      throw new Error(data.detail || '对话服务暂时不可用')
+    }
+
+    const data = await resp.json()
+    const reply = (data.assistant_message || '').trim() || '请继续说明您的命题需求。'
+    chatMessages.value = [...chatMessages.value, { role: 'assistant', content: reply }]
+
+    if (data.ready && data.spec) {
+      await runGenerateFromSpec(data.spec)
+      if (!errorMsg.value) {
+        chatMessages.value = [
+          ...chatMessages.value,
+          {
+            role: 'assistant',
+            content:
+              '已根据确认的参数生成试题，请在右侧预览；如需重新命题可在下方输入新要求。'
+          }
+        ]
+      } else {
+        const err = errorMsg.value
+        chatMessages.value = [
+          ...chatMessages.value,
+          { role: 'assistant', content: `试题生成未成功：${err}。可修改说明后重试。` }
+        ]
+      }
+    }
+  } catch (e) {
+    console.error(e)
+    const msg = e?.message || String(e) || '发送失败，请稍后重试'
+    errorMsg.value = msg
+    chatMessages.value = [
+      ...chatMessages.value,
+      {
+        role: 'assistant',
+        content: `出错了：${msg}。`
+      }
+    ]
+  } finally {
+    clarifyLoading.value = false
+  }
+}
+
+function onChatKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    sendClarifyMessage()
+  }
+}
+
+/**
+ * html2canvas 对 flex 子项 width:0 的排版与浏览器不一致，导出前需固定宽度。
+ * A4 纵向可印宽度 = 210mm − 左右边距；若此处 px 略大于 190mm@96dpi，整图缩进版心时右侧会被裁掉，
+ * 表现为「左边框在、右边框没了」。
+ * 190mm @ 96dpi ≈ 718px，留 2px 余量避免舍入误差。
+ */
+const PDF_EXPORT_WIDTH_PX = Math.max(320, Math.floor((190 * 96) / 25.4) - 2)
+
 async function handleExportPdf() {
   if (!hasGenerated.value || !previewRef.value || exporting.value) return
   if (hasUnsavedQuestionEdits.value) {
     errorMsg.value = '请先完成题目编辑处的「保存」，再导出 PDF'
     return
   }
+  const element = previewRef.value
+  const prev = {
+    width: element.style.width,
+    minWidth: element.style.minWidth,
+    maxWidth: element.style.maxWidth,
+    flex: element.style.flex
+  }
   try {
     exporting.value = true
+    element.style.width = `${PDF_EXPORT_WIDTH_PX}px`
+    element.style.minWidth = `${PDF_EXPORT_WIDTH_PX}px`
+    element.style.maxWidth = `${PDF_EXPORT_WIDTH_PX}px`
+    element.style.flex = 'none'
     await nextTick()
 
     const { default: html2pdf } = await import('html2pdf.js')
-    const element = previewRef.value
 
     const opt = {
       margin: [10, 10, 10, 10],
       filename: `${form.value.subject || '试题'}.pdf`,
       image: { type: 'jpeg', quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     }
 
@@ -424,6 +521,10 @@ async function handleExportPdf() {
     console.error(e)
     errorMsg.value = '导出 PDF 失败，请稍后重试'
   } finally {
+    element.style.width = prev.width
+    element.style.minWidth = prev.minWidth
+    element.style.maxWidth = prev.maxWidth
+    element.style.flex = prev.flex
     exporting.value = false
   }
 }
@@ -504,110 +605,137 @@ async function handleExportPdf() {
       }"
     >
     <section v-show="!hideGenerateCard" class="config-card">
-      <header class="header">
-        <h1 class="title">生成新试题</h1>
-        <p class="subtitle">配置试题参数，AI 将根据你的要求自动生成题目。</p>
-      </header>
-
-      <div class="field">
-        <label class="label">学科</label>
-        <div class="subject-input">
-          <span class="subject-icon">📘</span>
-          <input v-model="form.subject" type="text" class="subject-text" />
-          <span class="subject-chevron">▾</span>
+      <div class="chat-dialog" role="region" aria-label="命题需求对话">
+        <div class="chat-dialog__head">
+          <img
+            class="chat-dialog__head-avatar"
+            :src="assistantAvatarUrl"
+            width="40"
+            height="40"
+            alt="命题助手"
+          />
+          <div class="chat-dialog__head-text">
+            <div class="chat-dialog__head-title">命题助手</div>
+            <div class="chat-dialog__head-sub">通过对话确认学科、知识点、题型与数量、难度、是否上传材料</div>
+          </div>
         </div>
-      </div>
 
-      <div class="field">
-        <label class="label">题目类型</label>
-        <div class="type-grid">
-          <button
-            type="button"
-            class="type-btn"
-            :class="{ active: form.types.mc }"
-            @click="toggleType('mc')"
+        <div ref="chatScrollRef" class="chat-dialog__body">
+          <div
+            v-for="(m, i) in chatMessages"
+            :key="i"
+            class="dialog-msg"
+            :class="m.role === 'user' ? 'dialog-msg--user' : 'dialog-msg--assistant'"
           >
-            <span class="box" />
-            单选题
-          </button>
-          <button
-            type="button"
-            class="type-btn"
-            :class="{ active: form.types.tf }"
-            @click="toggleType('tf')"
-          >
-            <span class="box" />
-            判断题
-          </button>
-          <button
-            type="button"
-            class="type-btn"
-            :class="{ active: form.types.sa }"
-            @click="toggleType('sa')"
-          >
-            <span class="box" />
-            简答题
-          </button>
-          <button
-            type="button"
-            class="type-btn"
-            :class="{ active: form.types.essay }"
-            @click="toggleType('essay')"
-          >
-            <span class="box" />
-            论述题
-          </button>
-        </div>
-      </div>
-
-      <div class="field">
-        <div class="label-row">
-          <div>
-            <label class="label">难度等级：{{ difficultyLabel }}</label>
-            <div class="pill-group">
-              <button
-                type="button"
-                class="pill-btn"
-                :class="{ active: form.difficulty === 'easy' }"
-                @click="toggleDifficulty('easy')"
+            <img
+              v-if="m.role === 'assistant'"
+              class="dialog-msg__assistant-avatar"
+              :src="assistantAvatarUrl"
+              width="32"
+              height="32"
+              alt=""
+            />
+            <div class="dialog-msg__main">
+              <span class="dialog-msg__name">{{
+                m.role === 'assistant' ? '命题助手' : '我'
+              }}</span>
+              <div class="dialog-msg__bubble">{{ m.content }}</div>
+            </div>
+            <div
+              v-if="m.role === 'user'"
+              class="dialog-msg__avatar dialog-msg__avatar--user"
+              aria-hidden="true"
+            >
+              <svg
+                class="dialog-msg__user-icon"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
               >
-                简单
-              </button>
-              <button
-                type="button"
-                class="pill-btn"
-                :class="{ active: form.difficulty === 'medium' }"
-                @click="toggleDifficulty('medium')"
-              >
-                中等
-              </button>
-              <button
-                type="button"
-                class="pill-btn"
-                :class="{ active: form.difficulty === 'hard' }"
-                @click="toggleDifficulty('hard')"
-              >
-                困难
-              </button>
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
             </div>
           </div>
-          <div class="count-wrap">
-            <label class="label small-label">题目数量</label>
-            <input
-              v-model.number="form.count"
-              type="number"
-              min="1"
-              max="100"
-              class="number-input"
-              placeholder="例如：20"
+
+          <div
+            v-if="clarifyLoading && !generating"
+            class="dialog-msg dialog-msg--assistant dialog-msg--typing"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <img
+              class="dialog-msg__assistant-avatar"
+              :src="assistantAvatarUrl"
+              width="32"
+              height="32"
+              alt=""
             />
+            <div class="dialog-msg__main">
+              <span class="dialog-msg__name">命题助手</span>
+              <div class="dialog-msg__bubble dialog-msg__bubble--typing">
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+              </div>
+            </div>
           </div>
+
+          <div
+            v-if="generating"
+            class="dialog-msg dialog-msg--assistant dialog-msg--typing"
+            aria-live="polite"
+            aria-busy="true"
+          >
+            <img
+              class="dialog-msg__assistant-avatar"
+              :src="assistantAvatarUrl"
+              width="32"
+              height="32"
+              alt=""
+            />
+            <div class="dialog-msg__main">
+              <span class="dialog-msg__name">命题助手</span>
+              <div class="dialog-msg__bubble dialog-msg__bubble--typing dialog-msg__bubble--gen">
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+                <span class="typing-dot" />
+                <span class="typing-label">正在生成试题…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="chat-dialog__footer">
+          <textarea
+            v-model="chatInput"
+            class="chat-dialog__input"
+            rows="2"
+            placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"
+            :disabled="clarifyLoading || generating"
+            @keydown="onChatKeydown"
+          />
+          <button
+            type="button"
+            class="chat-dialog__send"
+            :disabled="clarifyLoading || generating || !chatInput.trim()"
+            :title="generating ? '生成中' : clarifyLoading ? '思考中' : '发送'"
+            @click="sendClarifyMessage"
+          >
+            <span class="chat-dialog__send-label">{{
+              generating ? '生成中' : clarifyLoading ? '…' : '发送'
+            }}</span>
+          </button>
         </div>
       </div>
 
       <div class="field field--source">
         <div class="label-row">
-          <label class="label">来源材料 / 知识点</label>
+          <label class="label">补充材料（可选）</label>
           <button
             type="button"
             class="link-btn"
@@ -618,10 +746,10 @@ async function handleExportPdf() {
           </button>
         </div>
         <textarea
-          v-model="form.source"
+          v-model="sourceDraft"
           class="source-input"
-          placeholder="粘贴教学材料、知识点列表，或输入希望考察的内容..."
-          rows="5"
+          placeholder="粘贴教学材料、知识点列表；若打算依据上传文件命题，请先上传或在此粘贴内容。"
+          rows="2"
         />
         <p v-if="uploadedFilename || uploadPreview" class="upload-hint">
           已上传：{{ uploadedFilename }}；
@@ -632,15 +760,6 @@ async function handleExportPdf() {
       <p v-if="errorMsg" class="error-text">
         {{ errorMsg }}
       </p>
-
-      <button
-        type="button"
-        class="primary-btn"
-        :disabled="generating"
-        @click="handleGenerate"
-      >
-        {{ generating ? '生成中...' : '生成试题' }}
-      </button>
     </section>
 
     <!-- 右侧：生成后预览 -->
@@ -1168,10 +1287,12 @@ async function handleExportPdf() {
 }
 
 .field--source {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  margin-top: auto;
+  padding-top: 1.35em;
   margin-bottom: 0;
 }
 
@@ -1198,6 +1319,289 @@ async function handleExportPdf() {
   font-size: 93.75%;
   color: #64748b;
   line-height: 1.5;
+}
+
+.header--compact {
+  margin-bottom: 0.85em;
+}
+
+.header--compact .title {
+  margin-bottom: 0.35em;
+}
+
+/* 独立对话窗口 */
+.chat-dialog {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: min(62vh, 30em);
+  max-height: min(72vh, 42em);
+  margin-bottom: 0.85em;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+.chat-dialog__head {
+  display: flex;
+  align-items: center;
+  gap: 0.65em;
+  padding: 0.65em 0.85em;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #e8ecf1;
+  flex-shrink: 0;
+}
+
+.chat-dialog__head-avatar {
+  width: 2.5em;
+  height: 2.5em;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.chat-dialog__head-text {
+  min-width: 0;
+}
+
+.chat-dialog__head-title {
+  font-weight: 700;
+  font-size: 100%;
+  color: #0f172a;
+  line-height: 1.3;
+}
+
+.chat-dialog__head-sub {
+  font-size: 75%;
+  color: #64748b;
+  line-height: 1.4;
+  margin-top: 0.15em;
+}
+
+.chat-dialog__body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.75em 0.85em 0.65em;
+  background: #f1f5f9;
+  background-image: linear-gradient(180deg, #eef2f7 0%, #f8fafc 48%, #f1f5f9 100%);
+}
+
+.dialog-msg {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5em;
+  margin-bottom: 0.75em;
+}
+
+.dialog-msg--assistant {
+  justify-content: flex-start;
+}
+
+.dialog-msg--user {
+  justify-content: flex-end;
+}
+
+/* 助手头像（图片）；用户侧仍用 .dialog-msg__avatar 文字圆底 */
+.dialog-msg__assistant-avatar {
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  align-self: flex-end;
+}
+
+.dialog-msg__avatar {
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+.dialog-msg__avatar--user {
+  background: linear-gradient(160deg, #ffffff 0%, #f0f7ff 45%, #e0edff 100%);
+  color: #1d4ed8;
+  border: 2px solid rgba(37, 99, 235, 0.28);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 4px 12px rgba(37, 99, 235, 0.14);
+}
+
+.dialog-msg__user-icon {
+  width: 58%;
+  height: 58%;
+  flex-shrink: 0;
+  opacity: 0.92;
+}
+
+.dialog-msg__main {
+  display: flex;
+  flex-direction: column;
+  max-width: min(92%, 28em);
+  min-width: 0;
+}
+
+.dialog-msg--user .dialog-msg__main {
+  align-items: flex-end;
+}
+
+.dialog-msg__name {
+  font-size: 72%;
+  color: #94a3b8;
+  margin-bottom: 0.2em;
+  padding-inline: 0.25em;
+}
+
+.dialog-msg__bubble {
+  padding: 0.55em 0.75em;
+  border-radius: 14px;
+  font-size: 93.75%;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dialog-msg--assistant .dialog-msg__bubble {
+  background: #fff;
+  color: #1e293b;
+  border: 1px solid #e2e8f0;
+  border-bottom-left-radius: 5px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.dialog-msg--user .dialog-msg__bubble {
+  background: #2563eb;
+  color: #fff;
+  border-bottom-right-radius: 5px;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
+}
+
+.dialog-msg__bubble--typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.65em 0.85em;
+  min-height: 2.25em;
+}
+
+.dialog-msg__bubble--gen {
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.typing-dot {
+  width: 0.38em;
+  height: 0.38em;
+  border-radius: 50%;
+  background: #94a3b8;
+  animation: dialog-typing 1.1s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.typing-label {
+  font-size: 81.25%;
+  color: #64748b;
+  margin-left: 0.15em;
+}
+
+@keyframes dialog-typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+.chat-dialog__footer {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5em;
+  padding: 0.65em 0.75em;
+  background: #fff;
+  border-top: 1px solid #e8ecf1;
+  flex-shrink: 0;
+}
+
+.chat-dialog__input {
+  flex: 1 1 0;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0.5em 0.75em;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  font-size: 93.75%;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 2.85em;
+  max-height: 9em;
+  outline: none;
+  line-height: 1.45;
+}
+
+.chat-dialog__input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.chat-dialog__input:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.chat-dialog__send {
+  flex-shrink: 0;
+  min-width: 4.5em;
+  padding: 0.55em 0.85em;
+  border: none;
+  border-radius: 12px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 93.75%;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.chat-dialog__send:hover:not(:disabled) {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.chat-dialog__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.chat-dialog__send-label {
+  display: block;
+  line-height: 1.2;
 }
 
 .field {
@@ -1345,8 +1749,8 @@ async function handleExportPdf() {
 
 .source-input {
   width: 100%;
-  flex: 1 1 0;
-  min-height: 8em;
+  flex: 0 1 auto;
+  min-height: 4.25em;
   margin-top: 0.5em;
   padding-block: 0.65em;
   padding-inline: 3%;
@@ -1440,22 +1844,30 @@ async function handleExportPdf() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2%;
+  gap: 0.65em 2%;
   margin-bottom: 3%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .preview-header-actions {
-  display: flex;
+  display: inline-flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 2%;
+  gap: 0.5em;
   flex-shrink: 0;
-  flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.preview-header-actions .outline-btn {
+  white-space: nowrap;
 }
 
 .preview-title {
   margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 118.75%;
   font-weight: 600;
   color: #0f172a;
@@ -1518,28 +1930,36 @@ async function handleExportPdf() {
 
 .question-block-toolbar .q-tag {
   margin-bottom: 0;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .question-toolbar-actions {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 2%;
+  gap: 0.5em;
 }
 
 .q-edit-btn {
-  border-radius: 999px;
+  border-radius: 10px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  font-size: 81.25%;
+  font-size: 87.5%;
+  font-weight: 600;
   color: #475569;
-  padding: 0.35em 0.75em;
+  padding: 0.45em 0.95em;
   cursor: pointer;
   transition: all 0.15s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.35em;
+  white-space: nowrap;
+  flex-shrink: 0;
+  line-height: 1.25;
+  writing-mode: horizontal-tb;
 }
 
 .q-edit-btn:hover {
@@ -1551,7 +1971,8 @@ async function handleExportPdf() {
 .q-edit-btn-edit {
   font-size: 87.5%;
   font-weight: 700;
-  padding: 0.5em 1em;
+  padding: 0.45em 0.95em;
+  border-radius: 10px;
   color: #1d4ed8;
   background: linear-gradient(180deg, #f0f7ff 0%, #e0edff 100%);
   border: 2px solid #93c5fd;
@@ -1920,6 +2341,11 @@ async function handleExportPdf() {
     align-items: stretch;
     padding-left: max(12px, env(safe-area-inset-left, 0px));
     padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  .chat-dialog {
+    min-height: 20em;
+    max-height: min(56vh, 34em);
   }
 
   .page-wrap.with-preview .config-card {
