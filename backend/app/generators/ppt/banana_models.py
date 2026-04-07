@@ -31,6 +31,9 @@ class PPTProject(Base):
     # 原始输入内容 (如用户输入的教学需求描述)
     outline_text: Mapped[str] = mapped_column(Text, nullable=True)
 
+    # 聚合描述文本 (翻新后各页描述拼接)
+    description_text: Mapped[str] = mapped_column(Text, nullable=True)
+
     # 项目配置 (JSONB)
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
@@ -112,6 +115,12 @@ class PPTPage(Base):
 
     # 页面素材引用
     material_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False, default=list)
+
+    # 翻新解析状态 (仅 renovation 项目使用)
+    renovation_status: Mapped[str] = mapped_column(String(20), nullable=True)
+    """pending | completed | failed — 仅 creation_type='renovation' 的项目使用"""
+    renovation_error: Mapped[str] = mapped_column(Text, nullable=True)
+    """翻新解析失败时的错误信息"""
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

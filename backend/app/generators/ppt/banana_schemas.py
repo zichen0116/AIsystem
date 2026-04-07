@@ -119,6 +119,7 @@ class PPTProjectResponse(BaseModel):
     description: Optional[str]
     creation_type: str
     outline_text: Optional[str]
+    description_text: Optional[str] = None
     settings: dict
     theme: Optional[str]
     template_style: Optional[str]
@@ -199,6 +200,8 @@ class PPTPageResponse(BaseModel):
     is_description_generating: bool
     is_image_generating: bool
     material_ids: list[int]
+    renovation_status: Optional[str] = None
+    renovation_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
