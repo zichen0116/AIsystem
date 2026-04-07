@@ -6,7 +6,7 @@
 
 **Architecture:** New route `POST /projects/file-generation` accepts multipart form data, creates project + reference file records, then dispatches a single Celery task `file_generation_task` that sequentially: downloads & parses the file, combines with user text, calls `banana_service.parse_outline_text()` for AI outline generation, and creates PPTPage records. All within existing FastAPI + SQLAlchemy + Celery architecture.
 
-**Tech Stack:** Python 3.11, FastAPI, SQLAlchemy (async), Celery, Alembic, ParserFactory, BananaAIService
+**Tech Stack:** Python 3.12(conda base), FastAPI, SQLAlchemy (async), Celery, Alembic, ParserFactory, BananaAIService
 
 ---
 
