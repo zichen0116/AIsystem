@@ -5,25 +5,13 @@ import linkFileImg from '../assets/链接文件.png'
 import voiceImg from '../assets/语音.png'
 import sendImg from '../assets/发送.png'
 import animationJson from '../assets/animation (1).json'
-import todaygamesJson from '../assets/todaygames.json'
 import { useVoiceInput } from '../composables/useVoiceInput'
 
 const animationInput = ref('')
 const { isRecording, isSupported, toggleRecording } = useVoiceInput(animationInput)
 
-const activeMode = ref('animation')
-const tabs = [
-  { id: 'animation', name: '动画' },
-  { id: 'game', name: '小游戏' }
-]
-const currentLottieData = computed(() =>
-  activeMode.value === 'animation' ? animationJson : todaygamesJson
-)
-
-const lottieSize = computed(() => {
-  // 放大动画展示区域尺寸（小游戏模式稍大一些）
-  return activeMode.value === 'game' ? 345 : 230
-})
+const currentLottieData = animationJson
+const lottieSize = 230
 
 // 发送后布局
 const hasSentMessages = ref(false)
@@ -102,7 +90,7 @@ function extractHtml(text) {
   return null
 }
 
-function buildPrompt(mode, userText, forceHtml, autoPlay) {
+function buildPrompt(userText, forceHtml, autoPlay) {
   // 两个开关都关时，按普通对话处理
   if (!forceHtml && !autoPlay) {
     return userText
@@ -116,10 +104,7 @@ function buildPrompt(mode, userText, forceHtml, autoPlay) {
     )
   }
 
-  const target =
-    mode === 'game'
-      ? '请生成一个教学互动小游戏（HTML5），包含玩法说明、得分/反馈机制，单文件可运行。'
-      : '请生成一个教学互动式动画/演示（HTML5），包含交互控件（按钮/滑块等），单文件可运行。'
+  const target = '请生成一个教学互动式动画/演示（HTML5），包含交互控件（按钮/滑块等），单文件可运行。'
   sections.push(target)
 
   if (autoPlay) {
@@ -177,7 +162,6 @@ const props = defineProps({
 })
 
 function resetState() {
-  activeMode.value = 'animation'
   animationInput.value = ''
   hasSentMessages.value = false
   messages.value = []
@@ -202,7 +186,7 @@ async function handleSend() {
   // 动态模式基于 HTML 代码模式：开启动态时也强制返回 HTML
   const wantHtml = htmlMode.value || htmlDynamicMode.value
   const wantAutoPlay = htmlDynamicMode.value
-  const prompt = buildPrompt(activeMode.value, text, wantHtml, wantAutoPlay)
+  const prompt = buildPrompt(text, wantHtml, wantAutoPlay)
   const assistantIndex = messages.value.length
   messages.value.push({
     role: 'assistant',
@@ -402,57 +386,11 @@ watch(
     <div v-if="!hasSentMessages" class="animation-content">
       <div class="animation-top-slot">
         <div class="animation-lottie" :style="{ width: `${lottieSize}px`, height: `${lottieSize}px` }">
-          <LottiePlayer :key="activeMode" :animation-data="currentLottieData" />
+          <LottiePlayer :animation-data="currentLottieData" />
         </div>
       </div>
       <div class="animation-header">
-        <p>{{ activeMode === 'animation' ? '在此创建互动式动画，描述您的需求即可快速生成' : '在此创建教育小游戏，描述您的需求即可快速生成' }}</p>
-      </div>
-      <div class="animation-tabs-wrap">
-        <div class="animation-tabs">
-          <button
-            v-for="tab in tabs"
-            :key="tab.id"
-            type="button"
-            class="animation-tab"
-            :class="{ active: activeMode === tab.id }"
-            @click="activeMode = tab.id"
-          >
-            <span class="animation-tab-icon" aria-hidden="true">
-              <!-- 动画：场记板图标 -->
-              <svg
-                v-if="tab.id === 'animation'"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="7" width="18" height="13" rx="2" />
-                <path d="M3 11h18" />
-                <path d="M5 7l2.5-4L11 7M13 7l2.5-4L21 7" />
-              </svg>
-              <!-- 小游戏：手柄图标 -->
-              <svg
-                v-else
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M6 12h4M8 10v4" />
-                <path d="M15 13h.01M18 11h.01M17 15h.01M20 10h.01" />
-                <path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8z" />
-              </svg>
-            </span>
-            <span class="animation-tab-label">
-              {{ tab.id === 'animation' ? '动画' : '小游戏' }}
-            </span>
-          </button>
-        </div>
+        <p>在此创建互动式动画，描述您的需求即可快速生成</p>
       </div>
       <div class="animation-chatbox-wrap">
         <div class="animation-chatbox">
@@ -486,7 +424,7 @@ watch(
           <textarea
             v-model="animationInput"
             class="animation-input"
-            placeholder="请描述您想创建的动画或小游戏..."
+            placeholder="请描述您想创建的动画..."
             rows="4"
           ></textarea>
           <div class="animation-chatbox-bottom">
@@ -954,8 +892,8 @@ watch(
 }
 
 .animation-left.full-width {
-  width: 92%;
-  max-width: none;
+  width: 78%;
+  max-width: 1000px;
   margin: 0 auto;
 }
 
@@ -1044,19 +982,25 @@ watch(
   margin-bottom: 0.8%;
   width: 100%;
   box-sizing: border-box;
-  gap: 1%;
+  gap: 0.45rem;
   flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chatbox-top-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .html-mode-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.6%;
-  flex: 0 0 13%;
-  min-width: 0;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+  min-width: 9.2rem;
   white-space: nowrap;
-  padding: 0.6% 1.2%;
+  padding: 0.35rem 0.75rem;
   font-size: 13px;
   font-weight: 500;
   color: #64748b;
@@ -1069,10 +1013,10 @@ watch(
 }
 
 .html-mode-btn.secondary {
-  flex: 0 0 14%;
+  min-width: 10.2rem;
   margin-left: 0;
   font-size: 12px;
-  padding: 0.4% 1%;
+  padding: 0.35rem 0.75rem;
 }
 
 .html-mode-btn:hover {
@@ -1142,7 +1086,8 @@ watch(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1.2% 1.6%;
+  gap: 0.6rem;
+  padding: 0.55rem 0.8rem;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -1151,24 +1096,36 @@ watch(
   font-weight: 600;
   color: #1e293b;
   margin: 0;
+  flex: 0 0 auto;
 }
 
 .code-panel-actions {
   display: flex;
-  gap: 0.8%;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.code-panel-actions::-webkit-scrollbar {
+  display: none;
 }
 
 /* 图5：白底、药丸形、细浅灰边框、深灰字、左侧图标 */
 .code-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4%;
-  padding: 0.5% 1%;
+  gap: 0.25rem;
+  padding: 0.3rem 0.58rem;
   border: 1px solid #E0E0E0;
   background: #FFFFFF;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
+  flex-shrink: 0;
   color: #606266;
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
@@ -1203,21 +1160,22 @@ watch(
 /* 图2：药丸形分段，边框小一点 */
 .code-panel-tabs-wrap {
   flex-shrink: 0;
-  padding: 0.8% 1.6% 1.2%;
+  padding: 0.5rem 0.8rem 0.65rem;
   border-bottom: 1px solid #e2e8f0;
 }
 
 .code-panel-tabs {
   display: inline-flex;
-  padding: 0.2%;
+  padding: 0.15rem;
   background: #F0F5FA;
   border-radius: 999px;
-  gap: 0;
+  gap: 0.2rem;
   border: 0.5px solid #D1DAE8;
 }
 
 .code-tab {
-  padding: 0.4% 1%;
+  min-width: 3.25rem;
+  padding: 0.28rem 0.72rem;
   border: none;
   background: transparent;
   font-size: 13px;
@@ -1326,11 +1284,11 @@ watch(
     width: 98%;
   }
   .html-mode-btn {
-    flex: 0 0 34%;
+    min-width: 8.2rem;
     font-size: 12px;
   }
   .html-mode-btn.secondary {
-    flex: 0 0 64%;
+    min-width: 9.4rem;
     font-size: 11px;
   }
   .animation-two-column.fullscreen-mode { padding: 1.2%; }
