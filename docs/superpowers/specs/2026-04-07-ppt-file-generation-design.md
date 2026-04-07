@@ -39,9 +39,19 @@ parsed_content = Column(JSONB, nullable=True)
 
 新增 `"file_generation"` 类型，不复用 `"renovation_parse"`。
 
+### PPTReferenceFileResponse 变更
+
+现有 `PPTReferenceFileResponse` 需要新增 `parsed_content` 字段，确保解析结果不仅落库还可查询。前端或调试时可通过 `GET /projects/{id}/reference-files/{file_id}` 读取完整解析结果。
+
 ### PPTProject
 
-无需新增字段。`outline_text` 存放最终组合文本源，`status` 用现有值。
+无需新增字段。
+
+**`outline_text` 字段语义说明：** 现有代码中 `outline_text` 同时承担"输入源"和"输出结果"两个角色（`generate_outline_stream` 先读取它作为输入，生成后又将结构化 JSON 写回该字段）。文件生成场景遵循相同约定：
+1. 步骤 2（组合输入源）时，将组合文本写入 `outline_text`
+2. 步骤 3（大纲生成成功）后，将结构化 JSON 结果**覆写** `outline_text`
+
+这与现有系统行为一致，不引入新字段。
 
 ## API 接口设计
 
@@ -74,6 +84,8 @@ parsed_content = Column(JSONB, nullable=True)
   "reference_file_id": 456
 }
 ```
+
+**注意：** `reference_file_id` 仅在上传了文件时有值；纯文本请求时返回 `null`，不会硬造空的参考文件记录。
 
 **路由处理流程：**
 
@@ -153,7 +165,7 @@ file_generation_task(project_id, file_id=None, source_text=None, task_id_str)
 | 文件 | 变更类型 | 内容 |
 |------|---------|------|
 | `banana_models.py` | 修改 | `PPTReferenceFile` 新增 `parsed_content` 字段 |
-| `banana_schemas.py` | 修改 | 新增 `FileGenerationResponse` schema |
+| `banana_schemas.py` | 修改 | 新增 `FileGenerationResponse` schema；`PPTReferenceFileResponse` 新增 `parsed_content` 字段 |
 | `banana_routes.py` | 修改 | 新增 `POST /projects/file-generation` 路由 |
 | `celery_tasks.py` | 修改 | 新增 `file_generation_task` Celery 任务 |
 | `alembic migration` | 新增 | `parsed_content` 字段迁移脚本 |
