@@ -266,7 +266,7 @@ class PPTReferenceFileResponse(BaseModel):
     file_size: Optional[int]
     parse_status: str
     parse_error: Optional[str]
-    parsed_outline: Optional[dict]
+    parsed_outline: Optional[dict] = None
     parsed_content: Optional[dict] = None
     created_at: datetime
 
