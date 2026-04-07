@@ -69,18 +69,7 @@ function setTab(id) {
 watch(routeProjectId, async (newId) => {
   if (newId && activeTab.value === 'ppt') {
     try {
-      await pptStore.fetchProject(Number(newId))
-      await pptStore.fetchPages(Number(newId))
-
-      // Determine phase using same logic as PptHistory.getProjectPhase()
-      const project = pptStore.projectData
-      let phase = 'outline'
-      if (project?.cover_image_url) {
-        phase = 'preview'
-      } else if (pptStore.outlinePages.length === 0 && project?.creation_type === 'dialog') {
-        phase = 'dialog'
-      }
-      pptStore.setPhase(phase)
+      await pptStore.loadProjectWorkspace(Number(newId))
     } catch (e) {
       console.error('Failed to load PPT project from route:', e)
     }

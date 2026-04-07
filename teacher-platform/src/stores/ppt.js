@@ -3,6 +3,7 @@
  */
 import { defineStore } from 'pinia'
 import { apiRequest, authFetch } from '@/api/http'
+import { createDefaultIntentState, normalizeIntentState, resolveIntentPhase } from '@/utils/pptIntent'
 
 const API = '/api/v1/ppt'
 
@@ -34,7 +35,7 @@ export const usePptStore = defineStore('ppt', {
     descriptions: {},
 
     // 已确认的意图摘要
-    confirmedIntent: null,
+    intentState: createDefaultIntentState(),
 
     // 对话历史（对话页用）
     sessions: [],
@@ -67,6 +68,10 @@ export const usePptStore = defineStore('ppt', {
 
   getters: {
     isLoggedIn: (state) => !!state.projectId,
+    intentSummary: (state) => state.intentState?.intent_summary || {},
+    confirmedIntent: (state) => state.intentState?.status === 'CONFIRMED' ? (state.intentState.intent_summary || {}) : null,
+    isIntentReady: (state) => Boolean(state.intentState?.ready_for_confirmation),
+    isIntentConfirmed: (state) => state.intentState?.status === 'CONFIRMED',
 
     completedPagesCount: (state) => {
       return Object.values(state.descriptions).filter(d => d && d.status === 'completed').length
@@ -76,18 +81,49 @@ export const usePptStore = defineStore('ppt', {
   },
 
   actions: {
+    resetIntentState(initialTopic = '') {
+      this.intentState = createDefaultIntentState(initialTopic)
+    },
+
+    applyIntentPayload(payload, fallbackTopic = '') {
+      this.intentState = normalizeIntentState(payload, fallbackTopic)
+      return this.intentState
+    },
+
+    resetProjectWorkspace() {
+      this.projectId = null
+      this.projectStatus = null
+      this.projectData = null
+      this.creationType = null
+      this.referenceFiles = []
+      this.outlineText = ''
+      this.outlinePages = []
+      this.descriptions = {}
+      this.sessions = []
+      this.sessionMetrics = { round: 0, confidence: 0, phase: 'clarifying' }
+      this.generationProgress = { total: 0, completed: 0, failed: 0 }
+      this.materials = []
+      this.exportTasks = []
+      this.resetIntentState()
+    },
     // ============ 项目管理 ============
 
     async createProject(data) {
       try {
+        this.resetProjectWorkspace()
         const response = await apiRequest(`${API}/projects`, {
           method: 'POST',
           body: JSON.stringify(data)
         })
         this.projectId = response.id
         this.projectData = response
+        this.projectStatus = response.status
         this.creationType = data.creation_type
+        this.outlineText = response.outline_text || data.outline_text || ''
+        this.selectedPresetTemplateId = response.settings?.template_id || data?.settings?.template_id || null
         this.templateStyle = response.template_style || data.template_style || data?.settings?.template_style || ""
+        this.aspectRatio = response.settings?.aspect_ratio || data?.settings?.aspect_ratio || this.aspectRatio
+        this.resetIntentState(response.theme || this.outlineText)
         return response
       } catch (error) {
         this.setError('create', error.message)
@@ -97,16 +133,22 @@ export const usePptStore = defineStore('ppt', {
 
     async fetchProject(projectId) {
       try {
+        if (this.projectId !== projectId) {
+          this.resetProjectWorkspace()
+        }
         const response = await apiRequest(`${API}/projects/${projectId}`)
         this.projectId = response.id
         this.projectData = response
         this.projectStatus = response.status
         this.creationType = response.creation_type
         this.outlineText = response.outline_text || ''
+        this.selectedPresetTemplateId = response.settings?.template_id || null
+        this.aspectRatio = response.settings?.aspect_ratio || this.aspectRatio
         if (response.settings && typeof response.settings === 'object') {
           this.projectSettings = { ...this.projectSettings, ...response.settings }
         }
         this.templateStyle = response.template_style || response.settings?.template_style || this.templateStyle
+        this.resetIntentState(response.theme || this.outlineText)
         return response
       } catch (error) {
         this.setError('fetch', error.message)
@@ -563,8 +605,13 @@ export const usePptStore = defineStore('ppt', {
         })
 
         // 保存用户消息和AI回复
-        await this.saveSession(projectId, 'user', message)
-        await this.saveSession(projectId, 'assistant', response.message)
+        const fallbackTopic = this.projectData?.theme || this.outlineText || ''
+        this.applyIntentPayload(response.intent_state || response.intent, fallbackTopic)
+        this.sessionMetrics = {
+          round: this.intentState.round || response.round || this.sessionMetrics.round,
+          confidence: this.intentState.confidence,
+          phase: this.intentState.status === 'CONFIRMED' ? 'confirmed' : (this.intentState.ready_for_confirmation ? 'ready' : 'clarifying')
+        }
 
         return response
       } catch (error) {
@@ -580,8 +627,12 @@ export const usePptStore = defineStore('ppt', {
         const response = await apiRequest(`${API}/projects/${projectId}/intent/confirm`, {
           method: 'POST'
         })
-        this.confirmedIntent = response.intent_summary || {}
+        const fallbackTopic = this.projectData?.theme || this.outlineText || ''
+        this.applyIntentPayload(response.intent, fallbackTopic)
         this.projectStatus = 'INTENT_CONFIRMED'
+        if (this.projectData) {
+          this.projectData = { ...this.projectData, status: 'INTENT_CONFIRMED' }
+        }
         return response
       } catch (error) {
         this.setError('confirmIntent', error.message)
@@ -592,7 +643,8 @@ export const usePptStore = defineStore('ppt', {
     async fetchIntent(projectId) {
       try {
         const response = await apiRequest(`${API}/projects/${projectId}/intent`)
-        this.confirmedIntent = response.intent_summary || null
+        const fallbackTopic = this.projectData?.theme || this.outlineText || ''
+        this.applyIntentPayload(response.intent, fallbackTopic)
         return response
       } catch (error) {
         this.setError('fetchIntent', error.message)
@@ -601,6 +653,21 @@ export const usePptStore = defineStore('ppt', {
     },
 
     // ============ 参考文件 ============
+
+    async loadProjectWorkspace(projectId) {
+      await this.fetchProject(projectId)
+      await this.fetchPages(projectId)
+      if (this.creationType === 'dialog') {
+        try {
+          await this.fetchIntent(projectId)
+        } catch (_) {
+          this.resetIntentState(this.projectData?.theme || this.outlineText || '')
+        }
+      } else {
+        this.resetIntentState(this.projectData?.theme || this.outlineText || '')
+      }
+      this.setPhase(resolveIntentPhase(this.projectData, this.outlinePages.length, this.intentState))
+    },
 
     async uploadReferenceFile(projectId, file) {
       try {
@@ -695,27 +762,14 @@ export const usePptStore = defineStore('ppt', {
     // ============ 状态重置 ============
 
     resetState() {
-      this.projectId = null
-      this.projectStatus = null
-      this.projectData = null
-      this.creationType = null
+      this.resetProjectWorkspace()
       this.currentPhase = 'home'
       this.selectedTemplate = null
       this.selectedPresetTemplateId = null
       this.templateStyle = ''
       this.aspectRatio = '16:9'
-      this.referenceFiles = []
-      this.outlineText = ''
-      this.outlinePages = []
-      this.descriptions = {}
-      this.confirmedIntent = null
-      this.sessions = []
-      this.sessionMetrics = { round: 0, confidence: 0, phase: 'clarifying' }
-      this.generationProgress = { total: 0, completed: 0, failed: 0 }
       this.error = null
       this.errorMessage = null
-      this.materials = []
-      this.exportTasks = []
     }
   }
 })

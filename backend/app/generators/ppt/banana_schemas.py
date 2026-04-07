@@ -292,6 +292,41 @@ class PPTSessionResponse(BaseModel):
     model_config = {"from_attributes": True, "populate_by_name": True}
 
 
+class PPTIntentSummaryResponse(BaseModel):
+    topic: str = ""
+    audience: str = ""
+    goal: str = ""
+    duration: str = ""
+    constraints: str = ""
+    style: str = ""
+    interaction: str = ""
+    extra: str = ""
+
+
+class PPTIntentStateResponse(BaseModel):
+    status: str
+    confirmed: list[str] = Field(default_factory=list)
+    pending: list[str] = Field(default_factory=list)
+    scores: dict[str, int] = Field(default_factory=dict)
+    confidence: int = 0
+    ready_for_confirmation: bool = False
+    summary: str = ""
+    intent_summary: PPTIntentSummaryResponse = Field(default_factory=PPTIntentSummaryResponse)
+    round: int = 0
+    confirmed_at: Optional[str] = None
+
+
+class PPTIntentEnvelopeResponse(BaseModel):
+    intent: PPTIntentStateResponse
+    intent_summary: PPTIntentSummaryResponse
+
+
+class PPTIntentConfirmResponse(BaseModel):
+    status: str
+    intent: PPTIntentStateResponse
+    intent_summary: PPTIntentSummaryResponse
+
+
 # ============= Template Schemas =============
 
 class UserTemplateCreate(BaseModel):

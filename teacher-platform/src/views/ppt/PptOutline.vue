@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
+import { buildOutlinePromptFromIntent, intentSummaryToText } from '@/utils/pptIntent'
 
 const pptStore = usePptStore()
 
@@ -40,14 +41,14 @@ const groupedPages = computed(() => {
 onMounted(async () => {
   if (pptStore.projectId) {
     // 加载已确认的意图摘要（如果store中没有，从后端获取）
-    if (!pptStore.confirmedIntent || Object.keys(pptStore.confirmedIntent).length === 0) {
+    if (!pptStore.intentSummary || Object.keys(pptStore.intentSummary).length === 0) {
       await pptStore.fetchIntent(pptStore.projectId)
     }
 
     // 构建意图摘要用于左侧构想框
-    const confirmedIntent = pptStore.confirmedIntent
+    const confirmedIntent = pptStore.intentSummary
     if (confirmedIntent && Object.keys(confirmedIntent).length > 0) {
-      ideaPrompt.value = buildIntentDisplay(confirmedIntent)
+      ideaPrompt.value = intentSummaryToText(confirmedIntent)
     }
 
     await pptStore.fetchPages(pptStore.projectId)
@@ -55,7 +56,7 @@ onMounted(async () => {
 
     // 如果有已确认的意图摘要但还没有大纲，自动生成
     if (confirmedIntent && Object.keys(confirmedIntent).length > 0 && outlinePages.value.length === 0) {
-      const prompt = buildIntentPrompt(confirmedIntent)
+      const prompt = buildOutlinePromptFromIntent(confirmedIntent)
       await handleGenerateOutline(prompt)
     }
   }
@@ -465,7 +466,7 @@ async function saveCard(index) {
         <button
           class="action-btn secondary"
           :disabled="isGenerating"
-          @click="handleGenerateOutline(topAiPrompt || buildIntentPrompt(pptStore.confirmedIntent || {}) || ideaPrompt)"
+          @click="handleGenerateOutline(topAiPrompt || buildOutlinePromptFromIntent(pptStore.intentSummary || {}) || ideaPrompt)"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
