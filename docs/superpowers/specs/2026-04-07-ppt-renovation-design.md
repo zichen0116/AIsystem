@@ -132,6 +132,14 @@ ppt/renovation/{user_id}/{uuid}/
              → FAILED (0页成功 或 致命错误)
 ```
 
+**状态兼容性说明：**
+
+- `PARSE` 是现有状态，已在当前翻新路由中使用（`banana_routes.py:2689`）
+- `DESCRIPTIONS_GENERATED` 是新增状态，仅 renovation 项目使用
+- `FAILED` 是现有状态
+- 当前前端 `PptHistory.vue` 的 `getStatusText()` 对未识别的状态会 fallback 到基于 `page_count` / `cover_image_url` 的判断逻辑。renovation 项目在 `DESCRIPTIONS_GENERATED` 状态下有 `page_count > 0`，前端会显示为"待生成图片"，行为合理
+- **本阶段只做后端，前端暂不适配这些状态。** 前端适配（如在历史页显示"翻新解析中"/"部分失败"等）留到后续前端阶段处理
+
 ### 6.2 任务状态
 
 ```
@@ -210,40 +218,26 @@ RenovationService
     返回 {title, points, description} 或抛异常
 ```
 
-### 7.2 AI 提取 Prompt
+### 7.2 AI Prompt — 复用 banana-slides
 
-```
-你是一个PPT内容提取助手。从以下单页幻灯片的文本内容中提取结构化信息。
+**内容提取 prompt** 直接复用 banana-slides 的 `get_ppt_page_content_extraction_prompt()`（`prompts.py:949-988`）。该 prompt 已经过验证，核心逻辑：
 
-<slide_content>
-{markdown_text}
-</slide_content>
+- 输入：单页 PDF 解析出的 markdown 文本
+- 输出：JSON `{title, points, description}`
+- 规则：title 忠实提取不修改、points 逐条保留原文、description 包含完整页面内容（文字+图表+表格等）
+- 支持 language 参数控制输出语言
 
-请返回JSON格式：
-{
-  "title": "页面主标题（忠实提取，不修改）",
-  "points": ["要点1", "要点2", ...],
-  "description": "完整页面描述"
-}
+在 AIsystem 中的适配：将 prompt 文本搬到 `renovation_service.py`，调用方式改为 DashScope（原版用的是 banana 内部 AI service），其余保持一致。
 
-规则：
-- title: 提取页面第一个标题/标题行
-- points: 逐条提取页面要点，保留原文
-- description: 格式为 "页面标题：xxx\n页面文字：\n- 要点1\n- 要点2\n其他素材说明"
-- 保持原始语言
-```
+**布局描述 prompt** 直接复用 banana-slides 的 `get_layout_caption_prompt()`（`prompts.py:991-1013`）。核心逻辑：
 
-### 7.3 Layout Caption Prompt
+- 输入：PPT 页面图片
+- 输出：中文布局描述（整体结构、标题位置、内容区域、视觉元素）
+- 仅描述空间布局，不描述颜色/文字内容/风格
 
-```
-请描述这张PPT幻灯片的布局结构，包括：
-1. 整体布局（标题位置、分栏方式）
-2. 文字区域的位置和对齐方式
-3. 视觉元素的位置（图片、图表、图标）
-4. 间距和比例关系
+在 AIsystem 中的适配：同样搬到 `renovation_service.py`，通过 DashScope 视觉模型调用。
 
-用中文输出简洁的布局描述，用于重新创建相似布局。
-```
+**语言指令** 复用 banana-slides 的 `get_language_instruction()` 逻辑，根据 language 参数附加语言约束指令。
 
 ## 8. API 接口
 
