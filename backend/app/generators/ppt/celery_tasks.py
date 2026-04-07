@@ -1737,8 +1737,7 @@ def _parse_outline_pages(data) -> list[dict]:
             part_name = item["part"]
             for p in item["pages"]:
                 if isinstance(p, dict):
-                    p["part"] = part_name
-                    pages.append(p)
+                    pages.append({**p, "part": part_name})
         else:
             pages.append(item)
 
@@ -1824,10 +1823,12 @@ def file_generation_task(
                             rf.parse_status = "failed"
                             rf.parse_error = f"文件下载失败: {e}"
                             await db.commit()
-                            await _update_task_status(
-                                db, task_id_str, "FAILED", 10,
-                                {"error": f"文件下载失败: {e}"},
-                            )
+                        if task_id_str:
+                            async with AsyncSessionLocal() as db:
+                                await _update_task_status(
+                                    db, task_id_str, "FAILED", 10,
+                                    {"error": f"文件下载失败: {e}"},
+                                )
                         return
                 else:
                     # OSS 不可用时尝试本地路径
@@ -1840,10 +1841,12 @@ def file_generation_task(
                             rf.parse_status = "failed"
                             rf.parse_error = "OSS不可用且本地文件不存在"
                             await db.commit()
-                            await _update_task_status(
-                                db, task_id_str, "FAILED", 10,
-                                {"error": "OSS不可用且本地文件不存在"},
-                            )
+                        if task_id_str:
+                            async with AsyncSessionLocal() as db:
+                                await _update_task_status(
+                                    db, task_id_str, "FAILED", 10,
+                                    {"error": "OSS不可用且本地文件不存在"},
+                                )
                         return
                     import shutil as _shutil
                     _shutil.copy2(oss_path, tmp_path)
@@ -1861,10 +1864,12 @@ def file_generation_task(
                         rf.parse_status = "failed"
                         rf.parse_error = "不支持的文件类型或解析返回空结果"
                         await db.commit()
-                        await _update_task_status(
-                            db, task_id_str, "FAILED", 20,
-                            {"error": "不支持的文件类型或解析返回空结果"},
-                        )
+                    if task_id_str:
+                        async with AsyncSessionLocal() as db:
+                            await _update_task_status(
+                                db, task_id_str, "FAILED", 20,
+                                {"error": "不支持的文件类型或解析返回空结果"},
+                            )
                     return
 
                 normalized_text, parsed_content = _normalize_parse_result(parse_result)
