@@ -1,6 +1,7 @@
 """
 应用配置管理
 """
+from pydantic import field_validator
 from pydantic_settings import BaseSettings,SettingsConfigDict
 from functools import lru_cache
 from pathlib import Path
@@ -124,6 +125,19 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
     DEBUG: bool = False
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def normalize_debug_flag(cls, value):
+        if isinstance(value, bool) or value is None:
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "dev", "development"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return value
 
     # ========== html 小游戏（OpenAI 兼容接口）==========
     HTML_LLM_API_KEY: str = ""
