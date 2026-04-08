@@ -4,6 +4,7 @@ PPT生成模块 - Celery异步任务
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -781,7 +782,6 @@ async def _update_project_export(project_id: int, export_url: str):
 # ---------------------------------------------------------------------------
 # 任务：导出 PPTX
 # ---------------------------------------------------------------------------
-
 @celery_app.task(bind=True, name="banana-slides.export_pptx")
 def export_pptx_task(self: Task, project_id: int, task_id_str: str = None):
     """
@@ -1093,113 +1093,264 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
 @celery_app.task(bind=True, name="banana-slides.renovation_parse")
 def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str: str = None):
     """
-    解析旧 PPT/PDF 提取大纲。
+    翻新解析任务：逐页 PDF 解析 + AI 内容提取
 
-    Args:
-        project_id: 项目ID
-        file_id: PPTReferenceFile.id
-        task_id_str: PPTTask.task_id
+    支持部分成功：至少 1 页成功则 COMPLETED，0 页成功则 FAILED。
     """
     from app.core.database import AsyncSessionLocal
     from sqlalchemy import select
-    from app.generators.ppt.banana_models import PPTReferenceFile
+    from app.generators.ppt.banana_models import PPTProject, PPTPage, PPTReferenceFile
+    from app.generators.ppt.renovation_service import get_renovation_service
+    from app.generators.ppt.file_service import get_oss_service
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import shutil
+
+    def _process_page_in_thread(
+        page_id: int,
+        page_number: int,
+        page_pdf_path: str,
+        page_image_url: str | None,
+        keep_layout: bool,
+        language: str,
+    ) -> dict:
+        """在独立线程中处理单页，包含独立 event loop 和 DB session"""
+        import asyncio
+
+        async def _inner():
+            renovation_svc = get_renovation_service()
+            try:
+                content = await renovation_svc.process_single_page(
+                    page_pdf_path, page_image_url, keep_layout, language,
+                )
+
+                # 独立 DB session 写回
+                async with AsyncSessionLocal() as db:
+                    res = await db.execute(select(PPTPage).where(PPTPage.id == page_id))
+                    page = res.scalar_one_or_none()
+                    if page:
+                        page.title = content.get("title", "")
+                        page.description = content.get("description", "")
+                        page.config = {**(page.config or {}), "points": content.get("points", [])}
+                        page.renovation_status = "completed"
+                        page.renovation_error = None
+                    await db.commit()
+
+                return {"success": True, "page_id": page_id, "page_number": page_number, "content": content}
+
+            except Exception as e:
+                logger.error("翻新解析页面 %d 失败: %s", page_number, e)
+                # 标记页面失败
+                async with AsyncSessionLocal() as db:
+                    res = await db.execute(select(PPTPage).where(PPTPage.id == page_id))
+                    page = res.scalar_one_or_none()
+                    if page:
+                        page.renovation_status = "failed"
+                        page.renovation_error = str(e)
+                    await db.commit()
+
+                return {"success": False, "page_id": page_id, "page_number": page_number, "error": str(e)}
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_inner())
+        finally:
+            loop.close()
 
     async def _run():
-        async with AsyncSessionLocal() as db:
-            if task_id_str:
-                await _update_task_status(db, task_id_str, "PROCESSING", 0)
-
-            res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
-            ref_file = res.scalar_one_or_none()
-            if not ref_file:
-                if task_id_str:
-                    await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "File not found"})
-                return {"error": "File not found"}
-
-            ref_file.parse_status = "processing"
-            await db.commit()
-
         oss_svc = get_oss_service()
-        banana_svc = get_banana_service()
-        tmp_path = None
+        tmp_dir = tempfile.mkdtemp(prefix="renovation_parse_")
 
         try:
+            # 更新任务状态
+            async with AsyncSessionLocal() as db:
+                if task_id_str:
+                    await _update_task_status(db, task_id_str, "PROCESSING", 0)
+
+                # 获取参考文件
+                res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+                ref_file = res.scalar_one_or_none()
+                if not ref_file:
+                    if task_id_str:
+                        await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "参考文件不存在"})
+                    return
+
+                # 获取项目
+                res = await db.execute(select(PPTProject).where(PPTProject.id == project_id))
+                project = res.scalar_one_or_none()
+                if not project:
+                    if task_id_str:
+                        await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "项目不存在"})
+                    return
+
+                keep_layout = (project.settings or {}).get("keep_layout", False)
+                language = (project.settings or {}).get("language", "zh")
+                oss_prefix = (project.settings or {}).get("oss_prefix", "")
+
+                ref_file.parse_status = "processing"
+                await db.commit()
+
+            # 下载 PDF
+            pdf_path = os.path.join(tmp_dir, "source.pdf")
             ref_ext = _normalize_extension(ref_file.file_type, ref_file.filename)
-            with tempfile.NamedTemporaryFile(suffix="." + ref_ext, delete=False) as tmp:
-                tmp_path = tmp.name
-            oss_key = _extract_oss_key(ref_file.url)
-            if oss_key:
-                oss_svc.download_file(oss_key, tmp_path)
+            if ref_ext in ("ppt", "pptx"):
+                # 下载转换后的 PDF
+                pdf_oss_key = f"{oss_prefix}/converted.pdf"
+                oss_svc.download_file(pdf_oss_key, pdf_path)
             else:
-                import urllib.request
-                urllib.request.urlretrieve(ref_file.url, tmp_path)
+                oss_key = _extract_oss_key(ref_file.url)
+                if oss_key:
+                    oss_svc.download_file(oss_key, pdf_path)
+                else:
+                    import urllib.request
+                    urllib.request.urlretrieve(ref_file.url, pdf_path)
 
-            text_content = ""
-            if ref_ext == "pdf":
-                try:
-                    import fitz
-                    doc = fitz.open(tmp_path)
-                    text_content = "\n".join((page.get_text() or "") for page in doc)
-                    doc.close()
-                except Exception as e:
-                    logger.warning("PDF文本提取失败: %s", e)
-            elif ref_ext in ("pptx", "ppt"):
-                try:
-                    from pptx import Presentation
-                    prs = Presentation(tmp_path)
-                    lines = []
-                    for slide in prs.slides:
-                        for shape in slide.shapes:
-                            if shape.has_text_frame:
-                                lines.append(shape.text_frame.text)
-                    text_content = "\n".join(lines)
-                except Exception as e:
-                    logger.warning("PPTX文本提取失败: %s", e)
+            # 拆分 PDF 为单页
+            split_dir = os.path.join(tmp_dir, "split_pages")
+            os.makedirs(split_dir, exist_ok=True)
+            renovation_svc = get_renovation_service()
+            page_pdfs = await renovation_svc.split_pdf_to_pages(pdf_path, split_dir)
 
-            if task_id_str:
-                async with AsyncSessionLocal() as db2:
-                    await _update_task_status(db2, task_id_str, "PROCESSING", 50)
+            if not page_pdfs:
+                async with AsyncSessionLocal() as db:
+                    if task_id_str:
+                        await _update_task_status(db, task_id_str, "FAILED", 0, {"error": "PDF 拆分失败，无页面"})
+                    project_res = await db.execute(select(PPTProject).where(PPTProject.id == project_id))
+                    p = project_res.scalar_one_or_none()
+                    if p:
+                        p.status = "FAILED"
+                    await db.commit()
+                return
 
-            parsed = await banana_svc.parse_outline_text(
-                text_content or ref_file.filename, language="zh"
-            )
+            # 上传单页 PDF 到 OSS（供后续重试复用）
+            for i, pp in enumerate(page_pdfs):
+                split_oss_key = f"{oss_prefix}/split_pages/page_{i + 1}.pdf"
+                oss_svc.upload_file(pp, split_oss_key)
 
-            async with AsyncSessionLocal() as db3:
-                res3 = await db3.execute(
-                    select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+            # 获取所有页面
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTPage)
+                    .where(PPTPage.project_id == project_id)
+                    .order_by(PPTPage.page_number)
                 )
-                db_file = res3.scalar_one_or_none()
-                if db_file:
-                    db_file.parse_status = "completed"
-                    db_file.parsed_outline = parsed
-                await db3.commit()
+                pages = list(res.scalars().all())
 
+            if len(pages) != len(page_pdfs):
+                logger.warning("页面数量不匹配: DB=%d, PDF=%d", len(pages), len(page_pdfs))
+
+            # ThreadPoolExecutor 并行逐页处理
+            results: list[dict] = []
+            max_workers = min(5, len(page_pdfs))
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for i, page_pdf in enumerate(page_pdfs):
+                    if i < len(pages):
+                        page = pages[i]
+                        future = executor.submit(
+                            _process_page_in_thread,
+                            page.id,
+                            page.page_number,
+                            page_pdf,
+                            page.image_url,
+                            keep_layout,
+                            language,
+                        )
+                        futures[future] = i
+
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        results.append(result)
+                    except Exception as e:
+                        idx = futures[future]
+                        logger.error("线程异常 page_index=%d: %s", idx, e)
+                        if idx < len(pages):
+                            results.append({
+                                "success": False,
+                                "page_id": pages[idx].id,
+                                "page_number": pages[idx].page_number,
+                                "error": str(e),
+                            })
+
+            # 统计结果
+            success_count = sum(1 for r in results if r.get("success"))
+            failed_count = sum(1 for r in results if not r.get("success"))
+            failed_pages = [
+                {"page_id": r["page_id"], "page_number": r["page_number"], "error": r.get("error", "")}
+                for r in results if not r.get("success")
+            ]
+
+            task_result = {
+                "total_pages": len(page_pdfs),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "partial_success": success_count > 0 and failed_count > 0,
+                "failed_pages": failed_pages,
+            }
+
+            # 聚合 outline_text / description_text
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTPage)
+                    .where(PPTPage.project_id == project_id)
+                    .order_by(PPTPage.page_number)
+                )
+                all_pages = list(res.scalars().all())
+
+                outline_parts = []
+                desc_parts = []
+                for p in all_pages:
+                    if p.renovation_status == "completed":
+                        points = (p.config or {}).get("points", [])
+                        points_text = "\n".join(f"- {pt}" for pt in points)
+                        outline_parts.append(f"第{p.page_number}页：{p.title or ''}\n{points_text}")
+                        desc_parts.append(f"--- 第{p.page_number}页 ---\n{p.description or ''}")
+
+                project_res = await db.execute(select(PPTProject).where(PPTProject.id == project_id))
+                proj = project_res.scalar_one_or_none()
+                if proj:
+                    proj.outline_text = "\n\n".join(outline_parts)
+                    proj.description_text = "\n\n".join(desc_parts)
+
+                    if success_count > 0:
+                        proj.status = "DESCRIPTIONS_GENERATED"
+                    else:
+                        proj.status = "FAILED"
+
+                # 更新参考文件状态
+                ref_res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+                rf = ref_res.scalar_one_or_none()
+                if rf:
+                    rf.parse_status = "completed" if success_count > 0 else "failed"
+                    if failed_count > 0:
+                        rf.parse_error = f"{failed_count}/{len(page_pdfs)} 页解析失败"
+
+                await db.commit()
+
+            # 更新任务状态
             if task_id_str:
-                async with AsyncSessionLocal() as db4:
-                    await _update_task_status(db4, task_id_str, "COMPLETED", 100, {"parsed": True})
-            return {"status": "completed", "file_id": file_id}
+                async with AsyncSessionLocal() as db:
+                    final_status = "COMPLETED" if success_count > 0 else "FAILED"
+                    await _update_task_status(db, task_id_str, final_status, 100, task_result)
 
         except Exception as e:
-            logger.error("翻新解析失败 file_id=%s: %s", file_id, e)
-            async with AsyncSessionLocal() as db2:
-                res2 = await db2.execute(
-                    select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
-                )
-                db_file = res2.scalar_one_or_none()
-                if db_file:
-                    db_file.parse_status = "failed"
-                    db_file.parse_error = str(e)
-                await db2.commit()
-            if task_id_str:
-                async with AsyncSessionLocal() as db3:
-                    await _update_task_status(db3, task_id_str, "FAILED", 0, {"error": str(e)})
-            raise
+            logger.exception("翻新解析任务异常 project_id=%s", project_id)
+            async with AsyncSessionLocal() as db:
+                if task_id_str:
+                    await _update_task_status(db, task_id_str, "FAILED", 0, {"error": str(e)})
+                project_res = await db.execute(select(PPTProject).where(PPTProject.id == project_id))
+                proj = project_res.scalar_one_or_none()
+                if proj:
+                    proj.status = "FAILED"
+                ref_res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+                rf = ref_res.scalar_one_or_none()
+                if rf:
+                    rf.parse_status = "failed"
+                    rf.parse_error = str(e)
+                await db.commit()
         finally:
-            if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return asyncio.run(_run())
 
@@ -1501,3 +1652,533 @@ def generate_material_task(
             raise
 
     return asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# 文件生成 - 辅助函数
+# ---------------------------------------------------------------------------
+
+_IMAGE_TAG_RE = re.compile(r"\[IMAGE:\s*[^\]]+\]", flags=re.IGNORECASE)
+_EMPTY_SYMBOL_LINE_RE = re.compile(r"^[\s\-\_\,\.\:\;\[\]\(\)]+$")
+
+
+def _clean_chunk_text(text: str) -> str:
+    """
+    清理解析文本中的图片占位符（如 [IMAGE: xxx]）和残留符号行，
+    避免模型把技术标记当成大纲内容。
+    """
+    if not text:
+        return ""
+
+    stripped = _IMAGE_TAG_RE.sub("", text)
+    lines: list[str] = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if "IMAGE:" in line.upper():
+            continue
+        if _EMPTY_SYMBOL_LINE_RE.fullmatch(line):
+            continue
+        lines.append(line)
+
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+
+    return "\n".join(lines).strip()
+
+
+def _normalize_image_descriptions(value) -> list[dict]:
+    """标准化 metadata.image_descriptions 字段。"""
+    if not isinstance(value, list):
+        return []
+
+    results: list[dict] = []
+    for item in value:
+        if isinstance(item, dict):
+            desc = str(item.get("description") or "").strip()
+            filename = str(item.get("filename") or "").strip()
+            if desc:
+                results.append({"filename": filename, "description": desc})
+        elif isinstance(item, str):
+            desc = item.strip()
+            if desc:
+                results.append({"filename": "", "description": desc})
+    return results
+
+
+def _build_image_context(image_descs: list[dict]) -> str:
+    """
+    把图片描述组织为大纲模型可读的上下文文本。
+    """
+    if not image_descs:
+        return ""
+
+    lines = ["[图片内容补充]"]
+    for idx, item in enumerate(image_descs, start=1):
+        filename = str(item.get("filename") or "").strip()
+        desc = str(item.get("description") or "").strip()
+        if not desc:
+            continue
+        if filename:
+            lines.append(f"- 图片{idx}（{filename}）: {desc}")
+        else:
+            lines.append(f"- 图片{idx}: {desc}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+def _normalize_parse_result(parse_result) -> tuple[str, dict]:
+    """
+    规范化 parser 输出，生成用于大纲模型的文本输入。
+
+    Returns:
+        (normalized_text, parsed_content_dict)
+    """
+    chunks_meta = []
+    text_parts = []
+    all_image_descriptions: list[dict] = []
+
+    for chunk in parse_result.chunks:
+        raw_content = str(chunk.content or "")
+        chunk_metadata = dict(chunk.metadata or {})
+        image_descriptions = _normalize_image_descriptions(chunk_metadata.get("image_descriptions"))
+
+        cleaned_content = _clean_chunk_text(raw_content)
+        image_context = _build_image_context(image_descriptions)
+        chunk_parts = [part for part in (cleaned_content, image_context) if part]
+        merged_chunk_content = "\n\n".join(chunk_parts).strip()
+        if merged_chunk_content:
+            text_parts.append(merged_chunk_content)
+
+        all_image_descriptions.extend(image_descriptions)
+        chunks_meta.append({
+            "content": cleaned_content,
+            "raw_content": raw_content,
+            "image_descriptions": image_descriptions,
+            **chunk_metadata,
+        })
+
+    normalized_text = "\n\n".join(text_parts)
+
+    parsed_content = {
+        "normalized_text": normalized_text,
+        "chunks_meta": chunks_meta,
+        "images": list(parse_result.images),
+        "image_descriptions": all_image_descriptions,
+    }
+
+    return normalized_text, parsed_content
+
+
+async def _parse_reference_file_content(
+    tmp_path: str,
+    *,
+    filename: str | None,
+    file_type: str | None,
+) -> tuple[str, dict]:
+    """Parse a reference file with local parsers first, then PDF remote fallback."""
+    parse_error: Exception | None = None
+
+    try:
+        from app.services.parsers.factory import ParserFactory
+
+        parse_result = await ParserFactory.parse_file(tmp_path)
+        if parse_result is not None:
+            return _normalize_parse_result(parse_result)
+    except Exception as exc:
+        parse_error = exc
+        logger.warning("Primary parser failed for %s: %s", filename or tmp_path, exc)
+
+    ext = _normalize_extension(file_type, filename)
+    if ext == "pdf":
+        from app.generators.ppt.ppt_parse_service import get_ppt_parse_service
+
+        svc = get_ppt_parse_service()
+        markdown, error = await svc._parse_pdf_v4(tmp_path)
+        if error:
+            raise RuntimeError(error)
+
+        normalized_text = str(markdown or "").strip()
+        parsed_content = {
+            "normalized_text": normalized_text,
+            "chunks_meta": [],
+            "images": [],
+            "fallback_parser": "ppt_parse_service",
+        }
+        return normalized_text, parsed_content
+
+    if parse_error is not None:
+        raise parse_error
+
+    raise RuntimeError(f"Unsupported or empty parse result for file: {filename or tmp_path}")
+
+
+def _combine_outline_source(
+    normalized_text: str | None,
+    source_text: str | None,
+) -> str:
+    """
+    组合文件解析内容和用户补充文本，明确区分信息来源。
+    """
+    has_file = bool(normalized_text and normalized_text.strip())
+    has_text = bool(source_text and source_text.strip())
+
+    if has_file and has_text:
+        return (
+            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
+            f"{normalized_text}\n\n"
+            "以下是用户补充要求：\n"
+            f"{source_text}"
+        )
+    if has_file:
+        return (
+            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
+            f"{normalized_text}"
+        )
+    if has_text:
+        return (
+            "以下是用户补充要求：\n"
+            f"{source_text}"
+        )
+    return ""
+
+
+def _parse_outline_pages(data) -> list[dict]:
+    """
+    将 AI 生成的大纲 JSON 解析为 flat 页面列表。
+
+    支持三种格式：
+    1. list[{title, points}]          — simple
+    2. list[{part, pages: [...]}]     — part-based
+    3. dict{pages: [...]}             — wrapped
+    """
+    if isinstance(data, dict):
+        if "pages" in data:
+            return _parse_outline_pages(data["pages"])
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    pages = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if "pages" in item and "part" in item:
+            # part-based format
+            part_name = item["part"]
+            for p in item["pages"]:
+                if isinstance(p, dict):
+                    pages.append({**p, "part": part_name})
+        else:
+            pages.append(item)
+
+    return pages
+
+
+# ---------------------------------------------------------------------------
+# 任务：文件生成（解析文件 → 组合文本 → 生成大纲 → 创建页面骨架）
+# ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, name="banana-slides.file_generation")
+def file_generation_task(
+    self: Task,
+    project_id: int,
+    file_id: int | None = None,
+    source_text: str | None = None,
+    task_id_str: str | None = None,
+):
+    """
+    文件生成一站式任务：
+
+    1. 解析参考文件（如有）
+    2. 组合输入源（文件 + 用户文本）
+    3. AI 生成结构化大纲
+    4. 创建页面骨架
+    """
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import select
+    from app.generators.ppt.banana_models import PPTProject, PPTPage, PPTReferenceFile
+    import shutil
+    import json
+
+    async def _run():
+        normalized_text = None
+
+        # ------ Step 1: 文件解析 ------
+        if file_id is not None:
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                )
+                ref_file = res.scalar_one_or_none()
+                if not ref_file:
+                    logger.error("文件生成任务: 参考文件 %d 不存在", file_id)
+                    if task_id_str:
+                        await _update_task_status(
+                            db, task_id_str, "FAILED", 0,
+                            {"error": f"参考文件 {file_id} 不存在"},
+                        )
+                    return
+                ref_file.parse_status = "processing"
+                await db.commit()
+
+            if task_id_str:
+                async with AsyncSessionLocal() as db:
+                    await _update_task_status(db, task_id_str, "PROCESSING", 10)
+
+            # 下载文件到临时目录
+            tmp_dir = tempfile.mkdtemp(prefix="ppt_filegen_")
+            try:
+                oss_svc = _get_oss_service_safe()
+
+                async with AsyncSessionLocal() as db:
+                    res = await db.execute(
+                        select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                    )
+                    ref_file = res.scalar_one()
+                    oss_path = ref_file.oss_path
+                    filename = ref_file.filename
+                    file_type = ref_file.file_type
+
+                tmp_path = os.path.join(tmp_dir, filename)
+
+                if oss_svc is not None:
+                    try:
+                        oss_svc.download_file(oss_path, tmp_path)
+                    except Exception as e:
+                        logger.error("文件下载失败 oss_path=%s: %s", oss_path, e)
+                        async with AsyncSessionLocal() as db:
+                            res = await db.execute(
+                                select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                            )
+                            rf = res.scalar_one()
+                            rf.parse_status = "failed"
+                            rf.parse_error = f"文件下载失败: {e}"
+                            await db.commit()
+                        if task_id_str:
+                            async with AsyncSessionLocal() as db:
+                                await _update_task_status(
+                                    db, task_id_str, "FAILED", 10,
+                                    {"error": f"文件下载失败: {e}"},
+                                )
+                        return
+                else:
+                    # OSS 不可用时尝试本地路径
+                    if not os.path.exists(oss_path):
+                        async with AsyncSessionLocal() as db:
+                            res = await db.execute(
+                                select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                            )
+                            rf = res.scalar_one()
+                            rf.parse_status = "failed"
+                            rf.parse_error = "OSS不可用且本地文件不存在"
+                            await db.commit()
+                        if task_id_str:
+                            async with AsyncSessionLocal() as db:
+                                await _update_task_status(
+                                    db, task_id_str, "FAILED", 10,
+                                    {"error": "OSS不可用且本地文件不存在"},
+                                )
+                        return
+                    import shutil as _shutil
+                    _shutil.copy2(oss_path, tmp_path)
+
+                # 调用 ParserFactory 解析
+                normalized_text, parsed_content = await _parse_reference_file_content(
+                    tmp_path,
+                    filename=filename,
+                    file_type=file_type,
+                )
+                if not normalized_text.strip():
+                    async with AsyncSessionLocal() as db:
+                        res = await db.execute(
+                            select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                        )
+                        rf = res.scalar_one()
+                        rf.parse_status = "failed"
+                        rf.parse_error = "不支持的文件类型或解析返回空结果"
+                        await db.commit()
+                    if task_id_str:
+                        async with AsyncSessionLocal() as db:
+                            await _update_task_status(
+                                db, task_id_str, "FAILED", 20,
+                                {"error": "不支持的文件类型或解析返回空结果"},
+                            )
+                    return
+
+
+                # 持久化解析结果
+                async with AsyncSessionLocal() as db:
+                    res = await db.execute(
+                        select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                    )
+                    rf = res.scalar_one()
+                    rf.parsed_content = parsed_content
+                    rf.parse_status = "completed"
+                    rf.parse_error = None
+                    await db.commit()
+
+                if task_id_str:
+                    async with AsyncSessionLocal() as db:
+                        await _update_task_status(db, task_id_str, "PROCESSING", 30)
+
+            except Exception as e:
+                logger.exception("文件生成任务: 文件解析异常 file_id=%d", file_id)
+                async with AsyncSessionLocal() as db:
+                    res = await db.execute(
+                        select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
+                    )
+                    rf = res.scalar_one_or_none()
+                    if rf:
+                        rf.parse_status = "failed"
+                        rf.parse_error = str(e)
+                    await db.commit()
+                    if task_id_str:
+                        await _update_task_status(
+                            db, task_id_str, "FAILED", 20,
+                            {"error": f"文件解析失败: {e}"},
+                        )
+                return
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # ------ Step 2: 组合输入源 ------
+        outline_source = _combine_outline_source(normalized_text, source_text)
+
+        if not outline_source.strip():
+            async with AsyncSessionLocal() as db:
+                if task_id_str:
+                    await _update_task_status(
+                        db, task_id_str, "FAILED", 40,
+                        {"error": "没有有效的输入内容"},
+                    )
+                res = await db.execute(
+                    select(PPTProject).where(PPTProject.id == project_id)
+                )
+                proj = res.scalar_one_or_none()
+                if proj:
+                    proj.status = "FAILED"
+                await db.commit()
+            return
+
+        # 写入 outline_text（作为输入源）
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(
+                select(PPTProject).where(PPTProject.id == project_id)
+            )
+            project = res.scalar_one()
+            project.outline_text = outline_source
+            await db.commit()
+
+        if task_id_str:
+            async with AsyncSessionLocal() as db:
+                await _update_task_status(db, task_id_str, "PROCESSING", 40)
+
+        # ------ Step 3: AI 生成大纲 ------
+        try:
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTProject).where(PPTProject.id == project_id)
+                )
+                project = res.scalar_one()
+                theme = project.template_style or project.theme
+                language = (project.settings or {}).get("language", "zh")
+
+            banana_svc = get_banana_service()
+            outline_data = await banana_svc.parse_outline_text(
+                outline_source, theme=theme, language=language,
+            )
+
+            # 检查是否返回了错误
+            if isinstance(outline_data, dict) and "error" in outline_data:
+                raise ValueError(f"大纲生成失败: {outline_data['error']}")
+
+        except Exception as e:
+            logger.exception("文件生成任务: 大纲生成失败 project_id=%d", project_id)
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTProject).where(PPTProject.id == project_id)
+                )
+                proj = res.scalar_one()
+                proj.status = "FAILED"
+                await db.commit()
+                if task_id_str:
+                    await _update_task_status(
+                        db, task_id_str, "FAILED", 70,
+                        {"error": f"大纲生成失败: {e}"},
+                    )
+            return
+
+        if task_id_str:
+            async with AsyncSessionLocal() as db:
+                await _update_task_status(db, task_id_str, "PROCESSING", 70)
+
+        # ------ Step 4: 创建页面骨架 ------
+        pages_data = _parse_outline_pages(outline_data)
+
+        if not pages_data:
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(PPTProject).where(PPTProject.id == project_id)
+                )
+                proj = res.scalar_one()
+                proj.status = "FAILED"
+                await db.commit()
+                if task_id_str:
+                    await _update_task_status(
+                        db, task_id_str, "FAILED", 80,
+                        {"error": "AI返回的大纲无法解析为页面"},
+                    )
+            return
+
+        async with AsyncSessionLocal() as db:
+            # 删除项目现有页面（如重试场景）
+            existing = await db.execute(
+                select(PPTPage).where(PPTPage.project_id == project_id)
+            )
+            for ep in existing.scalars().all():
+                await db.delete(ep)
+            await db.flush()
+
+            for i, page_data in enumerate(pages_data):
+                cfg = {}
+                if page_data.get("part"):
+                    cfg["part"] = page_data["part"]
+                if page_data.get("points") is not None:
+                    cfg["points"] = page_data.get("points", [])
+
+                page = PPTPage(
+                    project_id=project_id,
+                    page_number=i + 1,
+                    title=page_data.get("title", f"第{i+1}页"),
+                    config=cfg,
+                )
+                db.add(page)
+
+            # 覆写 outline_text 为结构化 JSON 结果
+            res = await db.execute(
+                select(PPTProject).where(PPTProject.id == project_id)
+            )
+            project = res.scalar_one()
+            project.outline_text = json.dumps(outline_data, ensure_ascii=False)
+            project.status = "PLANNING"
+            await db.commit()
+
+        # ------ Step 5: 完成 ------
+        if task_id_str:
+            async with AsyncSessionLocal() as db:
+                await _update_task_status(
+                    db, task_id_str, "COMPLETED", 100,
+                    {"status": "completed", "pages_count": len(pages_data)},
+                )
+
+        logger.info(
+            "文件生成任务完成: project_id=%d, pages=%d",
+            project_id, len(pages_data),
+        )
+
+    asyncio.run(_run())

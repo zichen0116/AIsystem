@@ -39,7 +39,10 @@
       "Bash(conda run:*)",
       "Bash(find:*)",
       "Bash(xargs grep:*)",
-      "Bash(npx vue-tsc:*)"
+      "Bash(npx vue-tsc:*)",
+      "Bash(alembic revision:*)",
+      "Bash(grep -n \"include_router.*ppt\\\\|prefix.*ppt\" /d/Develop/Project/AIsystem/backend/app/*.py)",
+      "Bash(npx vite:*)"
     ]
   }
 }

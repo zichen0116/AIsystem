@@ -130,12 +130,21 @@ function syncPages() {
         if (Array.isArray(parsed)) displayDesc = ''
       } catch (e) {}
     }
+
+    // 翻新项目页面状态
+    const renovationStatus = p.renovationStatus || null
+    let status = displayDesc ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending')
+    if (renovationStatus === 'failed') status = 'failed'
+    else if (renovationStatus === 'pending') status = 'renovation_pending'
+
     return {
       id: p.id,
       pageNumber: p.pageNumber,
       title: p.title,
       description: displayDesc,
-      status: displayDesc ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending'),
+      status,
+      renovationStatus,
+      renovationError: p.renovationError || null,
       config: p.config || {},
       extraFields: {
         visual_element: p.extraFields?.visual_element || '',
@@ -602,10 +611,12 @@ function getFieldIcon(iconType) {
                 :class="{
                   completed: page.status === 'completed',
                   generating: page.status === 'generating',
-                  pending: page.status === 'pending' || !page.status
+                  pending: page.status === 'pending' || !page.status,
+                  failed: page.status === 'failed',
+                  'renovation-pending': page.status === 'renovation_pending'
                 }"
               >
-                {{ page.status === 'completed' ? '已完成' : page.status === 'generating' ? '生成中...' : '待生成' }}
+                {{ page.status === 'completed' ? '已完成' : page.status === 'generating' ? '生成中...' : page.status === 'failed' ? '解析失败' : page.status === 'renovation_pending' ? '解析中' : '待生成' }}
               </span>
             </div>
             <div class="header-actions" v-if="editingCardId !== page.id">
@@ -630,7 +641,13 @@ function getFieldIcon(iconType) {
             <div class="desc-card-body">
               <h4 class="desc-title">{{ page.title }}</h4>
 
-              <div v-if="page.description" class="desc-content">
+              <div v-if="page.status === 'failed'" class="desc-failed">
+                解析失败{{ page.renovationError ? '：' + page.renovationError : '' }}
+              </div>
+              <div v-else-if="page.status === 'renovation_pending'" class="desc-processing">
+                正在解析中，请稍候...
+              </div>
+              <div v-else-if="page.description" class="desc-content">
                 <p>{{ page.description }}</p>
               </div>
               <div v-else class="desc-empty">
@@ -1263,6 +1280,16 @@ function getFieldIcon(iconType) {
   color: #94a3b8;
 }
 
+.status-badge.failed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.status-badge.renovation-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .header-actions {
   display: flex;
   gap: 4px;
@@ -1329,6 +1356,24 @@ function getFieldIcon(iconType) {
   font-size: 13px;
   color: #94a3b8;
   font-style: italic;
+}
+
+.desc-failed {
+  font-size: 13px;
+  color: #dc2626;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  border: 1px solid #fca5a5;
+}
+
+.desc-processing {
+  font-size: 13px;
+  color: #92400e;
+  padding: 8px 10px;
+  background: #fffbeb;
+  border-radius: 6px;
+  border: 1px solid #fcd34d;
 }
 
 .desc-extra-fields {

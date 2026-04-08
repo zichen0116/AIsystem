@@ -69,10 +69,21 @@ function toggleSelectAll(val) {
 
 function getStatusText(project) {
   const s = project.status
+  const ct = project.creation_type
+
+  // 文件生成中
+  if (ct === 'file' && (s === 'GENERATING' || s === 'PARSE')) return '文件解析中'
+  // 翻新中
+  if (ct === 'renovation' && (s === 'GENERATING' || s === 'PARSE')) return '翻新解析中'
+
   if (s === 'COMPLETED' || s === 'EXPORTED') return '已完成'
   if (s === 'INTENT_CONFIRMED') return '待生成大纲'
   if (project.page_count > 0 && project.cover_image_url) return '已完成'
   if (project.page_count > 0) return '待生成图片'
+
+  if (ct === 'file') return '文件生成'
+  if (ct === 'renovation') return 'PPT翻新'
+
   return '待生成描述'
 }
 
@@ -80,14 +91,21 @@ function getStatusType(project) {
   const text = getStatusText(project)
   if (text === '已完成') return 'success'
   if (text === '待生成图片') return 'warning'
+  if (text.includes('解析中')) return 'warning'
   return 'info'
 }
 
 function getProjectPhase(project) {
+  const ct = project.creation_type
+
   if (project.cover_image_url) return 'preview'
+
+  // file / renovation 项目始终进入 outline（不走 dialog）
+  if (ct === 'file' || ct === 'renovation') return 'outline'
+
   if (project.status === 'INTENT_CONFIRMED') return 'outline'
   if (project.page_count > 0) return 'outline'
-  if (project.creation_type === 'dialog') return 'dialog'
+  if (ct === 'dialog') return 'dialog'
   return 'outline'
 }
 
@@ -234,6 +252,8 @@ function goHome() {
             <div class="card-body">
               <div class="card-title">{{ project.title || '未命名项目' }}</div>
               <div class="card-meta">
+                <span v-if="project.creation_type === 'file'" class="meta-item meta-type">文件生成</span>
+                <span v-else-if="project.creation_type === 'renovation'" class="meta-item meta-type">PPT翻新</span>
                 <span class="meta-item">
                   <el-icon><Document /></el-icon>
                   {{ project.page_count || 0 }} 页
@@ -449,6 +469,14 @@ function goHome() {
   gap: 4px;
   font-size: 12px;
   color: #9ca3af;
+}
+
+.meta-type {
+  color: #3b82f6;
+  font-weight: 500;
+  padding: 1px 6px;
+  background: #dbeafe;
+  border-radius: 4px;
 }
 
 /* 右侧区域 */
