@@ -3100,10 +3100,10 @@ async def regenerate_page_renovation(
         project.outline_text = "\n\n".join(outline_parts)
         project.description_text = "\n\n".join(desc_parts)
 
-        # 如果之前 project 是 FAILED 且现在有成功页，更新为 DESCRIPTIONS_GENERATED
+        # 如果之前 project 是 FAILED 且现在有成功页，更新为 COMPLETED
         success_count = sum(1 for p in all_pages if p.renovation_status == "completed")
         if success_count > 0 and project.status == "FAILED":
-            project.status = "DESCRIPTIONS_GENERATED"
+            project.status = "COMPLETED"
 
         await db.commit()
         await db.refresh(page)
