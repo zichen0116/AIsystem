@@ -456,11 +456,37 @@ export async function getTask(projectId, taskId) {
   return await apiRequest(`${API}/projects/${projectId}/tasks/${taskId}`)
 }
 
+// ============ 文件生成 ============
+
+export async function createFileGenerationProject({ file, sourceText, title, theme, templateStyle, settings }) {
+  const formData = new FormData()
+  if (file) formData.append('file', file)
+  if (sourceText) formData.append('source_text', sourceText)
+  if (title) formData.append('title', title)
+  if (theme) formData.append('theme', theme)
+  if (templateStyle) formData.append('template_style', templateStyle)
+  if (settings) formData.append('settings', JSON.stringify(settings))
+
+  const res = await authFetch(`${API}/projects/file-generation`, {
+    method: 'POST',
+    body: formData
+  })
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(detail || '创建文件生成项目失败')
+  }
+  return res.json()
+}
+
 // ============ 翻新 ============
 
-export async function createRenovationProject(file) {
+export async function createRenovationProject({ file, keepLayout, templateStyle, language }) {
   const formData = new FormData()
   formData.append('file', file)
+  if (keepLayout != null) formData.append('keep_layout', String(keepLayout))
+  if (templateStyle) formData.append('template_style', templateStyle)
+  if (language) formData.append('language', language)
 
   const res = await authFetch(`${API}/projects/renovation`, {
     method: 'POST',
@@ -468,7 +494,8 @@ export async function createRenovationProject(file) {
   })
 
   if (!res.ok) {
-    throw new Error('创建翻新项目失败')
+    const detail = await res.text().catch(() => '')
+    throw new Error(detail || '创建翻新项目失败')
   }
   return res.json()
 }

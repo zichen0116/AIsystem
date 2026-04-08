@@ -150,8 +150,8 @@ class TestFileGenerationRoute:
 
         try:
             with patch(
-                "app.generators.ppt.celery_tasks.file_generation_task.delay"
-            ) as mock_delay:
+                "app.generators.ppt.banana_routes.dispatch_file_generation_task"
+            ) as mock_dispatch:
                 transport = ASGITransport(app=app)
                 async with AsyncClient(transport=transport, base_url="http://test") as client:
                     response = await client.post(
@@ -165,9 +165,11 @@ class TestFileGenerationRoute:
                 assert body["project_id"] > 0
                 assert body["task_id"] is not None
                 assert body["reference_file_id"] is None
-                mock_delay.assert_called_once()
+                mock_dispatch.assert_called_once()
         finally:
             app.dependency_overrides.pop(get_current_user, None)
+            from app.core.database import engine
+            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_no_input_returns_400(self):
@@ -192,6 +194,8 @@ class TestFileGenerationRoute:
             assert response.status_code == 400
         finally:
             app.dependency_overrides.pop(get_current_user, None)
+            from app.core.database import engine
+            await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_unsupported_file_type_returns_400(self):
@@ -217,6 +221,8 @@ class TestFileGenerationRoute:
             assert response.status_code == 400
         finally:
             app.dependency_overrides.pop(get_current_user, None)
+            from app.core.database import engine
+            await engine.dispose()
 
 
 class TestFileGenerationTask:

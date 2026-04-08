@@ -190,8 +190,8 @@ def main():
         # 4. 启动 Celery Worker
         manager.start_process(
             "Celery Worker",
-            [sys.executable, "-m", "celery", "-A", "app.celery", 
-             "worker", "--loglevel=info"],
+            [sys.executable, "-m", "celery", "-A", "app.celery",
+             "worker", "--loglevel=info", "-Q", "default,celery"],
             cwd=backend_dir,
             need_wait=False
         )

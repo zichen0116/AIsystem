@@ -188,7 +188,11 @@ class RenovationService:
         Returns:
             图片路径列表，渲染失败的页面为 None
         """
-        import fitz
+        try:
+            import fitz
+        except ModuleNotFoundError:
+            logger.warning("PyMuPDF(fitz) unavailable, using placeholder page images for renovation preview")
+            return self._render_pdf_to_placeholder_images(pdf_path, output_dir)
 
         doc = fitz.open(pdf_path)
         results: list[str | None] = []
@@ -210,17 +214,20 @@ class RenovationService:
 
     def get_pdf_aspect_ratio(self, pdf_path: str) -> str:
         """从 PDF 首页提取宽高比，归一化为标准比例"""
-        import fitz
+        try:
+            import fitz
+        except ModuleNotFoundError:
+            w, h = self._infer_pdf_page_size_with_pypdf(pdf_path)
+        else:
+            doc = fitz.open(pdf_path)
+            if len(doc) == 0:
+                doc.close()
+                return "16:9"
 
-        doc = fitz.open(pdf_path)
-        if len(doc) == 0:
+            page = doc[0]
+            rect = page.rect
+            w, h = rect.width, rect.height
             doc.close()
-            return "16:9"
-
-        page = doc[0]
-        rect = page.rect
-        w, h = rect.width, rect.height
-        doc.close()
 
         ratio = w / h if h > 0 else 1.78
         if ratio > 1.6:
@@ -233,6 +240,43 @@ class RenovationService:
             return "3:4"
         else:
             return "9:16"
+
+    def _infer_pdf_page_size_with_pypdf(self, pdf_path: str) -> tuple[float, float]:
+        from PyPDF2 import PdfReader
+
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            if not reader.pages:
+                return 16, 9
+            page = reader.pages[0]
+            box = page.mediabox
+            return float(box.width or 16), float(box.height or 9)
+
+    def _render_pdf_to_placeholder_images(self, pdf_path: str, output_dir: str) -> list[str | None]:
+        from PyPDF2 import PdfReader
+        from PIL import Image, ImageDraw
+
+        results: list[str | None] = []
+        with open(pdf_path, "rb") as f:
+            reader = PdfReader(f)
+            total_pages = len(reader.pages)
+
+        for page_num in range(total_pages):
+            try:
+                img = Image.new("RGB", (1600, 900), color=(245, 247, 250))
+                draw = ImageDraw.Draw(img)
+                draw.rectangle((60, 60, 1540, 840), outline=(210, 216, 224), width=3)
+                draw.text((120, 180), f"Page {page_num + 1}", fill=(32, 37, 45))
+                draw.text((120, 260), "Preview unavailable: PyMuPDF(fitz) is not installed.", fill=(90, 98, 108))
+                draw.text((120, 320), "The renovation parsing task can still continue.", fill=(90, 98, 108))
+                img_path = os.path.join(output_dir, f"page_{page_num + 1}.png")
+                img.save(img_path)
+                results.append(img_path)
+            except Exception as e:
+                logger.warning("Placeholder render failed for page %d: %s", page_num + 1, e)
+                results.append(None)
+
+        return results
 
     # ----- PDF 拆分 / 解析 — 委托 ppt_parse_service -----
 

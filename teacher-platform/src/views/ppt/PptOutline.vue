@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
 import { buildOutlinePromptFromIntent, intentSummaryToText } from '@/utils/pptIntent'
@@ -19,6 +19,33 @@ const isPanelOpen = ref(true)
 const isInputDirty = ref(false)
 const saveTimer = ref(null)
 const outlinePages = ref([])
+
+// 文件生成 / 翻新 任务状态
+const isFileGenerationMode = computed(() => pptStore.creationType === 'file')
+const isRenovationMode = computed(() => pptStore.creationType === 'renovation')
+const isTaskProcessing = computed(() => {
+  if (isFileGenerationMode.value) {
+    return pptStore.fileGenerationTaskStatus === 'PENDING' || pptStore.fileGenerationTaskStatus === 'PROCESSING'
+  }
+  if (isRenovationMode.value) {
+    return pptStore.renovationTaskStatus === 'PENDING' || pptStore.renovationTaskStatus === 'PROCESSING'
+  }
+  return false
+})
+const isTaskFailed = computed(() => {
+  if (isFileGenerationMode.value) return pptStore.fileGenerationTaskStatus === 'FAILED'
+  if (isRenovationMode.value) return pptStore.renovationTaskStatus === 'FAILED'
+  return false
+})
+const taskErrorMessage = computed(() => {
+  if (isFileGenerationMode.value && pptStore.fileGenerationTaskResult?.error) {
+    return pptStore.fileGenerationTaskResult.error
+  }
+  if (isRenovationMode.value && pptStore.renovationTaskResult?.error) {
+    return pptStore.renovationTaskResult.error
+  }
+  return ''
+})
 
 // 按part分组的结构化数据（用于展示带分组的目录）
 const groupedPages = computed(() => {
@@ -40,6 +67,13 @@ const groupedPages = computed(() => {
 // Simplified page data structure
 onMounted(async () => {
   if (pptStore.projectId) {
+    // 文件生成/翻新模式下，页面数据由后端任务生成，不走意图流程
+    if (isFileGenerationMode.value || isRenovationMode.value) {
+      await pptStore.fetchPages(pptStore.projectId)
+      syncOutlinePages()
+      return
+    }
+
     // 加载已确认的意图摘要（如果store中没有，从后端获取）
     if (!pptStore.intentSummary || Object.keys(pptStore.intentSummary).length === 0) {
       await pptStore.fetchIntent(pptStore.projectId)
@@ -62,6 +96,10 @@ onMounted(async () => {
   }
 })
 
+onUnmounted(() => {
+  // 不停止轮询 - 让它在后台继续
+})
+
 // Watch for store changes
 watch(() => pptStore.outlinePages, () => {
   syncOutlinePages()
@@ -74,7 +112,9 @@ function syncOutlinePages() {
     title: p.title,
     points: p.points || [],
     part: p.part || '',
-    outline_content: p.outline_content || { title: p.title, points: p.points || [] }
+    outline_content: p.outline_content || { title: p.title, points: p.points || [] },
+    renovationStatus: p.renovationStatus || null,
+    renovationError: p.renovationError || null
   }))
 }
 
@@ -578,13 +618,27 @@ async function saveCard(index) {
           <button class="error-close-btn" @click="generateError = ''">✕</button>
         </div>
 
+        <!-- 文件生成 / 翻新 任务失败提示 -->
+        <div v-if="isTaskFailed" class="generate-error-banner">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          <span>{{ isFileGenerationMode ? '文件生成失败，请检查文件内容后重试' : '翻新解析失败，请重新上传或检查文件内容' }}{{ taskErrorMessage ? '：' + taskErrorMessage : '' }}</span>
+        </div>
+
+        <!-- 文件生成 / 翻新 任务处理中 -->
+        <div v-if="isTaskProcessing && outlinePages.length === 0" class="generating-state">
+          <div class="generating-spinner"></div>
+          <p>{{ isFileGenerationMode ? '正在解析文档并生成大纲，请稍候' : '正在解析旧 PPT，请稍候' }}</p>
+        </div>
+
         <!-- 生成中状态（无页面时） -->
-        <div v-if="isGenerating && outlinePages.length === 0" class="generating-state">
+        <div v-else-if="isGenerating && outlinePages.length === 0" class="generating-state">
           <div class="generating-spinner"></div>
           <p>AI 正在生成大纲，请稍候...</p>
         </div>
 
-        <div v-else-if="outlinePages.length === 0" class="empty-state">
+        <div v-else-if="outlinePages.length === 0 && !isTaskProcessing" class="empty-state">
           <div class="empty-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="40" height="40">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -631,6 +685,9 @@ async function saveCard(index) {
                   <span class="page-badge">第{{ page.pageNumber }}页</span>
                   <span v-if="outlinePages.indexOf(page) === 0" class="cover-badge">封面</span>
                   <span v-if="page.part" class="part-badge">{{ page.part }}</span>
+                  <span v-if="page.renovationStatus === 'completed'" class="renovation-badge completed">已翻新</span>
+                  <span v-else-if="page.renovationStatus === 'pending'" class="renovation-badge pending">待解析</span>
+                  <span v-else-if="page.renovationStatus === 'failed'" class="renovation-badge failed">解析失败</span>
                 </div>
 
                 <div class="page-info">
@@ -1274,6 +1331,28 @@ async function saveCard(index) {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
+}
+
+.renovation-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.renovation-badge.completed {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.renovation-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.renovation-badge.failed {
+  background: #fee2e2;
+  color: #dc2626;
 }
 
 .page-info {

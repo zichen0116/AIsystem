@@ -61,6 +61,11 @@ from app.generators.ppt.banana_schemas import (
     MaterialGenerateRequest,
     FileGenerationResponse,
 )
+from app.generators.ppt.task_dispatcher import (
+    dispatch_file_generation_task,
+    dispatch_renovation_parse_task,
+    ensure_pending_task_started,
+)
 
 router = APIRouter(prefix="/ppt", tags=["PPT生成"])
 logger = logging.getLogger(__name__)
@@ -526,6 +531,11 @@ async def create_project(
     settings = dict(data.settings or {})
     template_style_raw = data.template_style if data.template_style is not None else settings.get("template_style")
     template_style = str(template_style_raw or "").strip() or None
+
+    if has_text:
+        parsed_settings["file_generation_source_text"] = source_text.strip()
+    else:
+        parsed_settings.pop("file_generation_source_text", None)
 
     project = PPTProject(
         user_id=current_user.id,
@@ -1674,6 +1684,8 @@ async def get_export_task(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status == "PENDING":
+        await ensure_pending_task_started(db, task)
     return task
 
 
@@ -1921,8 +1933,7 @@ async def file_generation(
     await db.commit()
 
     # 4. 启动 Celery 任务
-    from app.generators.ppt.celery_tasks import file_generation_task
-    file_generation_task.delay(
+    dispatch_file_generation_task(
         project_id=project.id,
         file_id=ref_file_id,
         source_text=source_text if has_text else None,
@@ -2005,8 +2016,7 @@ async def parse_reference_file(
     ref_file.parse_error = None
     await db.commit()
 
-    from app.generators.ppt.celery_tasks import renovation_parse_task
-    renovation_parse_task.delay(project_id=project_id, file_id=file_id, task_id_str=task_id)
+    dispatch_renovation_parse_task(project_id=project_id, file_id=file_id, task_id_str=task_id)
 
     return {"status": "processing", "file_id": file_id, "task_id": task_id}
 
@@ -2923,8 +2933,7 @@ async def create_renovation_project(
         db.add(task)
         await db.commit()
 
-        from app.generators.ppt.celery_tasks import renovation_parse_task
-        renovation_parse_task.delay(
+        dispatch_renovation_parse_task(
             project_id=project.id,
             file_id=ref_file.id,
             task_id_str=task_id,

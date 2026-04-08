@@ -4,6 +4,11 @@
 import { defineStore } from 'pinia'
 import { apiRequest, authFetch } from '@/api/http'
 import { createDefaultIntentState, normalizeIntentState, resolveIntentPhase } from '@/utils/pptIntent'
+import {
+  createFileGenerationProject as apiCreateFileGeneration,
+  createRenovationProject as apiCreateRenovation,
+  getTask as apiGetTask
+} from '@/api/ppt'
 
 const API = '/api/v1/ppt'
 
@@ -63,7 +68,20 @@ export const usePptStore = defineStore('ppt', {
       description_generation_mode: 'auto',
       description_extra_fields: ['visual_element', 'visual_focus', 'layout', 'notes'],
       detail_level: 'default'
-    }
+    },
+
+    // 文件生成任务
+    fileGenerationTaskId: null,
+    fileGenerationTaskStatus: null, // null | 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+    fileGenerationTaskResult: null,
+    _fileGenerationPollTimer: null,
+
+    // 翻新任务
+    renovationTaskId: null,
+    renovationTaskStatus: null,
+    renovationTaskResult: null,
+    renovationFailedPages: [],
+    _renovationPollTimer: null
   }),
 
   getters: {
@@ -91,6 +109,8 @@ export const usePptStore = defineStore('ppt', {
     },
 
     resetProjectWorkspace() {
+      this.stopFileGenerationPolling()
+      this.stopRenovationPolling()
       this.projectId = null
       this.projectStatus = null
       this.projectData = null
@@ -104,6 +124,13 @@ export const usePptStore = defineStore('ppt', {
       this.generationProgress = { total: 0, completed: 0, failed: 0 }
       this.materials = []
       this.exportTasks = []
+      this.fileGenerationTaskId = null
+      this.fileGenerationTaskStatus = null
+      this.fileGenerationTaskResult = null
+      this.renovationTaskId = null
+      this.renovationTaskStatus = null
+      this.renovationTaskResult = null
+      this.renovationFailedPages = []
       this.resetIntentState()
     },
     // ============ 项目管理 ============
@@ -234,6 +261,11 @@ export const usePptStore = defineStore('ppt', {
           const extraFields = config.extra_fields && typeof config.extra_fields === 'object'
             ? config.extra_fields
             : {}
+          const renovationStatus = p.renovation_status || config.renovation_status || null
+          const renovationError = p.renovation_error || config.renovation_error || null
+          const pageStatus = renovationStatus === 'failed'
+            ? 'failed'
+            : (p.is_description_generating ? 'generating' : (p.description ? 'completed' : 'pending'))
           return {
             id: p.id,
             pageNumber: p.page_number,
@@ -254,7 +286,9 @@ export const usePptStore = defineStore('ppt', {
               ...extraFields,
               notes: p.notes || ''
             },
-            status: p.is_description_generating ? 'generating' : (p.description ? 'completed' : 'pending')
+            status: pageStatus,
+            renovationStatus,
+            renovationError
           }
         })
         return pages
@@ -314,7 +348,11 @@ export const usePptStore = defineStore('ppt', {
               ...extraFields,
               notes: page.notes || ''
             },
-            status: page.is_description_generating ? 'generating' : (page.description ? 'completed' : 'pending')
+            status: (page.renovation_status || config.renovation_status) === 'failed'
+              ? 'failed'
+              : (page.is_description_generating ? 'generating' : (page.description ? 'completed' : 'pending')),
+            renovationStatus: page.renovation_status || config.renovation_status || null,
+            renovationError: page.renovation_error || config.renovation_error || null
           }
         }
         return page
@@ -666,6 +704,42 @@ export const usePptStore = defineStore('ppt', {
       } else {
         this.resetIntentState(this.projectData?.theme || this.outlineText || '')
       }
+
+      // 翻新项目：同步失败页信息，并检查是否需要恢复轮询
+      if (this.creationType === 'renovation') {
+        this.syncRenovationFailedPages()
+        if (this.projectStatus === 'PARSE' || this.projectStatus === 'GENERATING') {
+          try {
+            const { getTasks } = await import('@/api/ppt')
+            const tasks = await getTasks(projectId)
+            const activeTask = tasks.find(t =>
+              t.task_type === 'renovation_parse' && (t.status === 'PENDING' || t.status === 'PROCESSING')
+            )
+            if (activeTask) {
+              this.renovationTaskId = activeTask.task_id
+              this.renovationTaskStatus = activeTask.status
+              this.pollRenovationTask(projectId, activeTask.task_id)
+            }
+          } catch (_) { /* ignore */ }
+        }
+      }
+
+      // 文件生成项目：检查是否需要恢复轮询
+      if (this.creationType === 'file' && (this.projectStatus === 'GENERATING')) {
+        try {
+          const { getTasks } = await import('@/api/ppt')
+          const tasks = await getTasks(projectId)
+          const activeTask = tasks.find(t =>
+            t.task_type === 'file_generation' && (t.status === 'PENDING' || t.status === 'PROCESSING')
+          )
+          if (activeTask) {
+            this.fileGenerationTaskId = activeTask.task_id
+            this.fileGenerationTaskStatus = activeTask.status
+            this.pollFileGenerationTask(projectId, activeTask.task_id)
+          }
+        } catch (_) { /* ignore */ }
+      }
+
       this.setPhase(resolveIntentPhase(this.projectData, this.outlinePages.length, this.intentState))
     },
 
@@ -705,6 +779,107 @@ export const usePptStore = defineStore('ppt', {
         this.setError('parseRef', error.message)
         throw error
       }
+    },
+
+    // ============ 文件生成 ============
+
+    async createFileGenerationProject(payload) {
+      try {
+        this.resetProjectWorkspace()
+        const res = await apiCreateFileGeneration(payload)
+        this.projectId = res.project_id
+        this.creationType = 'file'
+        this.projectStatus = 'GENERATING'
+        this.fileGenerationTaskId = res.task_id
+        this.fileGenerationTaskStatus = 'PROCESSING'
+        return res
+      } catch (error) {
+        this.setError('createFileGeneration', error.message)
+        throw error
+      }
+    },
+
+    pollFileGenerationTask(projectId, taskId) {
+      this.stopFileGenerationPolling()
+      this._fileGenerationPollTimer = setInterval(async () => {
+        try {
+          const task = await apiGetTask(projectId, taskId)
+          this.fileGenerationTaskStatus = task.status
+          this.fileGenerationTaskResult = task.result
+          if (task.status === 'COMPLETED') {
+            this.stopFileGenerationPolling()
+            await this.fetchProject(projectId)
+            await this.fetchPages(projectId)
+          } else if (task.status === 'FAILED') {
+            this.stopFileGenerationPolling()
+            await this.fetchProject(projectId)
+            await this.fetchPages(projectId)
+          }
+        } catch (e) {
+          console.error('[PPT Store] 文件生成轮询失败:', e)
+          this.stopFileGenerationPolling()
+          this.fileGenerationTaskStatus = 'FAILED'
+        }
+      }, 2000)
+    },
+
+    stopFileGenerationPolling() {
+      if (this._fileGenerationPollTimer) {
+        clearInterval(this._fileGenerationPollTimer)
+        this._fileGenerationPollTimer = null
+      }
+    },
+
+    // ============ 翻新 ============
+
+    async createRenovationProjectAction(payload) {
+      try {
+        this.resetProjectWorkspace()
+        const res = await apiCreateRenovation(payload)
+        this.projectId = res.project_id
+        this.creationType = 'renovation'
+        this.projectStatus = 'PARSE'
+        this.renovationTaskId = res.task_id
+        this.renovationTaskStatus = 'PROCESSING'
+        return res
+      } catch (error) {
+        this.setError('createRenovation', error.message)
+        throw error
+      }
+    },
+
+    pollRenovationTask(projectId, taskId) {
+      this.stopRenovationPolling()
+      this._renovationPollTimer = setInterval(async () => {
+        try {
+          const task = await apiGetTask(projectId, taskId)
+          this.renovationTaskStatus = task.status
+          this.renovationTaskResult = task.result
+          if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+            this.stopRenovationPolling()
+            await this.fetchProject(projectId)
+            await this.fetchPages(projectId)
+            this.syncRenovationFailedPages()
+          }
+        } catch (e) {
+          console.error('[PPT Store] 翻新轮询失败:', e)
+          this.stopRenovationPolling()
+          this.renovationTaskStatus = 'FAILED'
+        }
+      }, 2000)
+    },
+
+    stopRenovationPolling() {
+      if (this._renovationPollTimer) {
+        clearInterval(this._renovationPollTimer)
+        this._renovationPollTimer = null
+      }
+    },
+
+    syncRenovationFailedPages() {
+      this.renovationFailedPages = this.outlinePages
+        .filter(p => p.renovationStatus === 'failed')
+        .map(p => ({ id: p.id, title: p.title, error: p.renovationError || '' }))
     },
 
     // ============ 素材 ============

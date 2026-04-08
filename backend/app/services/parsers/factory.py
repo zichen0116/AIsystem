@@ -7,10 +7,6 @@ from typing import Optional
 import logging
 
 from app.services.parsers.base import BaseParser, ParseResult
-from app.services.parsers.pdf_parser import PDFParser
-from app.services.parsers.docx_parser import WordParser
-from app.services.parsers.video_parser import VideoParser
-from app.services.parsers.image_parser import ImageParser
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +44,16 @@ class ParserFactory:
     def _create_parser(cls, ext: str) -> Optional[BaseParser]:
         """根据扩展名创建解析器"""
         if ext == ".pdf":
+            from app.services.parsers.pdf_parser import PDFParser
             return PDFParser()
         elif ext in [".docx", ".doc"]:
+            from app.services.parsers.docx_parser import WordParser
             return WordParser()
         elif ext in [".mp4", ".avi", ".mov", ".mkv", ".flv"]:
+            from app.services.parsers.video_parser import VideoParser
             return VideoParser()
         elif ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
+            from app.services.parsers.image_parser import ImageParser
             return ImageParser()
         else:
             logger.warning(f"不支持的文件类型: {ext}")

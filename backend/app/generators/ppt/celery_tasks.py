@@ -1686,6 +1686,49 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     return normalized_text, parsed_content
 
 
+async def _parse_reference_file_content(
+    tmp_path: str,
+    *,
+    filename: str | None,
+    file_type: str | None,
+) -> tuple[str, dict]:
+    """Parse a reference file with local parsers first, then PDF remote fallback."""
+    parse_error: Exception | None = None
+
+    try:
+        from app.services.parsers.factory import ParserFactory
+
+        parse_result = await ParserFactory.parse_file(tmp_path)
+        if parse_result is not None:
+            return _normalize_parse_result(parse_result)
+    except Exception as exc:
+        parse_error = exc
+        logger.warning("Primary parser failed for %s: %s", filename or tmp_path, exc)
+
+    ext = _normalize_extension(file_type, filename)
+    if ext == "pdf":
+        from app.generators.ppt.ppt_parse_service import get_ppt_parse_service
+
+        svc = get_ppt_parse_service()
+        markdown, error = await svc._parse_pdf_v4(tmp_path)
+        if error:
+            raise RuntimeError(error)
+
+        normalized_text = str(markdown or "").strip()
+        parsed_content = {
+            "normalized_text": normalized_text,
+            "chunks_meta": [],
+            "images": [],
+            "fallback_parser": "ppt_parse_service",
+        }
+        return normalized_text, parsed_content
+
+    if parse_error is not None:
+        raise parse_error
+
+    raise RuntimeError(f"Unsupported or empty parse result for file: {filename or tmp_path}")
+
+
 def _combine_outline_source(
     normalized_text: str | None,
     source_text: str | None,
@@ -1807,6 +1850,7 @@ def file_generation_task(
                     ref_file = res.scalar_one()
                     oss_path = ref_file.oss_path
                     filename = ref_file.filename
+                    file_type = ref_file.file_type
 
                 tmp_path = os.path.join(tmp_dir, filename)
 
@@ -1852,10 +1896,12 @@ def file_generation_task(
                     _shutil.copy2(oss_path, tmp_path)
 
                 # 调用 ParserFactory 解析
-                from app.services.parsers.factory import ParserFactory
-
-                parse_result = await ParserFactory.parse_file(tmp_path)
-                if parse_result is None:
+                normalized_text, parsed_content = await _parse_reference_file_content(
+                    tmp_path,
+                    filename=filename,
+                    file_type=file_type,
+                )
+                if not normalized_text.strip():
                     async with AsyncSessionLocal() as db:
                         res = await db.execute(
                             select(PPTReferenceFile).where(PPTReferenceFile.id == file_id)
