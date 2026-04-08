@@ -202,7 +202,7 @@ class TestRenovationParseTaskResults:
         failed_count = sum(1 for r in results if not r.get("success"))
 
         final_status = "COMPLETED" if success_count > 0 else "FAILED"
-        project_status = "DESCRIPTIONS_GENERATED" if success_count > 0 else "FAILED"
+        project_status = "COMPLETED" if success_count > 0 else "FAILED"
 
         assert final_status == "FAILED"
         assert project_status == "FAILED"
