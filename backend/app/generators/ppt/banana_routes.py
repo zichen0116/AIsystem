@@ -2007,7 +2007,7 @@ async def parse_reference_file(
     task = PPTTask(
         project_id=project_id,
         task_id=task_id,
-        task_type="renovation_parse",
+        task_type="file_generation",
         status="PENDING",
     )
     db.add(task)
@@ -2016,7 +2016,12 @@ async def parse_reference_file(
     ref_file.parse_error = None
     await db.commit()
 
-    dispatch_renovation_parse_task(project_id=project_id, file_id=file_id, task_id_str=task_id)
+    dispatch_file_generation_task(
+        project_id=project_id,
+        file_id=file_id,
+        source_text=None,
+        task_id_str=task_id,
+    )
 
     return {"status": "processing", "file_id": file_id, "task_id": task_id}
 

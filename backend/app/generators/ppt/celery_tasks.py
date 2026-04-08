@@ -4,6 +4,7 @@ PPT生成模块 - Celery异步任务
 import asyncio
 import logging
 import os
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -781,7 +782,6 @@ async def _update_project_export(project_id: int, export_url: str):
 # ---------------------------------------------------------------------------
 # 任务：导出 PPTX
 # ---------------------------------------------------------------------------
-
 @celery_app.task(bind=True, name="banana-slides.export_pptx")
 def export_pptx_task(self: Task, project_id: int, task_id_str: str = None):
     """
@@ -1658,21 +1658,107 @@ def generate_material_task(
 # 文件生成 - 辅助函数
 # ---------------------------------------------------------------------------
 
+_IMAGE_TAG_RE = re.compile(r"\[IMAGE:\s*[^\]]+\]", flags=re.IGNORECASE)
+_EMPTY_SYMBOL_LINE_RE = re.compile(r"^[\s\-\_\,\.\:\;\[\]\(\)]+$")
+
+
+def _clean_chunk_text(text: str) -> str:
+    """
+    清理解析文本中的图片占位符（如 [IMAGE: xxx]）和残留符号行，
+    避免模型把技术标记当成大纲内容。
+    """
+    if not text:
+        return ""
+
+    stripped = _IMAGE_TAG_RE.sub("", text)
+    lines: list[str] = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if "IMAGE:" in line.upper():
+            continue
+        if _EMPTY_SYMBOL_LINE_RE.fullmatch(line):
+            continue
+        lines.append(line)
+
+    while lines and lines[0] == "":
+        lines.pop(0)
+    while lines and lines[-1] == "":
+        lines.pop()
+
+    return "\n".join(lines).strip()
+
+
+def _normalize_image_descriptions(value) -> list[dict]:
+    """标准化 metadata.image_descriptions 字段。"""
+    if not isinstance(value, list):
+        return []
+
+    results: list[dict] = []
+    for item in value:
+        if isinstance(item, dict):
+            desc = str(item.get("description") or "").strip()
+            filename = str(item.get("filename") or "").strip()
+            if desc:
+                results.append({"filename": filename, "description": desc})
+        elif isinstance(item, str):
+            desc = item.strip()
+            if desc:
+                results.append({"filename": "", "description": desc})
+    return results
+
+
+def _build_image_context(image_descs: list[dict]) -> str:
+    """
+    把图片描述组织为大纲模型可读的上下文文本。
+    """
+    if not image_descs:
+        return ""
+
+    lines = ["[图片内容补充]"]
+    for idx, item in enumerate(image_descs, start=1):
+        filename = str(item.get("filename") or "").strip()
+        desc = str(item.get("description") or "").strip()
+        if not desc:
+            continue
+        if filename:
+            lines.append(f"- 图片{idx}（{filename}）: {desc}")
+        else:
+            lines.append(f"- 图片{idx}: {desc}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
 def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     """
-    将 ParserFactory 返回的 ParseResult 标准化为大纲生成输入。
+    规范化 parser 输出，生成用于大纲模型的文本输入。
 
     Returns:
         (normalized_text, parsed_content_dict)
     """
     chunks_meta = []
     text_parts = []
+    all_image_descriptions: list[dict] = []
 
     for chunk in parse_result.chunks:
-        text_parts.append(chunk.content)
+        raw_content = str(chunk.content or "")
+        chunk_metadata = dict(chunk.metadata or {})
+        image_descriptions = _normalize_image_descriptions(chunk_metadata.get("image_descriptions"))
+
+        cleaned_content = _clean_chunk_text(raw_content)
+        image_context = _build_image_context(image_descriptions)
+        chunk_parts = [part for part in (cleaned_content, image_context) if part]
+        merged_chunk_content = "\n\n".join(chunk_parts).strip()
+        if merged_chunk_content:
+            text_parts.append(merged_chunk_content)
+
+        all_image_descriptions.extend(image_descriptions)
         chunks_meta.append({
-            "content": chunk.content,
-            **chunk.metadata,
+            "content": cleaned_content,
+            "raw_content": raw_content,
+            "image_descriptions": image_descriptions,
+            **chunk_metadata,
         })
 
     normalized_text = "\n\n".join(text_parts)
@@ -1681,6 +1767,7 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
         "normalized_text": normalized_text,
         "chunks_meta": chunks_meta,
         "images": list(parse_result.images),
+        "image_descriptions": all_image_descriptions,
     }
 
     return normalized_text, parsed_content
@@ -1734,24 +1821,29 @@ def _combine_outline_source(
     source_text: str | None,
 ) -> str:
     """
-    组合文件解析结果和用户文本为统一的大纲输入源。
-
-    规则：
-    - 有文件无文本 → 文件内容
-    - 无文件有文本 → 用户文本
-    - 两者都有 → 文件为主，用户文本为补充
+    组合文件解析内容和用户补充文本，明确区分信息来源。
     """
     has_file = bool(normalized_text and normalized_text.strip())
     has_text = bool(source_text and source_text.strip())
 
     if has_file and has_text:
-        return f"{normalized_text}\n\n---\n用户补充说明：\n{source_text}"
-    elif has_file:
-        return normalized_text
-    elif has_text:
-        return source_text
-    else:
-        return ""
+        return (
+            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
+            f"{normalized_text}\n\n"
+            "以下是用户补充要求：\n"
+            f"{source_text}"
+        )
+    if has_file:
+        return (
+            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
+            f"{normalized_text}"
+        )
+    if has_text:
+        return (
+            "以下是用户补充要求：\n"
+            f"{source_text}"
+        )
+    return ""
 
 
 def _parse_outline_pages(data) -> list[dict]:
@@ -1918,7 +2010,6 @@ def file_generation_task(
                             )
                     return
 
-                normalized_text, parsed_content = _normalize_parse_result(parse_result)
 
                 # 持久化解析结果
                 async with AsyncSessionLocal() as db:
