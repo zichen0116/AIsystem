@@ -1730,6 +1730,42 @@ def _build_image_context(image_descs: list[dict]) -> str:
             lines.append(f"- 图片{idx}: {desc}")
     return "\n".join(lines) if len(lines) > 1 else ""
 
+
+def _sanitize_outline_points(raw_points, max_count: int = 3) -> list[str]:
+    """清洗大纲 points，去除占位符/省略号等无效文本。"""
+    if not isinstance(raw_points, list):
+        return []
+
+    placeholder_terms = (
+        "...", "……", "待补充", "待完善", "待确认", "tbd", "todo", "placeholder",
+        "[核心概念", "[关键技能", "[实际应用", "[示例", "[要点",
+    )
+    results: list[str] = []
+    for item in raw_points:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = item.get("content") or item.get("text") or item.get("title") or json.dumps(item, ensure_ascii=False)
+            text = str(text).strip()
+        else:
+            text = str(item).strip()
+
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(term in lowered for term in placeholder_terms):
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            continue
+        if re.fullmatch(r"[\[\](){}\s._\-:：;；,，/\\]+", text):
+            continue
+        if len(text) < 2:
+            continue
+
+        results.append(text)
+
+    return results[:max_count]
+
 def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     """
     规范化 parser 输出，生成用于大纲模型的文本输入。
@@ -1821,29 +1857,24 @@ def _combine_outline_source(
     source_text: str | None,
 ) -> str:
     """
-    组合文件解析内容和用户补充文本，明确区分信息来源。
+    组合文件解析结果和用户文本为统一的大纲输入源。
+
+    规则：
+    - 有文件无文本 → 文件内容
+    - 无文件有文本 → 用户文本
+    - 两者都有 → 文件为主，用户文本为补充
     """
     has_file = bool(normalized_text and normalized_text.strip())
     has_text = bool(source_text and source_text.strip())
 
     if has_file and has_text:
-        return (
-            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
-            f"{normalized_text}\n\n"
-            "以下是用户补充要求：\n"
-            f"{source_text}"
-        )
-    if has_file:
-        return (
-            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
-            f"{normalized_text}"
-        )
-    if has_text:
-        return (
-            "以下是用户补充要求：\n"
-            f"{source_text}"
-        )
-    return ""
+        return f"{normalized_text}\n\n---\n用户补充说明：\n{source_text}"
+    elif has_file:
+        return normalized_text
+    elif has_text:
+        return source_text
+    else:
+        return ""
 
 
 def _parse_outline_pages(data) -> list[dict]:
@@ -2149,7 +2180,7 @@ def file_generation_task(
                 if page_data.get("part"):
                     cfg["part"] = page_data["part"]
                 if page_data.get("points") is not None:
-                    cfg["points"] = page_data.get("points", [])
+                    cfg["points"] = _sanitize_outline_points(page_data.get("points", []))
 
                 page = PPTPage(
                     project_id=project_id,

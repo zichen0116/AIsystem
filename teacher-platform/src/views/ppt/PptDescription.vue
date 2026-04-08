@@ -648,7 +648,7 @@ function getFieldIcon(iconType) {
                 正在解析中，请稍候...
               </div>
               <div v-else-if="page.description" class="desc-content">
-                <p>{{ page.description }}</p>
+                <p>{{ typeof page.description === 'object' ? JSON.stringify(page.description) : page.description }}</p>
               </div>
               <div v-else class="desc-empty">
                 此页面的详细描述尚未生成，请点击"批量生成描述"按钮来生成内容。
