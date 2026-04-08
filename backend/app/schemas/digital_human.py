@@ -1,69 +1,82 @@
-"""数字人（讯飞 VMS）相关请求/响应模型。"""
+"""Schemas for the iFlytek digital human APIs."""
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class IflytekWebSdkConfigResponse(BaseModel):
-    """
-    供前端数字人 SDK 初始化。
-
-    - Avatar Platform（`avatar-sdk-web`）：需 sceneId、serverUrl，流程为 setApiInfo → setGlobalParams → start。
-    - 旧版 VMS（`VMS.start`）：仍可使用 defaultAvatarId、vmsHost 等字段作兼容。
-
-    注意：返回 api_secret 仍会被前端持有；生产环境可优先使用服务端代调接口。
-    """
+    """Frontend SDK bootstrap config."""
 
     model_config = ConfigDict(populate_by_name=True)
 
-    app_id: str = Field(..., serialization_alias="appId", description="控制台 APPID")
+    app_id: str = Field(..., serialization_alias="appId", description="Control panel APPID")
     api_key: str = Field(..., serialization_alias="apiKey")
     api_secret: str = Field(..., serialization_alias="apiSecret")
     default_avatar_id: str = Field(
         ...,
         serialization_alias="defaultAvatarId",
-        description="默认形象 ID（Avatar 对应 avatar.avatar_id）",
+        description="Default avatar id for avatar.avatar_id",
     )
     service_id: str | None = Field(
-        None, serialization_alias="serviceId", description="控制台接口服务 ID（可选）"
+        None,
+        serialization_alias="serviceId",
+        description="Optional legacy VMS service id",
     )
     scene_id: str | None = Field(
         None,
         serialization_alias="sceneId",
-        description="Avatar Platform 交互场景 ID（与控制台「接口服务」一致时可填）",
+        description="Avatar Platform scene id",
     )
     avatar_server_url: str = Field(
         "wss://avatar.cn-huadong-1.xf-yun.com/v1/interact",
         serialization_alias="avatarServerUrl",
-        description="Avatar WebSocket 服务地址",
+        description="Avatar websocket endpoint",
     )
-    vms_host: str = Field(
-        ..., serialization_alias="vmsHost", description="VMS 域名（旧版 VMS 代理用）"
-    )
+    vms_host: str = Field(..., serialization_alias="vmsHost", description="Legacy VMS host")
     default_width: int = Field(1280, serialization_alias="defaultWidth")
     default_height: int = Field(720, serialization_alias="defaultHeight")
     stream_protocol: str = Field(
         "xrtc",
         serialization_alias="streamProtocol",
-        description="xrtc 或 rtmp（旧版 VMS）",
+        description="xrtc or rtmp",
     )
     default_tts_vcn: str = Field(
         "x4_xiaoxuan",
         serialization_alias="defaultTtsVcn",
-        description="Avatar SDK 全局 tts.vcn（必填，不可为空）",
+        description="Required Avatar SDK tts.vcn value",
     )
     notes: str = Field(
-        "Avatar SDK：src/libs 下 ESM；setGlobalParams.tts.vcn 必填。",
-        description="集成提示",
+        "Avatar SDK uses the ESM bundle under src/libs and requires setGlobalParams.tts.vcn.",
+        description="Integration notes",
     )
 
 
 class Vms2dStartRequest(BaseModel):
-    avatar_id: str | None = Field(None, description="形象 ID，缺省用环境变量默认")
+    avatar_id: str | None = Field(None, description="Optional avatar id override")
     width: int | None = None
     height: int | None = None
-    protocol: str | None = Field(None, description="拉流协议：xrtc / rtmp")
-    uid: str = Field("", description="用户服务 uid，可选")
+    protocol: str | None = Field(None, description="xrtc or rtmp")
+    uid: str = Field("", description="Optional user uid")
 
 
 class VmsSessionRequest(BaseModel):
-    session: str = Field(..., description="vms2d_start 返回的 session")
+    session: str = Field(..., description="Session returned by vms2d_start")
     uid: str = ""
+
+
+class AdminDigitalHumanHistoryItem(BaseModel):
+    role: str = Field(..., description="user or assistant")
+    content: str = Field(..., description="message content")
+
+
+class AdminDigitalHumanChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, description="Latest admin message")
+    history: list[AdminDigitalHumanHistoryItem] = Field(
+        default_factory=list,
+        description="Recent conversation turns from frontend memory",
+    )
+
+
+class AdminDigitalHumanChatResponse(BaseModel):
+    answer: str = Field(..., description="Full assistant answer")
+    speak_text: str = Field(..., description="Text to send to avatar writeText")
+    mode: str = Field(..., description="intro or chat")

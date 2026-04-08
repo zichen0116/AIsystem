@@ -39,7 +39,8 @@
       "Bash(conda run:*)",
       "Bash(find:*)",
       "Bash(xargs grep:*)",
-      "Bash(npx vue-tsc:*)"
+      "Bash(npx vue-tsc:*)",
+      "Bash(grep -E \"\\\\.py$\")"
     ]
   }
 }

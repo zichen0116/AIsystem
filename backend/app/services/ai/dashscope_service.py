@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import httpx
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.callbacks import CallbackManagerForLLMRun
 
@@ -615,13 +615,15 @@ class LLMService:
                 langchain_messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 langchain_messages.append(AIMessage(content=content))
+            elif role == "system":
+                langchain_messages.append(SystemMessage(content=content))
             else:
                 langchain_messages.append(HumanMessage(content=content))
 
         # 调用
         result = await self.llm.agenerate([langchain_messages])
 
-        return result.generations[0].message
+        return result.generations[0][0].message
 
 
 def get_llm_service() -> LLMService:
