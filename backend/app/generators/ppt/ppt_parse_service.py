@@ -37,7 +37,7 @@ class PptParseService:
         ext = os.path.splitext(filename)[1].lower()
 
         if ext in ['.pdf']:
-            return await self._parse_pdf(file_path)
+            return await self._parse_pdf_v4(file_path)
         elif ext in ['.pptx', '.ppt']:
             return await self._parse_pptx(file_path)
         elif ext in ['.txt', '.md']:
