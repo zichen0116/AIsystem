@@ -12,6 +12,16 @@ import {
 
 const API = '/api/v1/ppt'
 
+/** 将 points 数组中的每个元素强制转为字符串，防止 [object Object] */
+function _sanitizePoints(points) {
+  if (!Array.isArray(points)) return []
+  return points.map(p => {
+    if (typeof p === 'string') return p
+    if (p && typeof p === 'object') return p.content || p.text || p.title || JSON.stringify(p)
+    return String(p)
+  }).filter(Boolean)
+}
+
 export const usePptStore = defineStore('ppt', {
   state: () => ({
     // 项目信息
@@ -248,11 +258,11 @@ export const usePptStore = defineStore('ppt', {
         const pages = await apiRequest(`${API}/projects/${projectId}/pages`)
         this.outlinePages = pages.map(p => {
           const config = p.config && typeof p.config === 'object' ? p.config : {}
-          let points = Array.isArray(config.points) ? config.points : []
+          let points = _sanitizePoints(config.points)
           if (!points.length && p.description) {
             try {
               const parsed = JSON.parse(p.description)
-              if (Array.isArray(parsed)) points = parsed
+              if (Array.isArray(parsed)) points = _sanitizePoints(parsed)
             } catch (e) {
               // description is plain text, not points array
             }
@@ -476,10 +486,10 @@ export const usePptStore = defineStore('ppt', {
                   imageUrl: page.image_url || '',
                   isDescriptionGenerating: false,
                   isImageGenerating: false,
-                  points: Array.isArray(page.points) ? page.points : [],
+                  points: _sanitizePoints(page.points),
                   part: page.part || '',
                   config: {
-                    points: Array.isArray(page.points) ? page.points : [],
+                    points: _sanitizePoints(page.points),
                     part: page.part || ''
                   },
                   extraFields: {
@@ -820,7 +830,7 @@ export const usePptStore = defineStore('ppt', {
           this.stopFileGenerationPolling()
           this.fileGenerationTaskStatus = 'FAILED'
         }
-      }, 2000)
+      }, 3000)
     },
 
     stopFileGenerationPolling() {
@@ -866,7 +876,7 @@ export const usePptStore = defineStore('ppt', {
           this.stopRenovationPolling()
           this.renovationTaskStatus = 'FAILED'
         }
-      }, 2000)
+      }, 3000)
     },
 
     stopRenovationPolling() {
