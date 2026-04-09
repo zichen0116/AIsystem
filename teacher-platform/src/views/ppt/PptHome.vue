@@ -31,6 +31,14 @@ const isCreating = ref(false)
 
 const MAX_THEME_LENGTH = 50
 
+// 加载提示文案
+const loadingMessage = computed(() => {
+  if (!isCreating.value) return ''
+  if (creationType.value === 'renovation') return '正在解析文件并创建翻新项目，文件越大耗时越长，请耐心等待...'
+  if (creationType.value === 'file') return '正在解析文档并生成大纲，请稍候...'
+  return '正在创建项目...'
+})
+
 // 预设风格 - 描述来自 banana-slides
 const stylePresets = [
   { id: '1', name: '简约商务', color: '#0B1F3B', desc: '视觉描述：极致扁平化与强秩序网格，强调专业、稳重、克制。背景锁定海军蓝（#0B1F3B），标题文字纯白，强调色天蓝（#38BDF8）占比不超过3%。禁止渐变、发光、拟物纹理。光照为均匀演播室漫射光，无硬阴影。材质为平滑矢量色块，全稿默认不使用阴影。字体：无衬线体系，中英文统一基线。图表仅限2D扁平矢量，禁止饼图。', previewImage: '/preset-previews/business-simple.webp' },
@@ -576,6 +584,12 @@ async function handleNext() {
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- 创建中加载提示 -->
+        <div v-if="isCreating" class="creating-hint">
+          <div class="creating-spinner"></div>
+          <span>{{ loadingMessage }}</span>
         </div>
 
         <!-- 隐藏的参考文件上传输入框 -->
@@ -1448,6 +1462,36 @@ async function handleNext() {
   opacity: 0.6;
   cursor: not-allowed;
   transform: none !important;
+}
+
+/* Creating hint */
+.creating-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid #bfd0e4;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f0f7ff 0%, #e8f0fe 100%);
+  color: #3f5f82;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  animation: rise 0.3s ease;
+}
+
+.creating-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid #bfd0e4;
+  border-top-color: rgb(76, 128, 245);
+  border-radius: 50%;
+  animation: creating-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes creating-spin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes rise {
