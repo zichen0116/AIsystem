@@ -127,7 +127,8 @@ class RehearsalScene(Base):
     slide_content: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     actions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     key_points: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    # TTS 音频状态：pending / processing / ready / failed
+    # 页级 TTS 音频粗略摘要：pending / partial / ready / failed
+    # 播放逻辑以 action 级 audio_status 为准（在 actions JSONB 中每个 speech action 各有自己的 audio_status）
     audio_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -799,20 +800,30 @@ async def _fill_tts_for_scene(
                 return
 
             updated_actions = list(scene.actions or [])
-            any_success = False
+            total_speech = 0
+            success_count = 0
 
             for action in updated_actions:
                 if action.get("type") != "speech" or not action.get("text"):
                     continue
+                total_speech += 1
                 tts_result = await synthesize(action["text"], voice, speed, user_id)
                 action["temp_audio_url"] = tts_result["temp_audio_url"]
                 action["persistent_audio_url"] = tts_result["persistent_audio_url"]
                 action["audio_status"] = tts_result["audio_status"]
                 if tts_result["audio_status"] in ("temp_ready", "ready"):
-                    any_success = True
+                    success_count += 1
 
             scene.actions = updated_actions
-            scene.audio_status = "ready" if any_success else "failed"
+            # 页级 audio_status 是粗略摘要，播放逻辑以 action 级 audio_status 为准
+            if total_speech == 0:
+                scene.audio_status = "ready"
+            elif success_count == total_speech:
+                scene.audio_status = "ready"
+            elif success_count > 0:
+                scene.audio_status = "partial"
+            else:
+                scene.audio_status = "failed"
             await db.commit()
             logger.info(f"TTS fill completed for scene {scene_id}: audio_status={scene.audio_status}")
 
