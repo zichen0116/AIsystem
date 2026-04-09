@@ -161,8 +161,21 @@ const completedCount = computed(() => {
   return pages.value.filter(p => p.status === 'completed').length
 })
 
+// 翻新解析是否仍在进行中
+const isRenovationParsing = computed(() => {
+  return pptStore.creationType === 'renovation' &&
+    (pptStore.renovationTaskStatus === 'PENDING' || pptStore.renovationTaskStatus === 'PROCESSING')
+})
+
+const renovationProgress = computed(() => {
+  if (!isRenovationParsing.value) return null
+  const total = pages.value.length
+  const done = pages.value.filter(p => p.status === 'completed' || p.status === 'failed').length
+  return { done, total }
+})
+
 async function handleBatchGenerate() {
-  if (!pptStore.projectId) return
+  if (!pptStore.projectId || isRenovationParsing.value) return
 
   isGenerating.value = true
   try {
@@ -205,7 +218,15 @@ function goToOutline() {
   pptStore.setPhase('outline')
 }
 
+// 描述是否全部完成（排除翻新解析中的页面）
+const allDescriptionsReady = computed(() => {
+  if (pages.value.length === 0) return false
+  return pages.value.every(p => p.status === 'completed')
+})
+
 function goToPreview() {
+  if (isRenovationParsing.value) return
+  if (!allDescriptionsReady.value) return
   pptStore.setPhase('preview')
 }
 
@@ -397,7 +418,7 @@ function getFieldIcon(iconType) {
             </svg>
             上一步
           </button>
-          <button class="nav-btn primary" @click="goToPreview">
+          <button class="nav-btn primary" :disabled="isRenovationParsing || !allDescriptionsReady" @click="goToPreview" :title="isRenovationParsing ? '翻新解析中，请等待完成' : !allDescriptionsReady ? '请先完成所有页面描述' : ''">
             生成图片
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <path d="M5 12h14M12 5l7 7-7 7"/>
@@ -410,11 +431,11 @@ function getFieldIcon(iconType) {
     <!-- 操作栏 -->
     <div class="action-bar">
       <div class="action-bar-inner">
-        <button class="action-btn primary" :disabled="isGenerating" @click="handleBatchGenerate">
+        <button class="action-btn primary" :disabled="isGenerating || isRenovationParsing" @click="handleBatchGenerate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
           </svg>
-          {{ isGenerating ? '生成中...' : '批量生成描述' }}
+          {{ isRenovationParsing ? '翻新解析中...' : isGenerating ? '生成中...' : '批量生成描述' }}
         </button>
 
         <!-- 设置下拉 -->
@@ -575,6 +596,20 @@ function getFieldIcon(iconType) {
             placeholder="例如：每页描述控制在100字以内、多使用数据和案例、强调关键指标..."
           ></textarea>
         </div>
+      </div>
+    </div>
+
+    <!-- 翻新解析进度提示 -->
+    <div v-if="isRenovationParsing" class="renovation-progress-bar">
+      <div class="renovation-progress-inner">
+        <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <circle cx="12" cy="12" r="10" opacity=".25"/>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+        </svg>
+        <span>翻新解析进行中，请等待解析完成后再生成描述</span>
+        <span v-if="renovationProgress" class="renovation-progress-count">
+          {{ renovationProgress.done }} / {{ renovationProgress.total }} 页已解析
+        </span>
       </div>
     </div>
 
@@ -850,8 +885,13 @@ function getFieldIcon(iconType) {
   border: none;
 }
 
-.nav-btn.primary:hover {
+.nav-btn.primary:hover:not(:disabled) {
   background: #2563eb;
+}
+
+.nav-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Action Bar */
@@ -1481,6 +1521,38 @@ function getFieldIcon(iconType) {
 .save-btn:hover {
   background: #2563eb;
 }
+
+/* Renovation Progress Bar */
+.renovation-progress-bar {
+  background: #fffbeb;
+  border-bottom: 1px solid #fcd34d;
+  padding: 10px 20px;
+  flex-shrink: 0;
+}
+
+.renovation-progress-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #92400e;
+  font-weight: 500;
+}
+
+.renovation-progress-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b45309;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Empty State */
 .empty-state {

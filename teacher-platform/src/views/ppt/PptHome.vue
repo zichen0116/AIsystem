@@ -455,7 +455,7 @@ async function handleNext() {
         language: 'zh'
       })
       pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
-      pptStore.setPhase('outline')
+      pptStore.setPhase('description')
       pptStore.pollRenovationTask(res.project_id, res.task_id)
       return
     }
