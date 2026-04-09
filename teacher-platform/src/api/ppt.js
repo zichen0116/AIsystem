@@ -126,12 +126,19 @@ export async function generateOutline(projectId) {
   })
 }
 
-export async function generateOutlineStream(projectId, ideaPrompt, language = 'zh') {
+export async function generateOutlineStream(projectId, payload = {}, language = 'zh') {
+  const body = typeof payload === 'string'
+    ? { idea_prompt: payload, language }
+    : {
+        idea_prompt: payload.idea_prompt ?? payload.ideaPrompt ?? null,
+        planning_context_text: payload.planning_context_text ?? payload.planningContextText ?? null,
+        language: payload.language ?? language
+      }
   const url = `${API}/projects/${projectId}/outline/generate/stream`
   return streamEvents(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ idea_prompt: ideaPrompt, language })
+    body: JSON.stringify(body)
   })
 }
 
@@ -306,6 +313,10 @@ export async function parseReferenceFile(projectId, fileId) {
   })
 }
 
+export async function getReferenceFiles(projectId) {
+  return await apiRequest(`${API}/projects/${projectId}/reference-files`)
+}
+
 export async function getReferenceFile(projectId, fileId) {
   return await apiRequest(`${API}/projects/${projectId}/reference-files/${fileId}`)
 }
@@ -318,6 +329,12 @@ export async function confirmReferenceFile(projectId, fileId) {
 
 export async function getReferenceFilePreview(fileId) {
   return await apiRequest(`${API}/reference-files/${fileId}`)
+}
+
+export async function refreshPlanningContext(projectId) {
+  return await apiRequest(`${API}/projects/${projectId}/planning-context/refresh`, {
+    method: 'POST'
+  })
 }
 
 // ============ 对话 ============

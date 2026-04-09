@@ -63,6 +63,9 @@ class BananaAIService:
 内容：
 {outline_text}
 {theme_hint}
+{planning_context_block}
+{materials_block}
+{knowledge_block}
 语言：{language}
 
 请返回标准JSON格式，包含以下字段：
@@ -143,7 +146,10 @@ class BananaAIService:
         theme: Optional[str],
         language: str,
         detail_level: str,
-        extra_fields_config: Optional[list[dict]] = None
+        extra_fields_config: Optional[list[dict]] = None,
+        planning_context_text: Optional[str] = None,
+        materials_context: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
     ) -> str:
         """构建描述生成提示词"""
         title = page.get("title", "")
@@ -164,6 +170,22 @@ class BananaAIService:
             extra_output_lines.append(f"{label}：...")
 
         theme_hint = f"\n风格主题：{theme}" if theme else ""
+
+        planning_context_block = (
+            f"\nPlanning Context 摘要：\n{planning_context_text.strip()}"
+            if planning_context_text and planning_context_text.strip()
+            else ""
+        )
+        materials_block = (
+            f"\n项目资料参考：\n{materials_context.strip()}"
+            if materials_context and materials_context.strip()
+            else ""
+        )
+        knowledge_block = (
+            f"\n知识库补充：\n{knowledge_context.strip()}"
+            if knowledge_context and knowledge_context.strip()
+            else ""
+        )
 
         detail_instruction = {
             "concise": "尽量短，每个字段只保留核心信息。",
@@ -215,7 +237,10 @@ class BananaAIService:
         theme: Optional[str] = None,
         language: str = "zh",
         detail_level: str = "default",
-        extra_fields_config: Optional[list[dict]] = None
+        extra_fields_config: Optional[list[dict]] = None,
+        planning_context_text: Optional[str] = None,
+        materials_context: Optional[str] = None,
+        knowledge_context: Optional[str] = None,
     ) -> str:
         """
         为单个页面生成描述
@@ -235,6 +260,9 @@ class BananaAIService:
             language,
             detail_level,
             extra_fields_config=extra_fields_config,
+            planning_context_text=planning_context_text,
+            materials_context=materials_context,
+            knowledge_context=knowledge_context,
         )
         try:
             response = await self._chat(prompt)

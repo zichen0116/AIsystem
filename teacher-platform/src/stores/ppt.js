@@ -28,9 +28,14 @@ export const usePptStore = defineStore('ppt', {
     selectedPresetTemplateId: null,
     templateStyle: '',
     aspectRatio: '16:9',
+    selectedKnowledgeLibraryIds: [],
 
     // 参考文件
     referenceFiles: [],
+    planningContext: '',
+    planningContextSections: {},
+    planningContextMeta: null,
+    planningContextDirty: false,
 
     // 大纲数据
     outlineText: '',
@@ -115,7 +120,12 @@ export const usePptStore = defineStore('ppt', {
       this.projectStatus = null
       this.projectData = null
       this.creationType = null
+      this.selectedKnowledgeLibraryIds = []
       this.referenceFiles = []
+      this.planningContext = ''
+      this.planningContextSections = {}
+      this.planningContextMeta = null
+      this.planningContextDirty = false
       this.outlineText = ''
       this.outlinePages = []
       this.descriptions = {}
@@ -150,6 +160,15 @@ export const usePptStore = defineStore('ppt', {
         this.selectedPresetTemplateId = response.settings?.template_id || data?.settings?.template_id || null
         this.templateStyle = response.template_style || data.template_style || data?.settings?.template_style || ""
         this.aspectRatio = response.settings?.aspect_ratio || data?.settings?.aspect_ratio || this.aspectRatio
+        this.selectedKnowledgeLibraryIds = Array.isArray(response.knowledge_library_ids)
+          ? [...response.knowledge_library_ids]
+          : Array.isArray(data.knowledge_library_ids)
+            ? [...data.knowledge_library_ids]
+            : []
+        this.planningContext = response.settings?.planning_context_text || ''
+        this.planningContextSections = response.settings?.planning_context_sections || {}
+        this.planningContextMeta = response.settings?.planning_context_meta || null
+        this.planningContextDirty = false
         this.resetIntentState(response.theme || this.outlineText)
         return response
       } catch (error) {
@@ -175,6 +194,13 @@ export const usePptStore = defineStore('ppt', {
           this.projectSettings = { ...this.projectSettings, ...response.settings }
         }
         this.templateStyle = response.template_style || response.settings?.template_style || this.templateStyle
+        this.selectedKnowledgeLibraryIds = Array.isArray(response.knowledge_library_ids)
+          ? [...response.knowledge_library_ids]
+          : []
+        this.planningContext = response.settings?.planning_context_text || ''
+        this.planningContextSections = response.settings?.planning_context_sections || {}
+        this.planningContextMeta = response.settings?.planning_context_meta || null
+        this.planningContextDirty = false
         this.resetIntentState(response.theme || this.outlineText)
         return response
       } catch (error) {
@@ -212,6 +238,9 @@ export const usePptStore = defineStore('ppt', {
         })
         if (this.projectData?.id === projectId) {
           this.projectData = { ...this.projectData, ...response }
+        }
+        if (Array.isArray(response?.knowledge_library_ids)) {
+          this.selectedKnowledgeLibraryIds = [...response.knowledge_library_ids]
         }
         return response
       } catch (error) {
@@ -433,14 +462,20 @@ export const usePptStore = defineStore('ppt', {
       }
     },
 
-    async generateOutlineStream(projectId, ideaPrompt) {
+    async generateOutlineStream(projectId, payload = {}) {
       this.outlineText = ''
       this.generationProgress = { total: 0, completed: 0, failed: 0 }
+      const body = typeof payload === 'string'
+        ? { idea_prompt: payload }
+        : {
+            idea_prompt: payload.idea_prompt ?? payload.ideaPrompt ?? null,
+            planning_context_text: payload.planning_context_text ?? payload.planningContextText ?? null
+          }
 
       const response = await authFetch(`${API}/projects/${projectId}/outline/generate/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idea_prompt: ideaPrompt })
+        body: JSON.stringify(body)
       })
 
       const reader = response.body.getReader()
@@ -695,6 +730,7 @@ export const usePptStore = defineStore('ppt', {
     async loadProjectWorkspace(projectId) {
       await this.fetchProject(projectId)
       await this.fetchPages(projectId)
+      await this.fetchReferenceFiles(projectId).catch(() => {})
       if (this.creationType === 'dialog') {
         try {
           await this.fetchIntent(projectId)
@@ -766,6 +802,17 @@ export const usePptStore = defineStore('ppt', {
       }
     },
 
+    async fetchReferenceFiles(projectId) {
+      try {
+        const files = await apiRequest(`${API}/projects/${projectId}/reference-files`)
+        this.referenceFiles = Array.isArray(files) ? files : []
+        return this.referenceFiles
+      } catch (error) {
+        this.setError('fetchRef', error.message)
+        throw error
+      }
+    },
+
     async parseReferenceFile(projectId, fileId) {
       try {
         await apiRequest(`${API}/projects/${projectId}/reference-files/${fileId}/parse`, {
@@ -777,6 +824,38 @@ export const usePptStore = defineStore('ppt', {
         }
       } catch (error) {
         this.setError('parseRef', error.message)
+        throw error
+      }
+    },
+
+    async refreshPlanningContext(projectId) {
+      try {
+        const response = await apiRequest(`${API}/projects/${projectId}/planning-context/refresh`, {
+          method: 'POST'
+        })
+        this.planningContext = response?.planning_context_text || ''
+        this.planningContextSections = response?.sections || {}
+        this.planningContextMeta = response || null
+        this.planningContextDirty = false
+        if (this.projectData) {
+          this.projectData = {
+            ...this.projectData,
+            settings: {
+              ...(this.projectData.settings || {}),
+              planning_context_text: response?.planning_context_text || '',
+              planning_context_sections: response?.sections || {},
+              planning_context_meta: {
+                partial: !!response?.partial,
+                pending_reference_files: response?.pending_reference_files || [],
+                source_counts: response?.source_counts || {},
+                last_generated_at: response?.last_generated_at || null
+              }
+            }
+          }
+        }
+        return response
+      } catch (error) {
+        this.setError('refreshPlanningContext', error.message)
         throw error
       }
     },

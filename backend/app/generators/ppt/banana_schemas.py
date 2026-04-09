@@ -273,6 +273,15 @@ class PPTReferenceFileResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PlanningContextRefreshResponse(BaseModel):
+    sections: dict
+    planning_context_text: str
+    partial: bool = False
+    pending_reference_files: list[dict] = Field(default_factory=list)
+    source_counts: dict = Field(default_factory=dict)
+    last_generated_at: Optional[str] = None
+
+
 class FileGenerationResponse(BaseModel):
     """文件生成一站式入口响应"""
     project_id: int
@@ -447,6 +456,7 @@ class GenerateOutlineRequest(BaseModel):
 class GenerateOutlineStreamRequest(BaseModel):
     """流式生成大纲请求"""
     idea_prompt: Optional[str] = None
+    planning_context_text: Optional[str] = None
     """可选，覆盖项目级的 idea_prompt"""
     language: str = Field(default="zh", description="输出语言")
 

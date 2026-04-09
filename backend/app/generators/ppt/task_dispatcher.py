@@ -87,6 +87,16 @@ def dispatch_renovation_parse_task(*, project_id: int, file_id: int, task_id_str
     return _schedule_local_subprocess(task_id_str, args, "renovation_parse")
 
 
+def dispatch_reference_parse_task(*, project_id: int, file_id: int, task_id_str: str) -> bool:
+    args = [
+        "reference_parse",
+        "--project-id", str(project_id),
+        "--file-id", str(file_id),
+        "--task-id", task_id_str,
+    ]
+    return _schedule_local_subprocess(task_id_str, args, "reference_parse")
+
+
 async def ensure_pending_task_started(db: AsyncSession, task: PPTTask) -> bool:
     if not task or task.status != "PENDING" or task.task_id in _running_task_ids:
         return False
@@ -123,6 +133,22 @@ async def ensure_pending_task_started(db: AsyncSession, task: PPTTask) -> bool:
         if file_id is None:
             return False
         return dispatch_renovation_parse_task(
+            project_id=task.project_id,
+            file_id=file_id,
+            task_id_str=task.task_id,
+        )
+
+    if task.task_type == "reference_parse":
+        ref_res = await db.execute(
+            select(PPTReferenceFile.id)
+            .where(PPTReferenceFile.project_id == task.project_id)
+            .order_by(PPTReferenceFile.id.desc())
+            .limit(1)
+        )
+        file_id = ref_res.scalar_one_or_none()
+        if file_id is None:
+            return False
+        return dispatch_reference_parse_task(
             project_id=task.project_id,
             file_id=file_id,
             task_id_str=task.task_id,

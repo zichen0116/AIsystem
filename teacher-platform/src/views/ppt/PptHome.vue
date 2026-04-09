@@ -1,8 +1,8 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { getUserTemplates, extractStyleFromImage } from '@/api/ppt'
-import { uploadReferenceFile } from '@/api/ppt'
+import { resolveApiUrl, getToken } from '@/api/http'
 
 const pptStore = usePptStore()
 
@@ -23,6 +23,10 @@ const isRecording = ref(false)
 let recognition = null
 const uploadedReferenceFiles = ref([])
 const userTemplates = ref([])
+const showLibPicker = ref(false)
+const selectedLibIds = ref([])
+const personalLibs = ref([])
+const systemLibs = ref([])
 
 // 文件生成 / 翻新 专用上传文件
 const uploadedFile = ref(null) // File object for file-generation / renovation
@@ -63,6 +67,43 @@ onMounted(async () => {
   }
 })
 
+onMounted(async () => {
+  selectedLibIds.value = Array.isArray(pptStore.selectedKnowledgeLibraryIds)
+    ? [...pptStore.selectedKnowledgeLibraryIds]
+    : []
+  await fetchLibraries()
+  document.addEventListener('click', handleClickOutside)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside)
+})
+
+async function fetchLibraries() {
+  try {
+    const token = getToken()
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const [personalRes, systemRes] = await Promise.all([
+      fetch(resolveApiUrl('/api/v1/libraries?scope=personal'), { headers }),
+      fetch(resolveApiUrl('/api/v1/libraries?scope=system'), { headers })
+    ])
+    if (personalRes.ok) {
+      personalLibs.value = (await personalRes.json()).items || []
+    }
+    if (systemRes.ok) {
+      systemLibs.value = (await systemRes.json()).items || []
+    }
+  } catch (error) {
+    console.error('鍔犺浇鐭ヨ瘑搴撳垪琛ㄥけ璐?', error)
+  }
+}
+
+function handleClickOutside(event) {
+  if (showLibPicker.value && !event.target.closest('.lib-picker') && !event.target.closest('.knowledge-btn')) {
+    showLibPicker.value = false
+  }
+}
+
 // Examples removed per user request
 
 const modeDescriptions = {
@@ -72,6 +113,14 @@ const modeDescriptions = {
 }
 
 const modeDescription = computed(() => modeDescriptions[creationType.value])
+const selectedLibraries = computed(() => {
+  const all = [...personalLibs.value, ...systemLibs.value]
+  return all.filter(item => selectedLibIds.value.includes(item.id))
+})
+
+function removeSelectedLibrary(libraryId) {
+  selectedLibIds.value = selectedLibIds.value.filter(id => id !== libraryId)
+}
 
 function selectMode(mode) {
   creationType.value = mode
@@ -252,8 +301,8 @@ async function handleReferenceFileUpload(event) {
     // 只显示本地预览，不上传到后端（项目创建时再上传）
     uploadedReferenceFiles.value.push({
       name: file.name,
-      url: URL.createObjectURL(file),
-      size: file.size
+      size: file.size,
+      rawFile: file
     })
   }
   event.target.value = ''
@@ -467,10 +516,21 @@ async function handleNext() {
       outline_text: mainText.value,
       theme: effectiveTheme,
       template_style: effectiveTemplateStyle,
-      settings: settings
+      settings: settings,
+      knowledge_library_ids: selectedLibIds.value
     }
 
     await pptStore.createProject(data)
+    pptStore.selectedKnowledgeLibraryIds = [...selectedLibIds.value]
+    for (const item of uploadedReferenceFiles.value) {
+      if (!item?.rawFile) continue
+      try {
+        const uploaded = await pptStore.uploadReferenceFile(pptStore.projectId, item.rawFile)
+        await pptStore.parseReferenceFile(pptStore.projectId, uploaded.id)
+      } catch (uploadError) {
+        console.error('reference upload failed:', uploadError)
+      }
+    }
     pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
     pptStore.setPhase('dialog')
   } catch (error) {
@@ -562,6 +622,15 @@ async function handleNext() {
           ></textarea>
           <div class="composer-toolbar">
             <div class="toolbar-left">
+              <button
+                v-if="creationType === 'dialog'"
+                class="icon-btn knowledge-btn"
+                type="button"
+                title="选择知识库"
+                @click.stop="showLibPicker = !showLibPicker"
+              >
+                📚
+              </button>
               <button v-if="creationType === 'dialog'" class="icon-btn" type="button" title="上传参考文件" @click="triggerReferenceFileUpload">📎</button>
               <button class="icon-btn" type="button" :title="isRecording ? '停止录音' : '语音输入'" @click="toggleVoiceInput">🎙️</button>
               <select v-model="aspectRatio" class="aspect-select">
@@ -578,11 +647,37 @@ async function handleNext() {
           </div>
         </div>
 
+        <div v-if="creationType === 'dialog' && selectedLibraries.length > 0" class="selected-lib-tags">
+          <span v-for="lib in selectedLibraries" :key="lib.id" class="selected-lib-tag">
+            {{ lib.name }}
+            <button type="button" class="tag-remove" @click.stop="removeSelectedLibrary(lib.id)">×</button>
+          </span>
+        </div>
+
+        <div v-if="creationType === 'dialog' && showLibPicker" class="lib-picker">
+          <div class="lib-section">
+            <div class="lib-section-title">个人知识库</div>
+            <label v-for="lib in personalLibs" :key="lib.id" class="lib-option">
+              <input type="checkbox" :value="lib.id" v-model="selectedLibIds">
+              {{ lib.name }}
+            </label>
+            <div v-if="!personalLibs.length" class="lib-empty">暂无</div>
+          </div>
+          <div class="lib-section">
+            <div class="lib-section-title">系统知识库</div>
+            <label v-for="lib in systemLibs" :key="lib.id" class="lib-option">
+              <input type="checkbox" :value="lib.id" v-model="selectedLibIds">
+              {{ lib.name }}
+            </label>
+            <div v-if="!systemLibs.length" class="lib-empty">暂无</div>
+          </div>
+        </div>
+
         <!-- 隐藏的参考文件上传输入框 -->
         <input
           ref="referenceFileInput"
           type="file"
-          accept=".pdf,.ppt,.pptx,.doc,.docx"
+          accept=".pdf,.ppt,.pptx,.doc,.docx,.png,.jpg,.jpeg,.webp,.gif,.mp4,.mov,.avi,.mkv"
           multiple
           @change="handleReferenceFileUpload"
           hidden
@@ -1444,6 +1539,69 @@ async function handleNext() {
   border-color: #ef4444;
 }
 
+.selected-lib-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.selected-lib-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2153b3;
+  font-size: 12px;
+}
+
+.tag-remove {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.lib-picker {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #d7dfec;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.lib-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.lib-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #46546a;
+}
+
+.lib-empty {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
 .next-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -1492,6 +1650,10 @@ async function handleNext() {
   .composer-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .lib-picker {
+    grid-template-columns: 1fr;
   }
 
   .toolbar-right {
