@@ -11,6 +11,9 @@ import logging
 import asyncio
 from typing import AsyncGenerator
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.rehearsal import RehearsalSession, RehearsalScene
@@ -350,31 +353,31 @@ async def generate_stream(
 
             # 汇总会话状态
             async with AsyncSessionLocal() as db2:
-                session = await db2.get(RehearsalSession, session_id)
-                from sqlalchemy.orm import selectinload
-                from sqlalchemy import select
                 result = await db2.execute(
                     select(RehearsalSession)
                     .options(selectinload(RehearsalSession.scenes))
                     .where(RehearsalSession.id == session_id)
                 )
-                session = result.scalar_one()
-                session.status = compute_session_status(session)
+                final_session = result.scalar_one()
+                final_session.status = compute_session_status(final_session)
                 await db2.commit()
 
                 yield _sse_event("complete", {
                     "sessionId": session_id,
-                    "status": session.status,
+                    "status": final_session.status,
                 })
 
         except Exception as e:
             logger.error(f"Generation pipeline failed: {e}")
             try:
-                session.status = "failed"
-                session.error_message = str(e)[:500]
-                await db.commit()
+                async with AsyncSessionLocal() as err_db:
+                    s = await err_db.get(RehearsalSession, session_id)
+                    if s:
+                        s.status = "failed"
+                        s.error_message = str(e)[:500]
+                        await err_db.commit()
             except Exception:
-                await db.rollback()
+                pass
             yield _sse_event("error", {"message": str(e)})
 
 
@@ -383,9 +386,6 @@ async def generate_stream(
 async def retry_scene(session_id: int, scene_order: int, user_id: int) -> str:
     """重试单页生成。返回新的 scene_status。"""
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
-
         # 验证权限并获取 session
         result = await db.execute(
             select(RehearsalSession)
@@ -428,8 +428,6 @@ async def retry_scene(session_id: int, scene_order: int, user_id: int) -> str:
 
     # 更新会话级状态
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
         result = await db.execute(
             select(RehearsalSession)
             .options(selectinload(RehearsalSession.scenes))

@@ -106,11 +106,7 @@ async def synthesize(
 def estimate_duration_ms(text: str, speed: float = 1.0) -> int:
     """估算文本阅读时长（毫秒），用于无音频时的计时播放。"""
     cjk_count = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
-    non_cjk = text
-    for c in text:
-        if '\u4e00' <= c <= '\u9fff':
-            non_cjk = non_cjk.replace(c, '', 1)
-    word_count = len(non_cjk.split())
-    duration = cjk_count * 150 + word_count * 240
-    duration = max(duration, 2000)
+    non_cjk_text = ''.join(c for c in text if not ('\u4e00' <= c <= '\u9fff'))
+    word_count = len(non_cjk_text.split())
+    duration = max(cjk_count * 150 + word_count * 240, 2000)
     return int(duration / speed)
