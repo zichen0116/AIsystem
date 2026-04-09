@@ -25,6 +25,7 @@
 - 不做用户上传 PPT 及解析
 - 不做 PPT 生成完成后的跳转入口（第二阶段）
 - 不做"我的课程"中的预演入口（第二阶段）
+- 不引入 OpenMAIC 中的"精品课程"相关入口和逻辑，只保留"我的课程"概念
 
 ## 3. 技术决策
 
@@ -34,7 +35,7 @@
 | 生成流程 | SSE 流式生成 + 即时播放 | 体验更流畅，第一页就绪即可播放 |
 | SSE 实现 | FastAPI StreamingResponse | 与现有教案生成一致，简单直接 |
 | 动作协议 | speech + spotlight + laser + navigate | MVP 核心子集 |
-| TTS | DashScope TTS，第一阶段接入 | 现有系统已有集成 |
+| TTS | Qwen TTS（阿里云百炼/DashScope），第一阶段接入 | 需新建轻量 service，非复用讯飞 VMS |
 | 数据持久化 | 后端 PostgreSQL | 多租户按 user_id 隔离，跨设备访问 |
 | 预演入口 | 仅独立的"新建预演"页面 | 其他入口第二阶段再接 |
 
@@ -89,7 +90,7 @@
 | user_id | Integer FK → users.id | 所属用户 |
 | title | String(200) | 预演标题（LLM 生成或用户输入） |
 | topic | Text | 用户输入的原始主题 |
-| status | Enum | generating / ready / failed |
+| status | Enum | generating / partial / ready / failed |
 | total_scenes | Integer | 总场景数（大纲生成后填入） |
 | ready_scenes | Integer | 已就绪场景数（逐步递增） |
 | playback_snapshot | JSONB | `{sceneIndex, actionIndex}` |
@@ -111,6 +112,21 @@
 | actions | JSONB | Action[] 动作序列 |
 | key_points | JSONB | 本页要点列表 |
 | created_at | DateTime | 创建时间 |
+
+### 5.3 会话状态流转
+
+```
+generating ──全部场景完成──→ ready（完整会话，可正常回放）
+generating ──SSE断连/中断（已有部分场景）──→ partial（不完整，可播放已有场景）
+generating ──生成出错/断连（无场景）──→ failed（不可用）
+```
+
+- `generating`：正在生成中，`ready_scenes` 逐步递增
+- `partial`：生成被中断，`ready_scenes < total_scenes` 但 `ready_scenes > 0`，已有场景可播放
+- `ready`：所有场景生成完毕，`ready_scenes == total_scenes`
+- `failed`：生成失败或中断时无可用场景
+
+历史页面标签映射：generating→"生成中"，partial→"部分完成"，ready→"已完成"，failed→"失败"
 
 ## 6. 动作协议
 
@@ -231,7 +247,7 @@ Stage 2: 逐个场景串行生成
 
 **RehearsalHistory（历史列表）**
 - 卡片列表展示所有预演会话
-- 显示：标题、页数、状态标签（生成中/已完成/失败）、时间
+- 显示：标题、页数、状态标签（生成中/部分完成/已完成/失败）、时间
 - 点击"播放"跳转到 RehearsalPlay
 - 支持删除操作
 
@@ -342,10 +358,14 @@ DELETE /api/v1/rehearsal/sessions/{id}
 - `update_playback_snapshot(session_id, user_id, snapshot)`
 - `delete_session(session_id, user_id)`
 
-**TTSService**
+**TTSService（Qwen TTS 轻量封装）**
 - `synthesize(text, voice, speed)` → audio_url
-- 使用 DashScope TTS API
+- 单一 provider：Qwen TTS（阿里云百炼/DashScope），不做多 provider 架构
+- 调用 DashScope `/services/aigc/multimodal-generation/generation` 接口
+- 默认模型 `qwen3-tts-flash`，默认音色 `Cherry`
+- TTS 失败时自动降级为无音频的计时播放，不阻塞主链路
 - 音频文件存储到 OSS（复用现有 `oss_service.py`）
+- 不复用讯飞虚拟人/VMS 链路（它是实时流式语音，不适合生成可回放音频文件）
 
 ## 10. LLM Prompt 设计
 
@@ -386,7 +406,7 @@ backend/app/
 └── services/
     ├── rehearsal_generation_service.py  # 生成编排
     ├── rehearsal_session_service.py     # CRUD
-    └── tts_service.py                  # TTS（封装 DashScope 语音合成）
+    └── tts_service.py                  # Qwen TTS 轻量封装（单 provider，非多 provider 架构）
 ```
 
 ### 前端新增
@@ -419,7 +439,7 @@ teacher-platform/src/
 
 3. **音频播放**：使用 HTML5 Audio API。需要处理浏览器自动播放限制（首次播放需用户交互触发）。播放/暂停需与 PlaybackEngine 状态同步。
 
-4. **SSE 断连恢复**：如果 SSE 连接中断，前端通过 `GET /sessions/{id}` 获取已生成的场景进行播放。未生成的场景将丢失（SSE 生成是一次性的），用户可选择删除后重新生成。后端在 SSE handler 中捕获客户端断连异常，将 session 状态更新为 `ready`（已有场景可用）或 `failed`（无场景可用）。
+4. **SSE 断连恢复**：如果 SSE 连接中断，后端捕获断连异常，将 session 状态更新为 `partial`（已有部分场景可用）或 `failed`（无场景可用）。前端通过 `GET /sessions/{id}` 获取已生成的场景，`partial` 状态的会话可以播放已有场景但无法补全缺失部分。历史页面对 `partial` 状态显示"部分完成"标签。
 
 5. **播放进度持久化**：PlaybackEngine 在每次场景切换时通过 `PATCH /sessions/{id}` 更新 playback_snapshot，支持刷新页面后恢复。
 
