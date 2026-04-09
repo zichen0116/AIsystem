@@ -360,6 +360,7 @@ DELETE /api/v1/rehearsal/sessions/{id}
 
 **TTSService（Qwen TTS 轻量封装）**
 - `synthesize(text, voice, speed)` → audio_url
+- 本项目语音合成统一采用阿里云百炼（DashScope）平台上的 Qwen TTS 模型，DASHSCOPE_API_KEY已经存在于.env,调的是 https://dashscope.aliyuncs.com/api/v1 这类地址
 - 单一 provider：Qwen TTS（阿里云百炼/DashScope），不做多 provider 架构
 - 调用 DashScope `/services/aigc/multimodal-generation/generation` 接口
 - 默认模型 `qwen3-tts-flash`，默认音色 `Cherry`
