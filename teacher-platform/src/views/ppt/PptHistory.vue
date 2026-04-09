@@ -100,8 +100,10 @@ function getProjectPhase(project) {
 
   if (project.cover_image_url) return 'preview'
 
-  // file / renovation 项目始终进入 outline（不走 dialog）
-  if (ct === 'file' || ct === 'renovation') return 'outline'
+  // file 项目进入 outline（不走 dialog）
+  if (ct === 'file') return 'outline'
+  // renovation 项目直接进入 description（跳过 outline）
+  if (ct === 'renovation') return 'description'
 
   if (project.status === 'INTENT_CONFIRMED') return 'outline'
   if (project.page_count > 0) return 'outline'

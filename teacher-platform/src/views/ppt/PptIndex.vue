@@ -36,8 +36,8 @@ watch(() => pptStore.creationType, (type) => {
     // File mode goes directly to outline
     pptStore.setPhase('outline')
   } else if (type === 'renovation' && pptStore.projectId && pptStore.currentPhase === 'home') {
-    // Renovation mode goes to outline
-    pptStore.setPhase('outline')
+    // Renovation mode goes directly to description (skip outline)
+    pptStore.setPhase('description')
   }
 }, { immediate: true })
 </script>
