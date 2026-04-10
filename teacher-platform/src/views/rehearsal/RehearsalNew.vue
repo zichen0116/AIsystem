@@ -219,7 +219,6 @@ async function handleGenerate() {
     topic: topic.value.trim(),
     language: language.value,
     enable_tts: enableTTS.value,
-    voice: 'Cherry',
     speed: 1.0,
   })
 }

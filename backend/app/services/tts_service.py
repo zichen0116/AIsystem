@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 DASHSCOPE_TTS_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-DEFAULT_MODEL = "qwen3-tts-flash"
-DEFAULT_VOICE = "Cherry"
+DEFAULT_MODEL = settings.TTS_MODEL
+DEFAULT_VOICE = settings.TTS_VOICE
 
 
 def _speed_to_rate(speed: float) -> int:

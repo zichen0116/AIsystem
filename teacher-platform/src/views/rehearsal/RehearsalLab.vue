@@ -154,7 +154,10 @@ function formatDate(d) {
 <style scoped>
 .rehearsal-lab {
   min-height: 100vh;
-  background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #fff1f2 60%, #ffffff 100%);
+  background:
+    radial-gradient(circle at 15% 20%, rgba(249, 115, 22, 0.28), transparent 72%),
+    radial-gradient(circle at 85% 15%, rgba(236, 72, 153, 0.22), transparent 74%),
+    linear-gradient(145deg, #fff4dc 0%, #fff9f2 28%, #fdf1ff 62%, #eff7ff 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -214,13 +217,13 @@ function formatDate(d) {
 .input-card {
   width: 100%;
   max-width: 640px;
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 20px;
   padding: 28px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06);
   margin-bottom: 40px;
 }
 

@@ -95,6 +95,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
 
+    # ========== 阿里云 TTS 语音合成 ==========
+    TTS_MODEL: str = "qwen3-tts-flash"
+    TTS_VOICE: str = "Cherry"
+
     # ========== 阿里云 ASR 语音识别 ==========
     ASR_MODEL: str = "qwen3-asr-flash"
 
