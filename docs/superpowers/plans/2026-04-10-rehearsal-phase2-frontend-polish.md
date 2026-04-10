@@ -667,13 +667,15 @@ const isGenerating = computed(() => store.generatingStatus === 'generating')
 
 const progressPercent = computed(() => {
   if (!store.totalScenes) return 10
-  const done = store.sceneStatuses.length
+  // 只计算已完成（ready/failed）的页数，排除 pending/generating
+  const done = store.sceneStatuses.filter(s => s.status === 'ready' || s.status === 'failed').length
   return Math.round((done / store.totalScenes) * 90) + 10
 })
 
 const progressStatus = computed(() => {
   if (store.generatingStatus === 'error') return 'exception'
   if (store.generatingStatus === 'complete') return 'success'
+  if (store.generatingStatus === 'partial' || store.generatingStatus === 'failed') return 'warning'
   return undefined
 })
 
@@ -722,11 +724,18 @@ async function loadExistingSession(sessionId) {
 
     if (data.status === 'generating') {
       store.generatingStatus = 'generating'
-      store.generatingProgress = `已完成 ${store.sceneStatuses.filter(s => s.status !== 'pending' && s.status !== 'generating').length}/${store.totalScenes} 页...`
+      const doneCount = store.sceneStatuses.filter(s => s.status === 'ready' || s.status === 'failed').length
+      store.generatingProgress = `已完成 ${doneCount}/${store.totalScenes} 页...`
       startPolling(sessionId)
-    } else {
+    } else if (data.status === 'ready') {
       store.generatingStatus = 'complete'
-      store.generatingProgress = data.status === 'ready' ? '生成完成' : '生成结束（部分失败）'
+      store.generatingProgress = '生成完成'
+    } else if (data.status === 'partial') {
+      store.generatingStatus = 'partial'
+      store.generatingProgress = '部分页面生成失败，可重试失败页面'
+    } else {
+      store.generatingStatus = 'failed'
+      store.generatingProgress = '生成失败'
     }
   } catch (e) {
     store.generatingStatus = 'error'
@@ -765,8 +774,16 @@ function startPolling(sessionId) {
         + (failedCount > 0 ? `（${failedCount} 页失败）` : '') + '...'
 
       if (data.status !== 'generating') {
-        store.generatingStatus = 'complete'
-        store.generatingProgress = data.status === 'ready' ? '生成完成' : '生成结束'
+        if (data.status === 'ready') {
+          store.generatingStatus = 'complete'
+          store.generatingProgress = '生成完成'
+        } else if (data.status === 'partial') {
+          store.generatingStatus = 'partial'
+          store.generatingProgress = '部分页面生成失败，可重试失败页面'
+        } else {
+          store.generatingStatus = 'failed'
+          store.generatingProgress = '生成失败'
+        }
         store.currentSession.status = data.status
         stopPolling()
       }
@@ -796,7 +813,9 @@ async function handleGenerate() {
 
 async function handleRetry(sceneOrder) {
   if (!store.currentSession?.id) return
-  await store.retryFailedScene(store.currentSession.id, sceneOrder)
+  const newStatus = await store.retryFailedScene(store.currentSession.id, sceneOrder)
+  // 重试后重新拉取会话以刷新汇总状态
+  await loadExistingSession(store.currentSession.id)
 }
 
 function goToPlay() {
@@ -1171,7 +1190,10 @@ git commit -m "feat(rehearsal): add progress dots and fullscreen to PlaybackCont
     <div v-else-if="error" class="error-state">
       <p class="error-icon">!</p>
       <p class="error-text">{{ error }}</p>
-      <button class="error-btn" @click="goBack">返回</button>
+      <div class="error-actions">
+        <button class="error-btn primary" @click="retryLoad">重试</button>
+        <button class="error-btn" @click="goBack">返回</button>
+      </div>
     </div>
 
     <!-- 播放界面 -->
@@ -1272,6 +1294,22 @@ function handlePlay() {
   }
 }
 
+async function retryLoad() {
+  loading.value = true
+  error.value = ''
+  try {
+    const id = Number(route.params.id)
+    await store.loadSession(id)
+    if (store.scenes.length === 0) {
+      error.value = '该预演暂无可播放的内容'
+    }
+  } catch (e) {
+    error.value = `加载失败: ${e.message}`
+  } finally {
+    loading.value = false
+  }
+}
+
 function goBack() {
   engine.stop()
   router.push('/rehearsal')
@@ -1341,8 +1379,13 @@ function goBack() {
   margin: 0;
 }
 
-.error-btn {
+.error-actions {
+  display: flex;
+  gap: 12px;
   margin-top: 8px;
+}
+
+.error-btn {
   padding: 8px 24px;
   border: 1px solid #30363d;
   background: transparent;
@@ -1356,6 +1399,17 @@ function goBack() {
 .error-btn:hover {
   background: #161b22;
   border-color: #8b949e;
+}
+
+.error-btn.primary {
+  background: #58a6ff;
+  border-color: #58a6ff;
+  color: #0d1117;
+}
+
+.error-btn.primary:hover {
+  background: #79b8ff;
+  border-color: #79b8ff;
 }
 
 /* Top bar */
