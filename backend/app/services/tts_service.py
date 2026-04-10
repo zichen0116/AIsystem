@@ -81,6 +81,7 @@ async def synthesize(
 
             result["temp_audio_url"] = temp_url
             result["audio_status"] = "temp_ready"
+            logger.info("TTS temporary audio ready: temp_audio_url=%s", temp_url)
 
             # 2. 下载音频并持久化到 OSS
             if persist and user_id:
@@ -91,9 +92,17 @@ async def synthesize(
                     persistent_url = await upload_bytes(audio_bytes, "wav", user_id, "rehearsal-audio")
                     result["persistent_audio_url"] = persistent_url
                     result["audio_status"] = "ready"
-                    logger.info(f"TTS persisted: {len(text)} chars -> {persistent_url[:80]}...")
+                    logger.info(
+                        "TTS persisted: persistent_audio_url=%s temp_audio_url=%s",
+                        persistent_url,
+                        temp_url,
+                    )
                 except Exception as e:
-                    logger.warning(f"TTS audio persist failed (temp URL still usable): {e}")
+                    logger.warning(
+                        "TTS audio persist failed (temp URL still usable): %s temp_audio_url=%s",
+                        e,
+                        temp_url,
+                    )
                     # 保持 temp_ready 状态
 
             return result

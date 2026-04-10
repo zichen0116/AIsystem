@@ -9,9 +9,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import init_db
+from app.core.logging_setup import configure_logging
 # 导入所有模型，确保 Base.metadata 包含所有表
 from app.models import *  # noqa: F401, F403
 from app.api import api_router
+
+configure_logging(settings.DEBUG)
 
 
 @asynccontextmanager

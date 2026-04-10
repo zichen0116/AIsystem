@@ -1,10 +1,10 @@
-// teacher-platform/src/composables/usePlaybackEngine.js
-import { ref, watch } from 'vue'
+﻿// teacher-platform/src/composables/usePlaybackEngine.js
+import { ref } from 'vue'
 import { useRehearsalStore } from '../stores/rehearsal.js'
 
 /**
- * PlaybackEngine — 状态机: idle → playing → paused
- * 音频优先级: persistent_audio_url > temp_audio_url > 计时播放
+ * PlaybackEngine state machine: idle -> playing -> paused
+ * Audio priority: persistent_audio_url > temp_audio_url > timer fallback
  */
 export function usePlaybackEngine() {
   const store = useRehearsalStore()
@@ -19,12 +19,83 @@ export function usePlaybackEngine() {
     if (audioRef.value) {
       audioRef.value.pause()
       audioRef.value.onended = null
+      audioRef.value.onerror = null
     }
   }
 
-  function _getAudioUrl(action) {
-    // 优先级: persistent > temp > null
-    return action.persistent_audio_url || action.temp_audio_url || action.audioUrl || null
+  function _getAudioCandidates(action) {
+    const candidates = [action.persistent_audio_url, action.temp_audio_url, action.audioUrl].filter(Boolean)
+    return [...new Set(candidates)]
+  }
+
+  async function _playAudioUrl(url) {
+    return await new Promise((resolve) => {
+      const audio = new Audio(url)
+      let settled = false
+
+      audio.onended = () => {
+        audio.onended = null
+        audio.onerror = null
+        processNext()
+      }
+
+      audio.onerror = () => {
+        audio.onended = null
+        audio.onerror = null
+        if (settled) {
+          processNext()
+          return
+        }
+        settled = true
+        resolve(false)
+      }
+
+      audioRef.value = audio
+      audio.play()
+        .then(() => {
+          if (!settled) {
+            settled = true
+            resolve(true)
+          }
+        })
+        .catch(() => {
+          audio.onended = null
+          audio.onerror = null
+          if (!settled) {
+            settled = true
+            resolve(false)
+          }
+        })
+    })
+  }
+
+  async function _playSpeechAction(action, scene) {
+    const candidates = _getAudioCandidates(action)
+    for (const url of candidates) {
+      const started = await _playAudioUrl(url)
+      if (started) return true
+    }
+
+    // TTS may still be filling asynchronously; refresh scene once and retry.
+    if (
+      candidates.length === 0
+      && action.audio_status === 'pending'
+      && store.currentSession?.id
+      && typeof scene?.sceneOrder === 'number'
+    ) {
+      await store._fetchScene(store.currentSession.id, scene.sceneOrder)
+      const refreshedScene = store.scenes[store.currentSceneIndex]
+      const refreshedAction = refreshedScene?.actions?.[store.currentActionIndex - 1]
+      if (refreshedAction?.type === 'speech') {
+        const refreshedCandidates = _getAudioCandidates(refreshedAction)
+        for (const url of refreshedCandidates) {
+          const started = await _playAudioUrl(url)
+          if (started) return true
+        }
+      }
+    }
+
+    return false
   }
 
   async function processNext() {
@@ -62,17 +133,7 @@ export function usePlaybackEngine() {
       case 'speech':
         store.clearEffects()
         store.currentSubtitle = action.text || ''
-        const audioUrl = _getAudioUrl(action)
-        if (audioUrl) {
-          audioRef.value = new Audio(audioUrl)
-          audioRef.value.onended = () => processNext()
-          audioRef.value.onerror = () => _playWithTimer(action.duration || 3000)
-          try {
-            await audioRef.value.play()
-          } catch {
-            _playWithTimer(action.duration || 3000)
-          }
-        } else {
+        if (!(await _playSpeechAction(action, scene))) {
           _playWithTimer(action.duration || 3000)
         }
         break
