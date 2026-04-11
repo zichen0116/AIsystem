@@ -1,6 +1,6 @@
 import { ref, onUnmounted } from 'vue'
 
-export function useVoiceInput(textRefOrGetter, setter) {
+export function useVoiceInput(textRefOrGetter, setter, options = {}) {
   const isRecording = ref(false)
   const isSupported = ref(false)
   let recognition = null
@@ -11,6 +11,9 @@ export function useVoiceInput(textRefOrGetter, setter) {
     ? textRefOrGetter
     : () => textRefOrGetter.value
   const setText = setter || (typeof textRefOrGetter !== 'function' ? (v) => { textRefOrGetter.value = v } : null)
+  const getLang = typeof options.lang === 'function'
+    ? options.lang
+    : () => options.lang || 'zh-CN'
   if (!setText) return { isRecording, isSupported, toggleRecording: () => {} }
 
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
@@ -19,7 +22,7 @@ export function useVoiceInput(textRefOrGetter, setter) {
     recognition = new SpeechRecognition()
     recognition.continuous = true
     recognition.interimResults = true
-    recognition.lang = 'zh-CN'
+    recognition.lang = getLang()
 
     recognition.onresult = (event) => {
       if (!event.results || event.results.length === 0) return
@@ -61,6 +64,7 @@ export function useVoiceInput(textRefOrGetter, setter) {
       recognition.stop()
     } else {
       committedText = String(getText() || '')
+      recognition.lang = getLang()
       recognition.start()
       isRecording.value = true
     }

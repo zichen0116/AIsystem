@@ -122,13 +122,13 @@ onUnmounted(() => {
 .play-btn {
   width: 44px;
   height: 44px;
-  background: #e6edf3;
-  color: #0d1117;
+  background: linear-gradient(135deg, #f6b73c, #f97316);
+  color: #16110a;
   border-radius: 50%;
 }
 
 .play-btn:hover {
-  background: #ffffff !important;
+  background: linear-gradient(135deg, #f59e0b, #ea580c) !important;
 }
 
 .play-btn svg {
@@ -170,18 +170,18 @@ onUnmounted(() => {
 }
 
 .dot:hover {
-  background: #8b949e;
+  background: #f97316;
   transform: scale(1.3);
 }
 
 .dot.done {
-  background: #58a6ff;
+  background: rgba(249, 115, 22, 0.55);
 }
 
 .dot.active {
-  background: #e6edf3;
+  background: #f6b73c;
   transform: scale(1.5);
-  box-shadow: 0 0 6px rgba(230, 237, 243, 0.4);
+  box-shadow: 0 0 6px rgba(249, 115, 22, 0.35);
 }
 
 .page-text {

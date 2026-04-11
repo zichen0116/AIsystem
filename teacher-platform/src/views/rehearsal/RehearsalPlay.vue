@@ -140,11 +140,23 @@ function goBack() {
 
 <style scoped>
 .rehearsal-play {
+  --rehearsal-bg:
+    radial-gradient(circle at top, rgba(114, 46, 209, 0.1), transparent 34%),
+    radial-gradient(circle at 84% 12%, rgba(99, 102, 241, 0.08), transparent 24%),
+    linear-gradient(180deg, #fafbff 0%, #f5f7fc 100%);
+  --rehearsal-surface: rgba(255, 255, 255, 0.9);
+  --rehearsal-surface-strong: rgba(255, 255, 255, 0.96);
+  --rehearsal-border: rgba(220, 226, 239, 0.95);
+  --rehearsal-shadow: 0 18px 48px rgba(37, 45, 82, 0.1);
+  --rehearsal-text: #111827;
+  --rehearsal-muted: #667085;
+  --rehearsal-accent: #f59e0b;
+  --rehearsal-accent-soft: rgba(249, 115, 22, 0.14);
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #0d1117;
-  color: #e6edf3;
+  background: var(--rehearsal-bg);
+  color: var(--rehearsal-text);
 }
 
 /* 加载状态 */
@@ -155,14 +167,14 @@ function goBack() {
   align-items: center;
   justify-content: center;
   gap: 16px;
-  color: #8b949e;
+  color: var(--rehearsal-muted);
 }
 
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid #30363d;
-  border-top-color: #58a6ff;
+  border: 3px solid rgba(220, 226, 239, 0.95);
+  border-top-color: var(--rehearsal-accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -185,8 +197,8 @@ function goBack() {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: rgba(248, 81, 73, 0.15);
-  color: #f85149;
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -196,7 +208,7 @@ function goBack() {
 }
 
 .error-text {
-  color: #8b949e;
+  color: var(--rehearsal-muted);
   font-size: 15px;
   margin: 0;
 }
@@ -209,9 +221,9 @@ function goBack() {
 
 .error-btn {
   padding: 8px 24px;
-  border: 1px solid #30363d;
-  background: transparent;
-  color: #e6edf3;
+  border: 1px solid var(--rehearsal-border);
+  background: var(--rehearsal-surface);
+  color: var(--rehearsal-text);
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
@@ -219,19 +231,19 @@ function goBack() {
 }
 
 .error-btn:hover {
-  background: #161b22;
-  border-color: #8b949e;
+  background: var(--rehearsal-surface-strong);
+  border-color: rgba(249, 115, 22, 0.24);
 }
 
 .error-btn.primary {
-  background: #58a6ff;
-  border-color: #58a6ff;
-  color: #0d1117;
+  background: linear-gradient(135deg, #f6b73c, #f97316);
+  border-color: #f97316;
+  color: #ffffff;
 }
 
 .error-btn.primary:hover {
-  background: #79b8ff;
-  border-color: #79b8ff;
+  background: linear-gradient(135deg, #f59e0b, #ea580c);
+  border-color: #ea580c;
 }
 
 /* Top bar */
@@ -240,6 +252,7 @@ function goBack() {
   align-items: center;
   padding: 10px 16px;
   border-bottom: 1px solid #21262d;
+  background: #161b22;
   min-height: 48px;
 }
 
@@ -307,8 +320,8 @@ function goBack() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #161b22;
-  color: #8b949e;
+  background: var(--rehearsal-surface);
+  color: var(--rehearsal-muted);
   border-radius: 12px;
 }
 </style>
