@@ -23,6 +23,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
 
     // 视觉效果
     spotlightTarget: null,
+    highlightTarget: null,
     laserTarget: null,
     currentSubtitle: '',
 
@@ -59,6 +60,46 @@ export const useRehearsalStore = defineStore('rehearsal', {
   },
 
   actions: {
+    _mapScene(rawScene) {
+      return {
+        sceneOrder: rawScene.scene_order,
+        title: rawScene.title,
+        slideContent: rawScene.slide_content,
+        actions: rawScene.actions,
+        keyPoints: rawScene.key_points,
+        sceneStatus: rawScene.scene_status,
+        audioStatus: rawScene.audio_status,
+      }
+    },
+
+    _mapSceneStatus(rawScene) {
+      return {
+        sceneIndex: rawScene.scene_order,
+        status: rawScene.scene_status,
+        title: rawScene.title,
+        sceneId: rawScene.id,
+      }
+    },
+
+    _replaceReadyScenes(rawScenes, preserveSceneOrder = null) {
+      this.scenes = (rawScenes || [])
+        .filter(scene => scene.scene_status === 'ready')
+        .map(scene => this._mapScene(scene))
+        .sort((a, b) => a.sceneOrder - b.sceneOrder)
+
+      if (preserveSceneOrder === null) return
+
+      const matchedIndex = this.scenes.findIndex(scene => scene.sceneOrder === preserveSceneOrder)
+      if (matchedIndex >= 0) {
+        this.currentSceneIndex = matchedIndex
+        return
+      }
+
+      this.currentSceneIndex = this.scenes.length > 0
+        ? Math.min(this.currentSceneIndex, this.scenes.length - 1)
+        : 0
+    },
+
     // --- SSE 生成（通知模式） ---
     async startGenerate(params) {
       this.generatingStatus = 'generating'
@@ -181,9 +222,19 @@ export const useRehearsalStore = defineStore('rehearsal', {
     },
 
     // --- 播放控制 ---
-    clearEffects() {
+    clearVisualEffects() {
       this.spotlightTarget = null
+      this.highlightTarget = null
       this.laserTarget = null
+    },
+
+    clearSpeechBoundEffects() {
+      this.spotlightTarget = null
+      this.highlightTarget = null
+    },
+
+    clearEffects() {
+      this.clearVisualEffects()
       this.currentSubtitle = ''
     },
 
@@ -221,19 +272,14 @@ export const useRehearsalStore = defineStore('rehearsal', {
     async loadSession(sessionId) {
       const data = await fetchSession(sessionId)
       this.currentSession = data
-      this.scenes = (data.scenes || [])
-        .filter(s => s.scene_status === 'ready')
-        .map(s => ({
-          sceneOrder: s.scene_order,
-          title: s.title,
-          slideContent: s.slide_content,
-          actions: s.actions,
-          keyPoints: s.key_points,
-          sceneStatus: s.scene_status,
-          audioStatus: s.audio_status,
-        }))
+      this.totalScenes = data.total_scenes || 0
+      this.sceneStatuses = (data.scenes || []).map(scene => this._mapSceneStatus(scene))
+      this._replaceReadyScenes(data.scenes || [])
       if (data.playback_snapshot) {
-        this.currentSceneIndex = data.playback_snapshot.sceneIndex || 0
+        this.currentSceneIndex = Math.min(
+          data.playback_snapshot.sceneIndex || 0,
+          Math.max(this.scenes.length - 1, 0),
+        )
         this.currentActionIndex = data.playback_snapshot.actionIndex || 0
       } else {
         this.currentSceneIndex = 0
@@ -241,6 +287,18 @@ export const useRehearsalStore = defineStore('rehearsal', {
       }
       this.playbackState = 'idle'
       this.clearEffects()
+    },
+
+    async refreshPlayableScenes(sessionId) {
+      const preserveSceneOrder = this.currentScene?.sceneOrder ?? null
+      const preserveActionIndex = this.currentActionIndex
+      const data = await fetchSession(sessionId)
+      this.currentSession = data
+      this.totalScenes = data.total_scenes || 0
+      this.sceneStatuses = (data.scenes || []).map(scene => this._mapSceneStatus(scene))
+      this._replaceReadyScenes(data.scenes || [], preserveSceneOrder)
+      this.currentActionIndex = preserveSceneOrder !== null ? preserveActionIndex : 0
+      return data
     },
 
     async savePlaybackProgress() {
@@ -267,6 +325,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
       this.currentActionIndex = 0
       this.playbackState = 'idle'
       this.spotlightTarget = null
+      this.highlightTarget = null
       this.laserTarget = null
       this.currentSubtitle = ''
       this.generatingStatus = null

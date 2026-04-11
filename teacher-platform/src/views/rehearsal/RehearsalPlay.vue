@@ -32,6 +32,7 @@
       <div class="slide-area">
         <div class="slide-container">
           <SlideRenderer v-if="store.currentScene" :slide="store.currentScene.slideContent" ref="slideRef">
+            <HighlightOverlay :target="store.highlightTarget" :canvasRef="canvasEl" />
             <SpotlightOverlay :target="store.spotlightTarget" :canvasRef="canvasEl" />
             <LaserPointer :target="store.laserTarget" :canvasRef="canvasEl" />
           </SlideRenderer>
@@ -65,6 +66,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useRehearsalStore } from '../../stores/rehearsal.js'
 import { usePlaybackEngine } from '../../composables/usePlaybackEngine.js'
 import SlideRenderer from '../../components/rehearsal/SlideRenderer.vue'
+import HighlightOverlay from '../../components/rehearsal/HighlightOverlay.vue'
 import SpotlightOverlay from '../../components/rehearsal/SpotlightOverlay.vue'
 import LaserPointer from '../../components/rehearsal/LaserPointer.vue'
 import SubtitlePanel from '../../components/rehearsal/SubtitlePanel.vue'
