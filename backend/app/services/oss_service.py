@@ -131,3 +131,23 @@ def download_to_temp(url: str) -> str:
     logger.info(f"OSS 文件下载到: {local_path}")
 
     return local_path
+
+
+async def upload_bytes(
+    content: bytes,
+    ext: str,
+    user_id: int,
+    prefix: str = "rehearsal-audio",
+) -> str:
+    """
+    上传程序生成的字节内容到 OSS（用于 TTS 音频等非用户上传场景）。
+    Returns: 公开访问 URL
+    """
+    object_key = f"{prefix}/{user_id}/{uuid.uuid4().hex}.{ext}"
+    bucket = _get_bucket()
+    bucket.put_object(object_key, content)
+
+    endpoint_host = settings.OSS_ENDPOINT.replace("https://", "").replace("http://", "")
+    url = f"https://{settings.OSS_BUCKET}.{endpoint_host}/{object_key}"
+    logger.info(f"Bytes uploaded: {len(content)} bytes -> {url}")
+    return url
