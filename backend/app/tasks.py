@@ -10,7 +10,7 @@ from typing import Optional
 
 from celery import Task
 from sqlalchemy import create_engine, select, update, delete
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.celery import celery_app
