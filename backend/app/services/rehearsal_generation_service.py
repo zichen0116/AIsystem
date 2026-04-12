@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.rehearsal import RehearsalSession, RehearsalScene
 from app.services.lesson_plan_service import stream_llm
+from app.services.rehearsal_media_service import populate_slide_media
 from app.services.tts_service import synthesize, estimate_duration_ms
 from app.services.rehearsal_session_service import compute_session_status
 
@@ -373,6 +374,14 @@ async def _generate_scene(
             slide_content = await _call_llm_json(SLIDE_CONTENT_SYSTEM_PROMPT, slide_prompt)
             if not slide_content or not isinstance(slide_content, dict):
                 slide_content = _fallback_slide(outline, scene_order)
+
+            slide_content = await populate_slide_media(
+                slide_content,
+                outline,
+                user_id=user_id,
+                session_id=session_id,
+                scene_id=scene_id,
+            )
 
             # 2. 生成 actions
             element_ids = [el.get("id", "") for el in slide_content.get("elements", [])]

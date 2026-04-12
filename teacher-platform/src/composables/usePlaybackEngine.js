@@ -1,6 +1,7 @@
 ﻿// teacher-platform/src/composables/usePlaybackEngine.js
 import { ref } from 'vue'
 import { useRehearsalStore } from '../stores/rehearsal.js'
+import { applySpotlightAction } from './rehearsalPlaybackEffects.js'
 
 /**
  * PlaybackEngine state machine: idle -> playing -> paused
@@ -10,11 +11,16 @@ export function usePlaybackEngine() {
   const store = useRehearsalStore()
   const audioRef = ref(null)
   let readingTimer = null
+  let spotlightTimer = null
   let laserTimer = null
   let highlightTimer = null
   let sceneAdvanceTimer = null
 
   function _clearEffectTimers() {
+    if (spotlightTimer) {
+      clearTimeout(spotlightTimer)
+      spotlightTimer = null
+    }
     if (laserTimer) {
       clearTimeout(laserTimer)
       laserTimer = null
@@ -45,6 +51,10 @@ export function usePlaybackEngine() {
   function _scheduleEffectClear(timerName, durationMs, clearFn) {
     if (!durationMs || durationMs <= 0) return
 
+    if (timerName === 'spotlight' && spotlightTimer) {
+      clearTimeout(spotlightTimer)
+      spotlightTimer = null
+    }
     if (timerName === 'laser' && laserTimer) {
       clearTimeout(laserTimer)
       laserTimer = null
@@ -55,11 +65,13 @@ export function usePlaybackEngine() {
     }
 
     const timeoutId = setTimeout(() => {
+      if (timerName === 'spotlight') spotlightTimer = null
       if (timerName === 'laser') laserTimer = null
       if (timerName === 'highlight') highlightTimer = null
       clearFn()
     }, durationMs)
 
+    if (timerName === 'spotlight') spotlightTimer = timeoutId
     if (timerName === 'laser') laserTimer = timeoutId
     if (timerName === 'highlight') highlightTimer = timeoutId
   }
@@ -71,7 +83,6 @@ export function usePlaybackEngine() {
 
   function _handleSpeechFinished() {
     if (store.playbackState !== 'playing') return
-    store.clearSpeechBoundEffects()
     processNext()
   }
 
@@ -231,10 +242,7 @@ export function usePlaybackEngine() {
         break
 
       case 'spotlight':
-        store.spotlightTarget = {
-          elementId: action.elementId,
-          dimOpacity: action.dimOpacity ?? 0.4,
-        }
+        applySpotlightAction(store, action, _scheduleEffectClear)
         processNext()
         break
 
