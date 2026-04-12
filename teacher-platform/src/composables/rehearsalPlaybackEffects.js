@@ -1,4 +1,4 @@
-export const DEFAULT_SPOTLIGHT_DURATION_MS = 3000
+export const DEFAULT_SPOTLIGHT_DURATION_MS = 5000
 
 export function applySpotlightAction(store, action, scheduleEffectClear) {
   if (!store || !action?.elementId) return

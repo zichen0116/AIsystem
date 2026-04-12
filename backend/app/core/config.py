@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     TTS_VOICE: str = "Cherry"
 
     # ========== 课堂预演图片生成 ==========
-    REHEARSAL_IMAGE_MODEL: str = "z-image-turbo"
+    REHEARSAL_IMAGE_MODEL: str = "qwen-image-2.0"
     REHEARSAL_IMAGE_BASE_URL: str = "https://dashscope.aliyuncs.com"
     REHEARSAL_IMAGE_SIZE: str = "1280*720"
     REHEARSAL_IMAGE_TIMEOUT_SECONDS: float = 120.0
