@@ -1,29 +1,29 @@
-<!-- teacher-platform/src/views/rehearsal/RehearsalNew.vue -->
+﻿<!-- teacher-platform/src/views/rehearsal/RehearsalNew.vue -->
 <template>
   <div class="rehearsal-new-page">
-    <!-- 背景光斑动画 -->
     <div class="bg-orb bg-orb-orange"></div>
     <div class="bg-orb bg-orb-pink"></div>
 
-    <!-- 返回按钮 -->
     <button class="back-btn" @click="router.push('/rehearsal')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       <span>返回</span>
     </button>
 
     <div class="center-content">
-      <!-- 主卡片 -->
       <div class="glass-card">
-
-        <!-- ============ 表单态：无 sessionId 且未生成 ============ -->
         <template v-if="!route.query.sessionId && !store.generatingStatus">
           <h2 class="card-title">课堂预演</h2>
           <p class="card-desc">输入教学主题，AI 为您生成可播放的课堂预演</p>
 
           <div class="form-group">
             <label>教学主题</label>
-            <el-input v-model="topic" type="textarea" :rows="3"
-              placeholder="例：高中物理 - 牛顿第二定律" :disabled="isGenerating" />
+            <el-input
+              v-model="topic"
+              type="textarea"
+              :rows="3"
+              placeholder="例：高中物理 - 牛顿第二定律"
+              :disabled="isGenerating"
+            />
             <div v-if="isSupported" class="voice-input-row">
               <button
                 type="button"
@@ -62,25 +62,21 @@
           </button>
         </template>
 
-        <!-- ============ 生成进度态 ============ -->
         <template v-if="store.generatingStatus">
-          <!-- 进度步骤指示器 -->
           <div class="step-dots">
-            <div v-for="(step, idx) in steps" :key="step"
+            <div
+              v-for="(step, idx) in steps"
+              :key="step"
               class="step-dot"
               :class="{ active: idx === currentStep, done: idx < currentStep }"
             ></div>
           </div>
 
-          <!-- 中央动画区域 -->
           <div class="visualizer-area">
-            <!-- 生成中：魔法课件动画 -->
             <template v-if="isGenerating">
-              <!-- 轨道环 -->
               <div class="orbit orbit-1"></div>
               <div class="orbit orbit-2"></div>
 
-              <!-- 浮动粒子 -->
               <div class="sparkle s1"></div>
               <div class="sparkle s2"></div>
               <div class="sparkle s3"></div>
@@ -88,7 +84,6 @@
               <div class="sparkle s5"></div>
               <div class="sparkle s6"></div>
 
-              <!-- 3张迷你PPT卡片 -->
               <div class="mini-slide slide-back">
                 <div class="slide-line" style="width:70%"></div>
                 <div class="slide-line" style="width:50%"></div>
@@ -112,14 +107,12 @@
               </div>
             </template>
 
-            <!-- 完成态 -->
             <div v-else-if="store.generatingStatus === 'complete'" class="result-icon result-success">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             </div>
 
-            <!-- 部分完成 -->
             <div v-else-if="store.generatingStatus === 'partial'" class="result-icon result-warning">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -127,7 +120,6 @@
               </svg>
             </div>
 
-            <!-- 失败态 -->
             <div v-else-if="store.generatingStatus === 'failed' || store.generatingStatus === 'error'" class="result-icon result-error">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
@@ -135,11 +127,9 @@
             </div>
           </div>
 
-          <!-- 状态文字 -->
           <h2 class="status-title">{{ statusTitle }}</h2>
           <p class="status-desc">{{ statusDesc }}</p>
 
-          <!-- 进度条 -->
           <div v-if="isGenerating || store.generatingStatus === 'partial'" class="progress-bar-wrap">
             <div class="progress-bar">
               <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
@@ -147,25 +137,25 @@
             <span class="progress-label">{{ progressPercent }}%</span>
           </div>
 
-          <!-- 场景状态列表 -->
           <div v-if="store.sceneStatuses.length" class="scene-list">
             <div v-for="s in store.sceneStatuses" :key="s.sceneIndex" class="scene-row">
-              <div class="scene-dot"
+              <div
+                class="scene-dot"
                 :class="{
-                  'dot-ready': s.status === 'ready',
+                  'dot-ready': s.status === 'ready' || s.status === 'fallback',
                   'dot-generating': s.status === 'generating' || s.status === 'pending',
-                  'dot-failed': s.status === 'failed'
+                  'dot-failed': s.status === 'failed',
+                  'dot-skipped': s.status === 'skipped'
                 }"
               ></div>
               <span class="scene-name">{{ s.sceneIndex + 1 }}. {{ s.title || '场景' }}</span>
               <span class="scene-status-label" :class="`label-${s.status}`">
-                {{ { ready: '就绪', failed: '失败', generating: '生成中', pending: '等待中' }[s.status] || s.status }}
+                {{ sceneStatusLabel(s.status) }}
               </span>
               <button v-if="s.status === 'failed'" class="retry-btn" @click="handleRetry(s.sceneIndex)">重试</button>
             </div>
           </div>
 
-          <!-- 底部操作 -->
           <div class="action-area">
             <template v-if="isGenerating">
               <div class="ai-working">
@@ -176,8 +166,7 @@
               </div>
             </template>
             <template v-else>
-              <button v-if="store.scenes.length > 0 && store.currentSession"
-                class="primary-btn" @click="goToPlay">
+              <button v-if="store.scenes.length > 0 && store.currentSession" class="primary-btn" @click="goToPlay">
                 开始播放（{{ store.scenes.length }} 页就绪）
               </button>
               <button class="ghost-btn" @click="router.push('/rehearsal')">返回</button>
@@ -196,6 +185,10 @@ import { useRehearsalStore } from '../../stores/rehearsal.js'
 import { useVoiceInput } from '../../composables/useVoiceInput.js'
 import { fetchSession } from '../../api/rehearsal.js'
 
+const PLAYABLE_SCENE_STATUSES = new Set(['ready', 'fallback'])
+const COMPLETED_SCENE_STATUSES = new Set(['ready', 'fallback', 'failed', 'skipped'])
+const PROCESSING_SESSION_STATUSES = new Set(['generating', 'processing'])
+
 const router = useRouter()
 const route = useRoute()
 const store = useRehearsalStore()
@@ -207,45 +200,63 @@ let pollTimer = null
 const { isRecording, isSupported, toggleRecording } = useVoiceInput(topic, null, { lang: () => language.value })
 
 const isGenerating = computed(() => store.generatingStatus === 'generating')
-
-const steps = ['大纲', '场景', '完成']
+const isUploadSession = computed(() => route.query.source === 'upload' || store.currentSession?.source === 'upload')
+const steps = computed(() => (isUploadSession.value ? ['上传', '解析', '完成'] : ['大纲', '场景', '完成']))
 
 const currentStep = computed(() => {
   if (!store.generatingStatus) return 0
   if (store.generatingStatus === 'generating') {
-    return store.sceneStatuses.length > 0 ? 1 : 0
+    return isUploadSession.value ? 1 : (store.sceneStatuses.length > 0 ? 1 : 0)
   }
   return 2
 })
 
 const statusTitle = computed(() => {
+  if (store.generatingStatus === 'generating') {
+    if (isUploadSession.value) {
+      return store.sceneStatuses.length > 0 ? '正在生成讲解场景...' : '正在解析上传文件...'
+    }
+    return store.sceneStatuses.length > 0 ? '正在生成场景...' : '正在生成大纲...'
+  }
+
   switch (store.generatingStatus) {
-    case 'generating':
-      return store.sceneStatuses.length > 0 ? '正在生成场景...' : '正在生成大纲...'
-    case 'complete': return '生成完成'
-    case 'partial': return '部分完成'
-    case 'failed': return '生成失败'
-    case 'error': return '出错了'
-    default: return ''
+    case 'complete':
+      return isUploadSession.value ? '文件处理完成' : '生成完成'
+    case 'partial':
+      return isUploadSession.value ? '部分页面处理完成' : '部分完成'
+    case 'failed':
+      return isUploadSession.value ? '文件处理失败' : '生成失败'
+    case 'error':
+      return '出错了'
+    default:
+      return ''
   }
 })
 
 const statusDesc = computed(() => {
   if (store.generatingStatus === 'generating') {
-    return store.generatingProgress || 'AI 正在为您打造精彩课件，请稍候...'
+    return store.generatingProgress || (isUploadSession.value
+      ? '文件已上传，正在拆分页面并生成讲解内容，请稍候...'
+      : 'AI 正在为您打造精彩课件，请稍候...')
   }
   if (store.generatingStatus === 'complete') {
-    return '所有场景已就绪，可以开始播放预演'
+    return isUploadSession.value
+      ? '文件页面已经处理完成，可以开始播放预演'
+      : '所有场景已就绪，可以开始播放预演'
   }
   if (store.generatingStatus === 'partial') {
-    return '部分页面生成失败，可点击重试'
+    return isUploadSession.value
+      ? '部分页面处理失败，可点击重试失败页面'
+      : '部分页面生成失败，可点击重试'
   }
   return store.generatingProgress || ''
 })
 
 const progressPercent = computed(() => {
-  if (!store.totalScenes) return 10
-  const done = store.sceneStatuses.filter(s => s.status === 'ready' || s.status === 'failed').length
+  if (!store.totalScenes) {
+    return isUploadSession.value && isGenerating.value ? 20 : 10
+  }
+  const done = store.sceneStatuses.filter(s => COMPLETED_SCENE_STATUSES.has(s.status)).length
   return Math.round((done / store.totalScenes) * 90) + 10
 })
 
@@ -257,7 +268,7 @@ onMounted(async () => {
     await loadExistingSession(Number(querySessionId))
   } else if (queryTopic) {
     topic.value = queryTopic
-    handleGenerate()
+    await handleGenerate()
   }
 })
 
@@ -265,45 +276,102 @@ onUnmounted(() => {
   stopPolling()
 })
 
+function mapSceneStatus(rawScene) {
+  return {
+    sceneIndex: rawScene.scene_order,
+    status: rawScene.scene_status,
+    title: rawScene.title,
+    sceneId: rawScene.id,
+  }
+}
+
+function mapPlayableScene(rawScene) {
+  return {
+    sceneOrder: rawScene.scene_order,
+    title: rawScene.title,
+    slideContent: rawScene.slide_content,
+    actions: rawScene.actions,
+    keyPoints: rawScene.key_points,
+    sceneStatus: rawScene.scene_status,
+    audioStatus: rawScene.audio_status,
+  }
+}
+
+function hydrateSession(data) {
+  store.currentSession = {
+    id: data.id,
+    title: data.title,
+    status: data.status,
+    source: data.source,
+  }
+  store.totalScenes = data.total_pages || data.total_scenes || 0
+  store.sceneStatuses = (data.scenes || []).map(mapSceneStatus)
+  store.scenes = (data.scenes || [])
+    .filter(scene => PLAYABLE_SCENE_STATUSES.has(scene.scene_status))
+    .map(mapPlayableScene)
+}
+
+function isUploadSource(data) {
+  return data?.source === 'upload' || route.query.source === 'upload'
+}
+
+function buildProgressMessage(data) {
+  const uploadSource = isUploadSource(data)
+  const totalScenes = data.total_pages || data.total_scenes || 0
+  const sceneStatuses = (data.scenes || []).map(mapSceneStatus)
+  const doneCount = sceneStatuses.filter(scene => COMPLETED_SCENE_STATUSES.has(scene.status)).length
+  const failedCount = sceneStatuses.filter(scene => scene.status === 'failed').length
+  const skippedCount = sceneStatuses.filter(scene => scene.status === 'skipped').length
+
+  if (uploadSource && sceneStatuses.length === 0) {
+    return totalScenes > 0
+      ? `文件已上传，共 ${totalScenes} 页，正在解析页面...`
+      : '文件已上传，正在解析页面...'
+  }
+
+  if (!totalScenes) {
+    return uploadSource ? '文件已上传，正在拆分页面并生成讲解内容...' : 'AI 正在为您生成大纲...'
+  }
+
+  let suffix = ''
+  if (failedCount > 0 || skippedCount > 0) {
+    const parts = []
+    if (failedCount > 0) parts.push(`${failedCount} 页失败`)
+    if (skippedCount > 0) parts.push(`${skippedCount} 页跳过`)
+    suffix = `（${parts.join('，')}）`
+  }
+
+  return `已完成 ${doneCount}/${totalScenes} 页${suffix}...`
+}
+
 async function loadExistingSession(sessionId) {
   try {
     const data = await fetchSession(sessionId)
-    store.currentSession = { id: data.id, title: data.title, status: data.status }
-    store.totalScenes = data.total_scenes || 0
-    store.sceneStatuses = (data.scenes || []).map(s => ({
-      sceneIndex: s.scene_order,
-      status: s.scene_status,
-      title: s.title,
-      sceneId: s.id,
-    }))
+    hydrateSession(data)
 
-    store.scenes = (data.scenes || [])
-      .filter(s => s.scene_status === 'ready')
-      .map(s => ({
-        sceneOrder: s.scene_order,
-        title: s.title,
-        slideContent: s.slide_content,
-        actions: s.actions,
-        keyPoints: s.key_points,
-        sceneStatus: s.scene_status,
-        audioStatus: s.audio_status,
-      }))
-
-    if (data.status === 'generating') {
+    if (PROCESSING_SESSION_STATUSES.has(data.status)) {
       store.generatingStatus = 'generating'
-      const doneCount = store.sceneStatuses.filter(s => s.status === 'ready' || s.status === 'failed').length
-      store.generatingProgress = `已完成 ${doneCount}/${store.totalScenes} 页...`
+      store.generatingProgress = buildProgressMessage(data)
       startPolling(sessionId)
-    } else if (data.status === 'ready') {
-      store.generatingStatus = 'complete'
-      store.generatingProgress = '生成完成'
-    } else if (data.status === 'partial') {
-      store.generatingStatus = 'partial'
-      store.generatingProgress = '部分页面生成失败，可重试失败页面'
-    } else {
-      store.generatingStatus = 'failed'
-      store.generatingProgress = '生成失败'
+      return
     }
+
+    if (data.status === 'ready') {
+      store.generatingStatus = 'complete'
+      store.generatingProgress = isUploadSource(data) ? '文件处理完成' : '生成完成'
+      return
+    }
+
+    if (data.status === 'partial') {
+      store.generatingStatus = 'partial'
+      store.generatingProgress = isUploadSource(data)
+        ? '部分页面处理失败，可重试失败页面'
+        : '部分页面生成失败，可重试失败页面'
+      return
+    }
+
+    store.generatingStatus = 'failed'
+    store.generatingProgress = isUploadSource(data) ? '文件处理失败' : '生成失败'
   } catch (e) {
     store.generatingStatus = 'error'
     store.generatingProgress = `加载失败: ${e.message}`
@@ -315,45 +383,27 @@ function startPolling(sessionId) {
   pollTimer = setInterval(async () => {
     try {
       const data = await fetchSession(sessionId)
-      store.totalScenes = data.total_scenes || 0
-      store.sceneStatuses = (data.scenes || []).map(s => ({
-        sceneIndex: s.scene_order,
-        status: s.scene_status,
-        title: s.title,
-        sceneId: s.id,
-      }))
+      hydrateSession(data)
+      store.generatingProgress = buildProgressMessage(data)
 
-      store.scenes = (data.scenes || [])
-        .filter(s => s.scene_status === 'ready')
-        .map(s => ({
-          sceneOrder: s.scene_order,
-          title: s.title,
-          slideContent: s.slide_content,
-          actions: s.actions,
-          keyPoints: s.key_points,
-          sceneStatus: s.scene_status,
-          audioStatus: s.audio_status,
-        }))
-
-      const doneCount = store.sceneStatuses.filter(s => s.status !== 'pending' && s.status !== 'generating').length
-      const failedCount = store.sceneStatuses.filter(s => s.status === 'failed').length
-      store.generatingProgress = `已完成 ${doneCount}/${store.totalScenes} 页`
-        + (failedCount > 0 ? `（${failedCount} 页失败）` : '') + '...'
-
-      if (data.status !== 'generating') {
-        if (data.status === 'ready') {
-          store.generatingStatus = 'complete'
-          store.generatingProgress = '生成完成'
-        } else if (data.status === 'partial') {
-          store.generatingStatus = 'partial'
-          store.generatingProgress = '部分页面生成失败，可重试失败页面'
-        } else {
-          store.generatingStatus = 'failed'
-          store.generatingProgress = '生成失败'
-        }
-        store.currentSession.status = data.status
-        stopPolling()
+      if (PROCESSING_SESSION_STATUSES.has(data.status)) {
+        store.generatingStatus = 'generating'
+        return
       }
+
+      if (data.status === 'ready') {
+        store.generatingStatus = 'complete'
+        store.generatingProgress = isUploadSource(data) ? '文件处理完成' : '生成完成'
+      } else if (data.status === 'partial') {
+        store.generatingStatus = 'partial'
+        store.generatingProgress = isUploadSource(data)
+          ? '部分页面处理失败，可重试失败页面'
+          : '部分页面生成失败，可重试失败页面'
+      } else {
+        store.generatingStatus = 'failed'
+        store.generatingProgress = isUploadSource(data) ? '文件处理失败' : '生成失败'
+      }
+      stopPolling()
     } catch (e) {
       console.error('Polling failed:', e)
     }
@@ -383,6 +433,17 @@ async function handleRetry(sceneOrder) {
   await loadExistingSession(store.currentSession.id)
 }
 
+function sceneStatusLabel(status) {
+  return {
+    ready: '就绪',
+    fallback: '可播放',
+    generating: '生成中',
+    pending: '等待中',
+    failed: '失败',
+    skipped: '已跳过',
+  }[status] || status
+}
+
 function goToPlay() {
   if (store.currentSession?.id) {
     router.push(`/rehearsal/play/${store.currentSession.id}`)
@@ -391,7 +452,6 @@ function goToPlay() {
 </script>
 
 <style scoped>
-/* ====== 全屏背景 ====== */
 .rehearsal-new-page {
   --rehearsal-bg:
     radial-gradient(circle at top, rgba(114, 46, 209, 0.12), transparent 34%),
@@ -415,7 +475,6 @@ function goToPlay() {
   padding: 24px;
 }
 
-/* 背景模糊光斑 */
 .bg-orb {
   position: fixed;
   border-radius: 50%;
@@ -447,7 +506,6 @@ function goToPlay() {
   50% { transform: scale(1.15); opacity: 1; }
 }
 
-/* 返回按钮 */
 .back-btn {
   position: absolute;
   top: 20px;
@@ -485,7 +543,6 @@ function goToPlay() {
   max-width: 520px;
 }
 
-/* ====== 毛玻璃卡片 ====== */
 .glass-card {
   background: var(--rehearsal-card-bg);
   border: 1px solid var(--rehearsal-card-border);
@@ -498,7 +555,6 @@ function goToPlay() {
   align-items: center;
 }
 
-/* ====== 表单态 ====== */
 .card-title {
   margin: 0 0 4px;
   font-size: 24px;
@@ -620,7 +676,6 @@ function goToPlay() {
   color: var(--rehearsal-text);
 }
 
-/* ====== 进度步骤指示器 ====== */
 .step-dots {
   display: flex;
   align-items: center;
@@ -647,7 +702,6 @@ function goToPlay() {
   background: rgba(236, 72, 153, 0.35);
 }
 
-/* ====== 中央动画区域 ====== */
 .visualizer-area {
   width: 192px;
   height: 192px;
@@ -658,7 +712,6 @@ function goToPlay() {
   margin-bottom: 24px;
 }
 
-/* 轨道环 */
 .orbit {
   position: absolute;
   border: 1.5px dashed rgba(236, 72, 153, 0.15);
@@ -683,7 +736,6 @@ function goToPlay() {
   to { transform: rotate(360deg); }
 }
 
-/* 浮动粒子 */
 .sparkle {
   position: absolute;
   border-radius: 50%;
@@ -704,7 +756,6 @@ function goToPlay() {
   75% { transform: translate(8px, -6px) scale(1.1); opacity: 0.9; }
 }
 
-/* 迷你PPT卡片 */
 .mini-slide {
   position: absolute;
   background: white;
@@ -779,7 +830,6 @@ function goToPlay() {
   align-self: flex-end;
 }
 
-/* 扫光效果 */
 .slide-shimmer {
   position: absolute;
   inset: 0;
@@ -793,7 +843,6 @@ function goToPlay() {
   100% { transform: translateX(200%); }
 }
 
-/* ====== 结果图标 ====== */
 .result-icon {
   width: 80px;
   height: 80px;
@@ -832,7 +881,6 @@ function goToPlay() {
   100% { transform: scale(1); opacity: 1; }
 }
 
-/* ====== 状态文字 ====== */
 .status-title {
   margin: 0;
   font-size: 22px;
@@ -849,7 +897,6 @@ function goToPlay() {
   line-height: 1.5;
 }
 
-/* ====== 自定义进度条 ====== */
 .progress-bar-wrap {
   width: 100%;
   display: flex;
@@ -890,7 +937,6 @@ function goToPlay() {
   text-align: right;
 }
 
-/* ====== 场景列表 ====== */
 .scene-list {
   width: 100%;
   margin-top: 20px;
@@ -932,6 +978,10 @@ function goToPlay() {
   background: #ef4444;
 }
 
+.dot-skipped {
+  background: #94a3b8;
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.7); }
@@ -953,12 +1003,14 @@ function goToPlay() {
   border-radius: 10px;
 }
 
-.label-ready {
+.label-ready,
+.label-fallback {
   background: #dcfce7;
   color: #16a34a;
 }
 
-.label-generating, .label-pending {
+.label-generating,
+.label-pending {
   background: #dbeafe;
   color: #2563eb;
 }
@@ -966,6 +1018,11 @@ function goToPlay() {
 .label-failed {
   background: #fef2f2;
   color: #dc2626;
+}
+
+.label-skipped {
+  background: #e2e8f0;
+  color: #475569;
 }
 
 .retry-btn {
@@ -984,7 +1041,6 @@ function goToPlay() {
   background: rgba(236, 72, 153, 0.08);
 }
 
-/* ====== 底部操作区 ====== */
 .action-area {
   width: 100%;
   margin-top: 24px;
@@ -1017,7 +1073,6 @@ function goToPlay() {
   50% { opacity: 1; transform: scale(1.2) rotate(15deg); }
 }
 
-/* ====== 响应式 ====== */
 @media (max-width: 560px) {
   .glass-card {
     padding: 28px 20px;
@@ -1035,7 +1090,6 @@ function goToPlay() {
   .orbit-2 { width: 180px; height: 180px; }
 }
 
-/* 尊重减少动画偏好 */
 @media (prefers-reduced-motion: reduce) {
   .bg-orb,
   .sparkle,

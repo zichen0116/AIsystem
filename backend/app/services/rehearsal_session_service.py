@@ -1,16 +1,27 @@
-# backend/app/services/rehearsal_session_service.py
+﻿# backend/app/services/rehearsal_session_service.py
 import logging
-from sqlalchemy import select, func
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.rehearsal import RehearsalSession, RehearsalScene
+from app.models.rehearsal import RehearsalScene, RehearsalSession
 
 logger = logging.getLogger(__name__)
 
 
+def summarize_session_counts(session: RehearsalSession) -> dict[str, int]:
+    return {
+        "ready_count": session.ready_count,
+        "fallback_count": session.fallback_count,
+        "playable_count": session.playable_count,
+        "skipped_count": session.skipped_count,
+        "failed_count": session.failed_count,
+    }
+
+
 async def list_sessions(db: AsyncSession, user_id: int) -> list[dict]:
-    """列出会话，附带 ready_count 和 failed_count 汇总。"""
+    """列出会话，附带上传场景计数汇总。"""
     result = await db.execute(
         select(RehearsalSession)
         .options(selectinload(RehearsalSession.scenes))
@@ -19,16 +30,24 @@ async def list_sessions(db: AsyncSession, user_id: int) -> list[dict]:
     )
     sessions = result.scalars().all()
     out = []
-    for s in sessions:
-        ready = sum(1 for sc in s.scenes if sc.scene_status == "ready")
-        failed = sum(1 for sc in s.scenes if sc.scene_status == "failed")
-        out.append({
-            "id": s.id, "title": s.title, "topic": s.topic,
-            "status": s.status, "total_scenes": s.total_scenes,
-            "language": s.language,
-            "created_at": s.created_at, "updated_at": s.updated_at,
-            "ready_count": ready, "failed_count": failed,
-        })
+    for session in sessions:
+        counts = summarize_session_counts(session)
+        out.append(
+            {
+                "id": session.id,
+                "title": session.title,
+                "topic": session.topic,
+                "source": session.source,
+                "status": session.status,
+                "total_scenes": session.total_scenes,
+                "total_pages": session.total_pages,
+                "original_file_name": session.original_file_name,
+                "language": session.language,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+                **counts,
+            }
+        )
     return out
 
 
@@ -78,14 +97,17 @@ def compute_session_status(session: RehearsalSession) -> str:
     """根据页级状态汇总计算会话级状态。"""
     if not session.scenes:
         return "failed"
-    statuses = [s.scene_status for s in session.scenes]
-    if any(st in ("pending", "generating") for st in statuses):
-        return "generating"
-    if all(st == "ready" for st in statuses):
-        return "ready"
-    if all(st == "failed" for st in statuses):
+
+    statuses = [scene.scene_status for scene in session.scenes]
+    if any(status in ("pending", "generating") for status in statuses):
+        return "processing" if session.source == "upload" else "generating"
+
+    counts = summarize_session_counts(session)
+    if counts["playable_count"] == 0:
         return "failed"
-    return "partial"
+    if counts["failed_count"] > 0:
+        return "partial"
+    return "ready"
 
 
 async def delete_session(db: AsyncSession, session_id: int, user_id: int) -> bool:

@@ -1,7 +1,8 @@
-// teacher-platform/src/stores/rehearsal.js
+﻿// teacher-platform/src/stores/rehearsal.js
 import { defineStore } from 'pinia'
 import {
   generateRehearsalStream,
+  uploadRehearsalFile,
   fetchSessions,
   fetchSession,
   fetchScene,
@@ -9,6 +10,17 @@ import {
   updatePlaybackSnapshot,
   deleteSession,
 } from '../api/rehearsal.js'
+
+
+const PLAYABLE_SCENE_STATUSES = new Set(['ready', 'fallback'])
+
+function estimateSpeechDuration(text) {
+  const normalized = String(text || '').trim()
+  if (!normalized) return 3000
+  const cjkChars = Array.from(normalized).filter(char => /[一-鿿]/.test(char)).length
+  const latinWords = normalized.replace(/[一-鿿]/g, ' ').trim().split(/\s+/).filter(Boolean).length
+  return Math.max(cjkChars * 150 + latinWords * 240, 2000)
+}
 
 export const useRehearsalStore = defineStore('rehearsal', {
   state: () => ({
@@ -52,7 +64,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
       return state.playbackState === 'paused'
     },
     readySceneCount(state) {
-      return state.sceneStatuses.filter(s => s.status === 'ready').length
+      return state.sceneStatuses.filter(s => PLAYABLE_SCENE_STATUSES.has(s.status)).length
     },
     failedSceneCount(state) {
       return state.sceneStatuses.filter(s => s.status === 'failed').length
@@ -61,15 +73,86 @@ export const useRehearsalStore = defineStore('rehearsal', {
 
   actions: {
     _mapScene(rawScene) {
+      const source = this.currentSession?.source || 'topic'
+      const slideContent = rawScene.slide_content || this._buildUploadSlide(rawScene)
+      const actions = Array.isArray(rawScene.actions) && rawScene.actions.length > 0
+        ? rawScene.actions
+        : this._buildUploadActions(rawScene)
+
       return {
         sceneOrder: rawScene.scene_order,
         title: rawScene.title,
-        slideContent: rawScene.slide_content,
-        actions: rawScene.actions,
+        slideContent,
+        actions,
         keyPoints: rawScene.key_points,
         sceneStatus: rawScene.scene_status,
         audioStatus: rawScene.audio_status,
+        source,
+        pageImageUrl: rawScene.page_image_url,
+        scriptText: rawScene.script_text,
       }
+    },
+
+    _buildUploadSlide(rawScene) {
+      if (rawScene.page_image_url) {
+        return {
+          id: `upload-slide-${rawScene.id || rawScene.scene_order}`,
+          viewportSize: 1000,
+          viewportRatio: 0.5625,
+          background: { type: 'solid', color: '#0f172a' },
+          elements: [
+            {
+              id: `upload-page-image-${rawScene.id || rawScene.scene_order}`,
+              type: 'image',
+              src: rawScene.page_image_url,
+              left: 0,
+              top: 0,
+              width: 1000,
+              height: 562,
+            },
+          ],
+        }
+      }
+
+      return {
+        id: `upload-fallback-${rawScene.id || rawScene.scene_order}`,
+        viewportSize: 1000,
+        viewportRatio: 0.5625,
+        background: { type: 'solid', color: '#ffffff' },
+        elements: [
+          {
+            id: `upload-title-${rawScene.id || rawScene.scene_order}`,
+            type: 'text',
+            content: `<p style="font-size:32px;font-weight:700;margin:0;">${rawScene.title || 'Uploaded page'}</p>`,
+            left: 60,
+            top: 56,
+            width: 880,
+            height: 56,
+          },
+          {
+            id: `upload-text-${rawScene.id || rawScene.scene_order}`,
+            type: 'text',
+            content: `<p style="font-size:18px;line-height:1.8;margin:0;">${rawScene.page_text || rawScene.script_text || 'This page will be explained in narration mode.'}</p>`,
+            left: 60,
+            top: 144,
+            width: 880,
+            height: 320,
+          },
+        ],
+      }
+    },
+
+    _buildUploadActions(rawScene) {
+      const text = rawScene.script_text || rawScene.page_text || rawScene.title
+      if (!text) return []
+
+      return [{
+        type: 'speech',
+        text,
+        duration: estimateSpeechDuration(text),
+        audio_status: rawScene.audio_status || 'failed',
+        ...(rawScene.audio_url ? { persistent_audio_url: rawScene.audio_url } : {}),
+      }]
     },
 
     _mapSceneStatus(rawScene) {
@@ -83,7 +166,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
 
     _replaceReadyScenes(rawScenes, preserveSceneOrder = null) {
       this.scenes = (rawScenes || [])
-        .filter(scene => scene.scene_status === 'ready')
+        .filter(scene => PLAYABLE_SCENE_STATUSES.has(scene.scene_status))
         .map(scene => this._mapScene(scene))
         .sort((a, b) => a.sceneOrder - b.sceneOrder)
 
@@ -135,7 +218,9 @@ export const useRehearsalStore = defineStore('rehearsal', {
               try {
                 const data = JSON.parse(line.slice(6))
                 this._handleSSEEvent(eventType, data)
-              } catch { /* ignore */ }
+              } catch {
+                // ignore malformed SSE payloads
+              }
               eventType = null
             }
           }
@@ -162,7 +247,6 @@ export const useRehearsalStore = defineStore('rehearsal', {
           break
 
         case 'scene_status': {
-          // 更新页级状态
           this.sceneStatuses.push({
             sceneIndex: data.sceneIndex,
             status: data.status,
@@ -174,7 +258,6 @@ export const useRehearsalStore = defineStore('rehearsal', {
           this.generatingProgress = `已完成 ${readyCount + failedCount}/${this.totalScenes} 页`
             + (failedCount > 0 ? `（${failedCount} 页失败）` : '') + '...'
 
-          // 如果页面 ready，从 DB 获取完整数据
           if (data.status === 'ready' && this.currentSession?.id) {
             this._fetchScene(this.currentSession.id, data.sceneIndex)
           }
@@ -199,17 +282,8 @@ export const useRehearsalStore = defineStore('rehearsal', {
     async _fetchScene(sessionId, sceneOrder) {
       try {
         const scene = await fetchScene(sessionId, sceneOrder)
-        // 按 scene_order 插入到正确位置
         const existing = this.scenes.findIndex(s => s.sceneOrder === sceneOrder)
-        const mapped = {
-          sceneOrder: scene.scene_order,
-          title: scene.title,
-          slideContent: scene.slide_content,
-          actions: scene.actions,
-          keyPoints: scene.key_points,
-          sceneStatus: scene.scene_status,
-          audioStatus: scene.audio_status,
-        }
+        const mapped = this._mapScene(scene)
         if (existing >= 0) {
           this.scenes[existing] = mapped
         } else {
@@ -249,7 +323,6 @@ export const useRehearsalStore = defineStore('rehearsal', {
       const result = await retryScene(sessionId, sceneOrder)
       if (result.scene_status === 'ready') {
         await this._fetchScene(sessionId, sceneOrder)
-        // 更新 sceneStatuses
         const idx = this.sceneStatuses.findIndex(s => s.sceneIndex === sceneOrder)
         if (idx >= 0) this.sceneStatuses[idx].status = 'ready'
       }
@@ -257,6 +330,35 @@ export const useRehearsalStore = defineStore('rehearsal', {
     },
 
     // --- 会话 CRUD ---
+    async uploadSessionFile(file) {
+      this.generatingStatus = 'generating'
+      this.generatingProgress = '正在上传文件...'
+      this.currentSession = null
+      this.scenes = []
+      this.sceneStatuses = []
+      this.totalScenes = 0
+
+      try {
+        const payload = await uploadRehearsalFile(file)
+        this.currentSession = {
+          id: payload.session_id,
+          title: file.name.replace(/\.[^.]+$/, '') || '上传预演',
+          status: 'processing',
+          source: payload.source || 'upload',
+        }
+        this.generatingProgress = `上传成功，共 ${payload.total_pages || 0} 页，正在进入文件处理流程...`
+        return payload
+      } catch (error) {
+        this.generatingStatus = null
+        this.generatingProgress = ''
+        this.currentSession = null
+        this.scenes = []
+        this.sceneStatuses = []
+        this.totalScenes = 0
+        throw error
+      }
+    },
+
     async loadSessions() {
       this.sessionsLoading = true
       try {
@@ -272,7 +374,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
     async loadSession(sessionId) {
       const data = await fetchSession(sessionId)
       this.currentSession = data
-      this.totalScenes = data.total_scenes || 0
+      this.totalScenes = data.total_pages || data.total_scenes || 0
       this.sceneStatuses = (data.scenes || []).map(scene => this._mapSceneStatus(scene))
       this._replaceReadyScenes(data.scenes || [])
       if (data.playback_snapshot) {
@@ -294,7 +396,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
       const preserveActionIndex = this.currentActionIndex
       const data = await fetchSession(sessionId)
       this.currentSession = data
-      this.totalScenes = data.total_scenes || 0
+      this.totalScenes = data.total_pages || data.total_scenes || 0
       this.sceneStatuses = (data.scenes || []).map(scene => this._mapSceneStatus(scene))
       this._replaceReadyScenes(data.scenes || [], preserveSceneOrder)
       this.currentActionIndex = preserveSceneOrder !== null ? preserveActionIndex : 0

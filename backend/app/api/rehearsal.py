@@ -1,7 +1,7 @@
-import logging
+﻿import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +14,10 @@ from app.schemas.rehearsal import (
     RehearsalSessionDetail,
     RehearsalSessionListResponse,
     RehearsalSceneResponse,
+    RehearsalUploadResponse,
 )
 from app.services import rehearsal_session_service as session_svc
+from app.services import rehearsal_upload_service as upload_svc
 from app.services.rehearsal_generation_service import generate_stream, retry_scene
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,18 @@ async def generate_rehearsal_stream(req: RehearsalGenerateRequest, user: Current
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/upload", response_model=RehearsalUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_rehearsal(user: CurrentUser, db: DbSession, file: UploadFile = File(...)):
+    """上传 PDF/PPT/PPTX 文件并创建上传来源的预演会话。"""
+    try:
+        payload = await upload_svc.create_rehearsal_upload_session(db, user.id, file)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+    return RehearsalUploadResponse(**payload)
 
 
 @router.get("/sessions", response_model=RehearsalSessionListResponse)
@@ -93,3 +107,4 @@ async def delete_session(session_id: int, user: CurrentUser, db: DbSession):
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "预演不存在")
     return None
+

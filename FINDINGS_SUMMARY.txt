@@ -1,0 +1,120 @@
+================================================================================
+课堂预演（CLASSROOM REHEARSAL）- 代码发现总结
+================================================================================
+
+✅ 已生成详细分析文档：REHEARSAL_ANALYSIS.md
+
+================================================================================
+核心文件位置
+================================================================================
+
+前端：
+  ✨ teacher-platform/src/views/rehearsal/RehearsalNew.vue        生成界面
+  ▶️ teacher-platform/src/views/rehearsal/RehearsalPlay.vue       播放界面
+  🖼️ teacher-platform/src/components/rehearsal/                   6 个可视化组件
+  🔌 teacher-platform/src/api/rehearsal.js                        API 封装
+  🗂️ teacher-platform/src/stores/rehearsal.js                     Pinia 状态
+
+后端：
+  📡 backend/app/api/rehearsal.py                                 7 个端点
+  🧠 backend/app/services/rehearsal_generation_service.py         4 阶段生成
+  🖼️ backend/app/services/rehearsal_media_service.py             文生图
+  🎵 backend/app/services/tts_service.py                          文语合成
+  💾 backend/app/models/rehearsal.py                              数据模型
+
+文件上传：
+  📁 backend/app/api/courseware.py                                课件上传
+  📤 backend/app/services/oss_service.py                          OSS 存储
+
+================================================================================
+生成流程（4 个阶段）
+================================================================================
+
+Stage 1: 大纲生成
+  └─ LLM 生成 5-8 个教学场景（JSON 格式）
+
+Stage 2: 逐页生成
+  ├─ 生成幻灯片内容（slide_content：布局、元素、文本）
+  ├─ 生成动作序列（actions：讲解、聚焦、高亮、激光笔）
+  ├─ 调用 Qwen 文生图，上传 OSS
+  └─ 标记为 "ready"，保存 DB
+
+Stage 3: TTS 异步补齐（非阻塞）
+  └─ 为每个讲解动作生成音频 URL
+
+Stage 4: 会话状态汇总
+  └─ 计算最终状态：ready|partial|failed
+
+================================================================================
+关键创意
+================================================================================
+
+1. 页级动作系统
+   speech → 讲解（音频）
+   spotlight → 聚焦（暗化）
+   highlight → 高亮（边框+填充）
+   laser → 激光笔（脉冲）
+
+2. 异步 TTS 非阻塞
+   页面 ready → TTS 异步启动 → 完成后更新音频 URL
+   优势：页面更快就绪
+
+3. 页位置感知讲稿规范化
+   去除非首页重复开场白
+
+4. 可视效果 4 层叠加
+   Canvas → Spotlight → Highlight → Laser
+
+================================================================================
+API 端点（7 个）
+================================================================================
+
+POST   /api/v1/rehearsal/generate-stream          SSE 流式生成
+GET    /api/v1/rehearsal/sessions                会话列表
+GET    /api/v1/rehearsal/sessions/{id}           会话详情
+GET    /api/v1/rehearsal/sessions/{id}/scenes/{order}  单个场景
+POST   /api/v1/rehearsal/sessions/{id}/scenes/{order}/retry  重试页面
+PATCH  /api/v1/rehearsal/sessions/{id}           更新播放进度
+DELETE /api/v1/rehearsal/sessions/{id}           删除会话
+
+================================================================================
+文件上传流程
+================================================================================
+
+验证（扩展名、大小）→ OSS 上传 → 创建 Courseware 记录 → 返回 URL
+
+支持格式：.pdf, .ppt, .pptx, .doc, .docx, .mp4
+限制：≤ 50MB
+
+前端 API：teacher-platform/src/api/courseware.js::uploadCourseware()
+后端处理：backend/app/api/courseware.py::upload_courseware()
+OSS 服务：backend/app/services/oss_service.py
+
+================================================================================
+可复用模块
+================================================================================
+
+✅ 上传：uploadCourseware(file, { title, tags, remark })
+✅ TTS：synthesize(text, voice, speed, user_id)
+✅ 生图：populate_slide_media(slide_content, outline, user_id, ...)
+✅ 课件聚合：fetchAllCourseware(filters)
+
+================================================================================
+数据模型
+================================================================================
+
+rehearsal_sessions
+  ├─ id, user_id, title, topic, status
+  ├─ total_scenes, playback_snapshot
+  ├─ language, settings, error_message
+  └─ created_at, updated_at
+
+rehearsal_scenes
+  ├─ id, session_id, scene_order, title, scene_status
+  ├─ slide_content (JSONB), actions (JSONB), key_points
+  ├─ audio_status, error_message
+  └─ created_at
+
+================================================================================
+完整分析文档：REHEARSAL_ANALYSIS.md
+生成时间：2026-04-12

@@ -1,4 +1,4 @@
-// teacher-platform/src/api/rehearsal.js
+﻿// teacher-platform/src/api/rehearsal.js
 import { apiRequest, authFetch } from './http.js'
 
 const API = '/api/v1/rehearsal'
@@ -9,6 +9,16 @@ export async function generateRehearsalStream(params) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(params),
+  })
+}
+
+/** 上传预演文件 */
+export async function uploadRehearsalFile(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return await apiRequest(`${API}/upload`, {
+    method: 'POST',
+    body: formData,
   })
 }
 

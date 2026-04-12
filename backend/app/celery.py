@@ -11,7 +11,7 @@ celery_app = Celery(
     "ai_teaching",
     broker=REDIS_URL,
     backend=REDIS_URL,
-    include=["app.tasks", "app.generators.ppt.celery_tasks"]
+    include=["app.tasks", "app.rehearsal_tasks", "app.generators.ppt.celery_tasks"]
 )
 
 # Celery 配置

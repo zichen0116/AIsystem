@@ -1,6 +1,5 @@
-<template>
+﻿<template>
   <div class="rehearsal-lab">
-    <!-- 品牌 Logo -->
     <div class="brand-logo">
       <div class="logo-icon">
         <div class="cube cube-pink"></div>
@@ -12,7 +11,6 @@
       </div>
     </div>
 
-    <!-- 核心输入卡片 -->
     <div class="input-card">
       <div class="card-header">
         <div class="user-avatar">
@@ -30,11 +28,32 @@
           rows="4"
           @keydown.enter.ctrl="handleSubmit"
         ></textarea>
+        <input
+          ref="fileInput"
+          class="file-input"
+          type="file"
+          accept=".pdf,.ppt,.pptx"
+          @change="handleFileChange"
+        />
+      </div>
+
+      <div v-if="selectedFile" class="upload-preview">
+        <div class="upload-preview-main">
+          <div class="upload-file-name">{{ selectedFile.name }}</div>
+          <div class="upload-file-meta">{{ selectedFileExtensionLabel }} · {{ selectedFileSizeText }}</div>
+          <div class="upload-file-hint">支持 PDF / PPT / PPTX，单个文件不超过 50MB</div>
+        </div>
+        <div class="upload-preview-actions">
+          <button class="upload-cancel-btn" :disabled="isUploadingFile" @click="clearSelectedFile">取消</button>
+          <button class="upload-confirm-btn" :disabled="isUploadingFile" @click="handleUploadConfirm">
+            {{ isUploadingFile ? '上传中...' : '确认上传' }}
+          </button>
+        </div>
       </div>
 
       <div class="card-footer">
         <div class="footer-icons">
-          <button class="icon-btn" title="附件上传（敬请期待）" @click="showComingSoon">
+          <button class="icon-btn" title="上传 PDF / PPT / PPTX" @click="openFilePicker">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
             </svg>
@@ -58,7 +77,6 @@
       </div>
     </div>
 
-    <!-- 我的课程 -->
     <div class="my-courses">
       <div class="courses-header">
         <span class="courses-tab active">我的课程</span>
@@ -69,7 +87,7 @@
       </div>
 
       <div v-else-if="store.sessions.length === 0" class="courses-empty">
-        <p>还没有课程，输入主题开始预演吧</p>
+        <p>还没有课程，输入主题或上传文件开始预演吧</p>
       </div>
 
       <div v-else class="courses-grid">
@@ -88,14 +106,15 @@
             </button>
           </div>
           <div class="card-body">
-            <span class="card-scenes">{{ session.total_scenes || 0 }} 页</span>
-            <span class="card-dot">·</span>
+            <span class="card-scenes">{{ sessionPageCount(session) }} pages</span>
+            <span class="card-dot">|</span>
+            <span class="card-source">{{ session.source === 'upload' ? 'FILE' : 'TOPIC' }}</span>
+            <span class="card-dot">|</span>
             <span class="card-date">{{ formatDate(session.created_at) }}</span>
           </div>
           <div class="card-bottom">
             <span :class="['status-tag', `status-${session.status}`]">{{ statusLabel(session.status) }}</span>
           </div>
-        </div>
       </div>
     </div>
   </div>
@@ -109,17 +128,26 @@ import { useUserStore } from '../../stores/user.js'
 import { useVoiceInput } from '../../composables/useVoiceInput.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+const ALLOWED_UPLOAD_EXTENSIONS = ['pdf', 'ppt', 'pptx']
+
 const router = useRouter()
 const store = useRehearsalStore()
 const userStore = useUserStore()
 
 const topic = ref('')
+const fileInput = ref(null)
+const selectedFile = ref(null)
+const isUploadingFile = ref(false)
 const { isRecording, isSupported, toggleRecording } = useVoiceInput(topic)
 
 const avatarLetter = computed(() => {
   const name = userStore.userInfo?.username || '老师'
   return name.charAt(0)
 })
+
+const selectedFileSizeText = computed(() => formatFileSize(selectedFile.value?.size || 0))
+const selectedFileExtensionLabel = computed(() => selectedFile.value?.name?.split('.').pop()?.toUpperCase() || 'FILE')
 
 onMounted(() => {
   store.loadSessions()
@@ -130,32 +158,126 @@ function handleSubmit() {
   router.push({ path: '/rehearsal/new', query: { topic: topic.value.trim() } })
 }
 
-function showComingSoon() {
-  ElMessage.info('敬请期待')
+function openFilePicker() {
+  fileInput.value?.click()
+}
+
+function handleFileChange(event) {
+  const file = event.target?.files?.[0]
+  if (!file) return
+
+  const errorMessage = validateUploadFile(file)
+  if (errorMessage) {
+    clearSelectedFile()
+    ElMessage.error(errorMessage)
+    return
+  }
+
+  selectedFile.value = file
+}
+
+function validateUploadFile(file) {
+  const extension = file.name.split('.').pop()?.toLowerCase() || ''
+  if (!ALLOWED_UPLOAD_EXTENSIONS.includes(extension)) {
+    return '文件类型不支持'
+  }
+  if (file.size > MAX_UPLOAD_SIZE) {
+    return '文件大小超过50MB'
+  }
+  return ''
+}
+
+function clearNativeFileInput() {
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
+}
+
+function clearSelectedFile() {
+  selectedFile.value = null
+  clearNativeFileInput()
+}
+
+async function handleUploadConfirm() {
+  if (!selectedFile.value || isUploadingFile.value) return
+
+  isUploadingFile.value = true
+  try {
+    const payload = await store.uploadSessionFile(selectedFile.value)
+    const sessionId = payload?.session_id
+    clearSelectedFile()
+
+    if (!sessionId) {
+      throw new Error('上传成功但未返回会话ID')
+    }
+
+    router.push({
+      path: '/rehearsal/new',
+      query: {
+        sessionId: String(sessionId),
+        source: 'upload',
+      },
+    })
+  } catch (error) {
+    ElMessage.error(error.message || '上传失败')
+  } finally {
+    isUploadingFile.value = false
+  }
 }
 
 function handleCardClick(session) {
   if (session.status === 'ready') {
     router.push(`/rehearsal/play/${session.id}`)
-  } else {
-    router.push({ path: '/rehearsal/new', query: { sessionId: String(session.id) } })
+    return
   }
+
+  router.push({
+    path: '/rehearsal/new',
+    query: {
+      sessionId: String(session.id),
+      ...(session.source === 'upload' ? { source: 'upload' } : {}),
+    },
+  })
 }
 
 async function handleDelete(id) {
   try {
     await ElMessageBox.confirm('确定删除该预演？', '提示', { type: 'warning' })
     await store.removeSession(id)
-  } catch { /* cancelled */ }
+  } catch {
+    // cancelled
+  }
 }
 
 function statusLabel(status) {
-  return { generating: '生成中', partial: '部分完成', ready: '已就绪', failed: '生成失败' }[status] || status
+  return {
+    processing: '处理中',
+    generating: '生成中',
+    partial: '部分完成',
+    ready: '已就绪',
+    failed: '生成失败',
+  }[status] || status
+}
+
+function sessionPageCount(session) {
+  return session.total_pages || session.total_scenes || 0
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '0 B'
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${bytes} B`
 }
 
 function formatDate(d) {
   if (!d) return ''
-  return new Date(d).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return new Date(d).toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 </script>
 
@@ -182,7 +304,6 @@ function formatDate(d) {
   padding: 48px 24px 60px;
 }
 
-/* 品牌 Logo */
 .brand-logo {
   display: flex;
   align-items: center;
@@ -231,7 +352,6 @@ function formatDate(d) {
   color: #ec4899;
 }
 
-/* 输入卡片 */
 .input-card {
   width: 100%;
   max-width: 640px;
@@ -300,6 +420,92 @@ function formatDate(d) {
   color: #94a3b8;
 }
 
+.file-input {
+  display: none;
+}
+
+.upload-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(249, 115, 22, 0.08);
+  border: 1px solid rgba(249, 115, 22, 0.16);
+}
+
+.upload-preview-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.upload-file-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--rehearsal-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-file-meta,
+.upload-file-hint {
+  font-size: 12px;
+  color: var(--rehearsal-muted);
+}
+
+.upload-file-meta {
+  margin-top: 4px;
+}
+
+.upload-file-hint {
+  margin-top: 6px;
+}
+
+.upload-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.upload-cancel-btn,
+.upload-confirm-btn {
+  border: none;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.upload-cancel-btn {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--rehearsal-muted);
+}
+
+.upload-cancel-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 1);
+  color: var(--rehearsal-text);
+}
+
+.upload-confirm-btn {
+  background: var(--rehearsal-accent);
+  color: #fff;
+}
+
+.upload-confirm-btn:hover:not(:disabled) {
+  background: var(--rehearsal-accent-strong);
+}
+
+.upload-cancel-btn:disabled,
+.upload-confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .card-footer {
   display: flex;
   align-items: center;
@@ -365,7 +571,6 @@ function formatDate(d) {
   cursor: not-allowed;
 }
 
-/* 我的课程 */
 .my-courses {
   width: 100%;
   max-width: 900px;
@@ -477,6 +682,12 @@ function formatDate(d) {
   margin: 0 4px;
 }
 
+.card-source {
+  color: #7c3aed;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
 .card-bottom {
   display: flex;
   align-items: center;
@@ -494,6 +705,7 @@ function formatDate(d) {
   color: #16a34a;
 }
 
+.status-processing,
 .status-generating {
   background: #dbeafe;
   color: #2563eb;
@@ -515,17 +727,32 @@ function formatDate(d) {
   color: #dc2626;
 }
 
-/* 响应式 */
 @media (max-width: 640px) {
   .rehearsal-lab {
     padding: 32px 16px 48px;
   }
+
   .input-card {
     padding: 20px;
     border-radius: 16px;
   }
+
   .logo-text {
     font-size: 22px;
+  }
+
+  .upload-preview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .upload-preview-actions {
+    width: 100%;
+  }
+
+  .upload-cancel-btn,
+  .upload-confirm-btn {
+    flex: 1;
   }
 }
 </style>

@@ -18,6 +18,10 @@ from app.services.parsers.factory import ParserFactory
 from app.services.rag.vector_store import VectorStore
 from app.services.rag.text_splitter import split_documents, split_documents_semantic
 from app.core.config import settings
+from app.core.database import AsyncSessionLocal
+from app.models.rehearsal import RehearsalSession
+from app.services.rehearsal_file_processing_service import process_rehearsal_session_assets
+from app.services.rehearsal_session_service import compute_session_status
 
 logger = logging.getLogger(__name__)
 
@@ -469,3 +473,51 @@ def build_graph_index(self, library_id: int, asset_ids: list[int]):
 
     finally:
         db.close()
+
+
+
+async def _run_rehearsal_upload_processing(session_id: int, user_id: int) -> dict:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(RehearsalSession)
+            .options(selectinload(RehearsalSession.scenes))
+            .where(RehearsalSession.id == session_id, RehearsalSession.user_id == user_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            logger.warning('上传预演会话不存在: session_id=%s, user_id=%s', session_id, user_id)
+            return {'status': 'missing', 'session_id': session_id}
+
+        try:
+            payload = await process_rehearsal_session_assets(db, session)
+            session.status = compute_session_status(session)
+            session.error_message = None
+            await db.commit()
+            return {
+                'status': session.status,
+                'session_id': session.id,
+                'scene_count': payload.get('scene_count', 0),
+                'converted_pdf_url': session.converted_pdf_url,
+            }
+        except Exception as exc:
+            session.status = 'failed'
+            session.error_message = str(exc)
+            await db.commit()
+            logger.exception('上传预演文件处理失败: session_id=%s', session_id)
+            return {
+                'status': 'failed',
+                'session_id': session_id,
+                'error_message': session.error_message,
+            }
+
+
+@celery_app.task(
+    bind=True,
+    base=CallbackTask,
+    name='app.tasks.process_rehearsal_upload_session',
+)
+def process_rehearsal_upload_session(self, session_id: int, user_id: int):
+    """处理上传预演会话的后台文件解析链路。"""
+    logger.info('开始处理上传预演会话: session_id=%s, user_id=%s', session_id, user_id)
+    return asyncio.run(_run_rehearsal_upload_processing(session_id, user_id))
+
