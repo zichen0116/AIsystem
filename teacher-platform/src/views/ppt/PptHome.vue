@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { getUserTemplates, extractStyleFromImage } from '@/api/ppt'
 import { resolveApiUrl, getToken } from '@/api/http'
@@ -9,6 +9,9 @@ const pptStore = usePptStore()
 const creationType = ref('dialog')
 const mainText = ref('')
 const aspectRatio = ref('16:9')
+const showAspectMenu = ref(false)
+const aspectDropdownRef = ref(null)
+const aspectMenuStyle = ref({})
 const selectedTemplateId = ref(null)
 const selectedPresetTemplateId = ref(null)
 const useTextStyle = ref(false)
@@ -102,6 +105,9 @@ function handleClickOutside(event) {
   if (showLibPicker.value && !event.target.closest('.lib-picker') && !event.target.closest('.knowledge-btn')) {
     showLibPicker.value = false
   }
+  if (showAspectMenu.value && !event.target.closest('.aspect-dropdown')) {
+    showAspectMenu.value = false
+  }
 }
 
 // Examples removed per user request
@@ -122,8 +128,42 @@ function removeSelectedLibrary(libraryId) {
   selectedLibIds.value = selectedLibIds.value.filter(id => id !== libraryId)
 }
 
+function toggleLibSelection(libraryId) {
+  const index = selectedLibIds.value.indexOf(libraryId)
+  if (index > -1) {
+    selectedLibIds.value.splice(index, 1)
+  } else {
+    selectedLibIds.value.push(libraryId)
+  }
+}
+
 function selectMode(mode) {
   creationType.value = mode
+}
+
+function selectAspect(ratio) {
+  aspectRatio.value = ratio
+  showAspectMenu.value = false
+}
+
+function toggleAspectMenu() {
+  showAspectMenu.value = !showAspectMenu.value
+  if (showAspectMenu.value) {
+    // 计算菜单位置
+    nextTick(() => {
+      if (aspectDropdownRef.value) {
+        const rect = aspectDropdownRef.value.getBoundingClientRect()
+        aspectMenuStyle.value = {
+          top: `${rect.bottom + 8}px`,
+          left: `${rect.left}px`
+        }
+      }
+    })
+  }
+}
+
+function closeAspectDropdown() {
+  showAspectMenu.value = false
 }
 
 function selectTemplate(templateId) {
@@ -311,6 +351,33 @@ async function handleReferenceFileUpload(event) {
 // 移除参考文件
 function removeReferenceFile(index) {
   uploadedReferenceFiles.value.splice(index, 1)
+}
+
+// 文件类型判断
+function isImageFile(filename) {
+  const ext = filename.split('.').pop().toLowerCase()
+  return ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(ext)
+}
+
+function isVideoFile(filename) {
+  const ext = filename.split('.').pop().toLowerCase()
+  return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)
+}
+
+// 格式化文件大小
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return Math.round(bytes / Math.pow(k, i) * 10) / 10 + ' ' + sizes[i]
+}
+
+// 文件 hover 状态
+function handleFileHover(index, isHovered) {
+  if (uploadedReferenceFiles.value[index]) {
+    uploadedReferenceFiles.value[index].isHovered = isHovered
+  }
 }
 
 function goToHistory() {
@@ -620,20 +687,146 @@ async function handleNext() {
             :placeholder="creationType === 'dialog' ? '输入你想制作的PPT主题，例如：帮我制作一份关于人工智能发展历程的教学演示文稿...' : creationType === 'file' ? '粘贴或输入文本内容（可选，也可只上传文件）...' : '上传 PDF 或 PPTX 后点击下一步'"
             :rows="creationType === 'renovation' ? 2 : undefined"
           ></textarea>
+          
+          <!-- 参考文件标签区域 - 集成在输入框内 -->
+          <div v-if="uploadedReferenceFiles.length > 0" class="reference-files-inline">
+            <div class="reference-files-header">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+              <span class="reference-files-count">{{ uploadedReferenceFiles.length }} 个参考文件</span>
+            </div>
+            <div class="reference-files-list">
+              <div 
+                v-for="(file, index) in uploadedReferenceFiles" 
+                :key="index" 
+                class="reference-file-chip"
+                @mouseenter="handleFileHover(index, true)"
+                @mouseleave="handleFileHover(index, false)"
+              >
+                <div class="file-chip-icon">
+                  <svg v-if="isImageFile(file.name)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                  <svg v-else-if="isVideoFile(file.name)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <polygon points="23 7 16 12 23 17 23 7"/>
+                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+                  </svg>
+                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                </div>
+                <span class="file-chip-name">{{ file.name }}</span>
+                <span class="file-chip-size">{{ formatFileSize(file.size) }}</span>
+                <button 
+                  class="file-chip-remove" 
+                  @click="removeReferenceFile(index)"
+                  :class="{ 'file-chip-remove-hover': file.isHovered }"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          
           <div class="composer-toolbar">
             <div class="toolbar-left">
               <button
-                v-if="creationType === 'dialog'"
                 class="icon-btn knowledge-btn"
                 type="button"
                 title="选择知识库"
                 @click.stop="showLibPicker = !showLibPicker"
               >
-                📚
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
               </button>
-              <button v-if="creationType === 'dialog'" class="icon-btn" type="button" title="上传参考文件" @click="triggerReferenceFileUpload">📎</button>
-              <button class="icon-btn" type="button" :title="isRecording ? '停止录音' : '语音输入'" @click="toggleVoiceInput">🎙️</button>
-              <select v-model="aspectRatio" class="aspect-select">
+              <button v-if="creationType === 'dialog'" class="icon-btn" type="button" title="上传参考文件" @click="triggerReferenceFileUpload">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                </svg>
+              </button>
+              <button class="icon-btn" type="button" :title="isRecording ? '停止录音' : '语音输入'" @click="toggleVoiceInput">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+              </button>
+              
+              <!-- 比例选择下拉菜单 -->
+              <div class="aspect-dropdown" ref="aspectDropdownRef">
+                <button 
+                  type="button"
+                  class="aspect-trigger"
+                  @click="toggleAspectMenu"
+                  :class="{ active: showAspectMenu }"
+                  title="选择比例"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                  </svg>
+                  <span class="aspect-current">{{ aspectRatio }}</span>
+                  <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </button>
+                
+                <!-- 下拉菜单 -->
+                <Transition name="dropdown">
+                  <div v-if="showAspectMenu" class="aspect-menu" :style="aspectMenuStyle">
+                    <div class="aspect-menu-header">选择比例</div>
+                    <button 
+                      type="button"
+                      class="aspect-menu-item"
+                      :class="{ active: aspectRatio === '16:9' }"
+                      @click="selectAspect('16:9')"
+                    >
+                      <div class="aspect-preview-small aspect-16-9-small"></div>
+                      <div class="aspect-menu-item-info">
+                        <span class="aspect-menu-label">16:9</span>
+                        <span class="aspect-menu-desc">宽屏</span>
+                      </div>
+                    </button>
+                    <button 
+                      type="button"
+                      class="aspect-menu-item"
+                      :class="{ active: aspectRatio === '4:3' }"
+                      @click="selectAspect('4:3')"
+                    >
+                      <div class="aspect-preview-small aspect-4-3-small"></div>
+                      <div class="aspect-menu-item-info">
+                        <span class="aspect-menu-label">4:3</span>
+                        <span class="aspect-menu-desc">标准</span>
+                      </div>
+                    </button>
+                    <button 
+                      type="button"
+                      class="aspect-menu-item"
+                      :class="{ active: aspectRatio === '1:1' }"
+                      @click="selectAspect('1:1')"
+                    >
+                      <div class="aspect-preview-small aspect-1-1-small"></div>
+                      <div class="aspect-menu-item-info">
+                        <span class="aspect-menu-label">1:1</span>
+                        <span class="aspect-menu-desc">方形</span>
+                      </div>
+                    </button>
+                  </div>
+                </Transition>
+              </div>
+              
+              <select v-model="aspectRatio" class="aspect-select" style="display: none;">
                 <option value="16:9">16:9</option>
                 <option value="4:3">4:3</option>
                 <option value="1:1">1:1</option>
@@ -682,14 +875,6 @@ async function handleNext() {
           @change="handleReferenceFileUpload"
           hidden
         >
-
-        <!-- 已上传的参考文件显示 -->
-        <div v-if="uploadedReferenceFiles.length > 0" class="reference-files">
-          <div v-for="(file, index) in uploadedReferenceFiles" :key="index" class="reference-file-item">
-            <span class="file-name">{{ file.name }}</span>
-            <button class="file-remove" @click="removeReferenceFile(index)">×</button>
-          </div>
-        </div>
 
         <div class="template-head">
           <h3 class="template-title">选择风格模板</h3>
@@ -827,69 +1012,161 @@ async function handleNext() {
         </section>
       </section>
     </div>
+
+    <!-- 知识库选择弹窗 -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div v-if="showLibPicker" class="lib-modal-overlay" @click="showLibPicker = false">
+          <div class="lib-modal" @click.stop>
+            <div class="lib-modal-header">
+              <h3 class="lib-modal-title">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+                选择知识库
+              </h3>
+              <button class="lib-modal-close" @click="showLibPicker = false">×</button>
+            </div>
+            <div class="lib-modal-body">
+              <!-- 个人知识库 -->
+              <div v-if="personalLibs.length > 0" class="lib-section">
+                <div class="lib-section-title">个人知识库</div>
+                <div class="lib-grid">
+                  <div
+                    v-for="lib in personalLibs"
+                    :key="lib.id"
+                    class="lib-card"
+                    :class="{ 'lib-card-selected': selectedLibIds.includes(lib.id) }"
+                    @click="toggleLibSelection(lib.id)"
+                  >
+                    <div class="lib-card-check">{{ selectedLibIds.includes(lib.id) ? '✓' : '' }}</div>
+                    <div class="lib-card-info">
+                      <div class="lib-card-name">{{ lib.name }}</div>
+                      <div class="lib-card-desc">{{ lib.description || '暂无描述' }}</div>
+                    </div>
+                    <span class="lib-badge personal">个人</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 系统知识库 -->
+              <div v-if="systemLibs.length > 0" class="lib-section">
+                <div class="lib-section-title">系统知识库</div>
+                <div class="lib-grid">
+                  <div
+                    v-for="lib in systemLibs"
+                    :key="lib.id"
+                    class="lib-card"
+                    :class="{ 'lib-card-selected': selectedLibIds.includes(lib.id) }"
+                    @click="toggleLibSelection(lib.id)"
+                  >
+                    <div class="lib-card-check">{{ selectedLibIds.includes(lib.id) ? '✓' : '' }}</div>
+                    <div class="lib-card-info">
+                      <div class="lib-card-name">{{ lib.name }}</div>
+                      <div class="lib-card-desc">{{ lib.description || '暂无描述' }}</div>
+                    </div>
+                    <span class="lib-badge system">系统</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 空状态 -->
+              <div v-if="personalLibs.length === 0 && systemLibs.length === 0" class="lib-empty">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
+                <p>暂无可用知识库</p>
+                <p class="lib-empty-hint">请在知识库管理中创建知识库</p>
+              </div>
+            </div>
+            <div class="lib-modal-footer">
+              <span class="lib-modal-count">已选择 {{ selectedLibIds.length }} 个知识库</span>
+              <button class="lib-modal-confirm" @click="showLibPicker = false">确认</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
+/* 引入现代字体 - 使用国内 CDN 镜像 */
+@import url('https://fonts.loli.net/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+/* 备用方案：字节跳动 CDN */
+/* @import url('https://sf1-cdn-tos.bytegoofy.com/obj/iconpark/fonts/PlusJakartaSans.css'); */
+
 .ppt-home {
   flex: 1;
   overflow-y: auto;
-  background: #ffffff;
+  background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%);
   position: relative;
+  /* 使用现代系统字体栈，无需外部字体文件 */
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 .history-entry-btn {
   position: absolute;
-  top: 16px;
-  right: 16px;
+  top: 20px;
+  right: 32px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid #d5dfed;
-  border-radius: 10px;
-  background: #f8fbff;
-  color: #3f5f82;
+  gap: 8px;
+  border: 2px solid #E2E8F0;
+  border-radius: 12px;
+  background: #FFFFFF;
+  color: #475569;
   font-size: 14px;
   font-weight: 600;
-  padding: 8px 16px;
+  padding: 10px 18px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: inherit;
   z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .history-entry-btn:hover {
-  border-color: #3b82f6;
-  background: #eef5ff;
-  color: #1e3a8a;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  border-color: #3B82F6;
+  background: #F0F7FF;
+  color: #1E40AF;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.15);
+  transform: translateY(-1px);
 }
 
 .shell {
-  max-width: 1120px;
+  max-width: 1200px;
   margin: 0 auto;
-  padding: 0 22px 72px;
+  padding: 0 32px 80px;
 }
 
 .hero {
   text-align: center;
-  padding: 42px 0 30px;
+  padding: 56px 0 40px;
   animation: rise 0.55s ease;
 }
 
 .hero h1 {
   margin-top: 0;
-  font-size: clamp(2rem, 5vw, 3.4rem);
-  line-height: 1.12;
-  letter-spacing: -0.02em;
-  color: #173357;
+  font-size: clamp(2.2rem, 5.5vw, 3.6rem);
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  color: #0F172A;
   font-weight: 800;
+  background: linear-gradient(135deg, #0F172A 0%, #1E40AF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .hero p {
-  margin-top: 14px;
-  font-size: clamp(0.98rem, 1.8vw, 1.12rem);
-  color: #475569;
+  margin-top: 16px;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  color: #64748B;
+  font-weight: 400;
+  line-height: 1.6;
 }
 
 .workspace {
@@ -904,75 +1181,94 @@ async function handleNext() {
 }
 
 .mode-tab {
-  border: 1px solid #bfd0e4;
-  background: rgba(244, 250, 255, 0.64);
+  border: 2px solid #E2E8F0;
+  background: #FFFFFF;
   color: #475569;
-  border-radius: 14px;
-  padding: 12px 10px;
+  border-radius: 12px;
+  padding: 14px 16px;
   text-align: center;
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: inherit;
+  position: relative;
+  overflow: hidden;
 }
 
 .mode-tab:hover {
-  border-color: #9eb7d3;
-  transform: translateY(-1px);
+  border-color: #3B82F6;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+  color: #1E40AF;
 }
 
 .mode-tab.active {
-  border-color: rgb(76, 128, 245);
-  color: rgb(76, 128, 245);
-  background: rgba(76, 128, 245, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(76, 128, 245, 0.2);
+  border-color: #3B82F6;
+  color: #FFFFFF;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.25);
+  transform: translateY(-1px);
 }
 
 .mode-desc {
-  border: 1px solid #c7d7e8;
-  background: rgba(241, 248, 255, 0.68);
+  border: 1px solid #E2E8F0;
+  background: #FFFFFF;
   color: #475569;
-  border-radius: 14px;
-  padding: 12px 14px;
+  border-radius: 12px;
+  padding: 14px 18px;
   font-size: 14px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  font-weight: 400;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .composer {
-  border: 1px solid #adc2db;
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(245, 250, 255, 0.7) 0%, rgba(232, 240, 250, 0.48) 100%);
+  border: 2px solid #E2E8F0;
+  border-radius: 16px;
+  background: #FFFFFF;
   overflow: hidden;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer:focus-within {
+  border-color: #3B82F6;
+  box-shadow: 0 4px 24px rgba(59, 130, 246, 0.12);
 }
 
 .main-textarea {
   width: 100%;
-  min-height: 150px;
+  min-height: 160px;
   resize: vertical;
   border: none;
   outline: none;
-  padding: 16px;
+  padding: 20px;
   line-height: 1.7;
   font-size: 15px;
-  color: #1e293b;
+  color: #0F172A;
   background: transparent;
   font-family: inherit;
+  transition: all 0.2s ease;
+  flex: 1;
 }
 
 .main-textarea::placeholder {
-  color: #7f94ab;
+  color: #94A3B8;
+  font-weight: 400;
 }
 
 .composer-toolbar {
-  border-top: 1px solid #bfd0e2;
-  padding: 10px 12px;
+  border-top: 1px solid #F1F5F9;
+  padding: 12px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  background: rgba(232, 241, 251, 0.52);
+  gap: 12px;
+  background: #FAFBFC;
 }
 
 .toolbar-left,
@@ -982,74 +1278,169 @@ async function handleNext() {
   gap: 8px;
 }
 
-.reference-files {
+/* 参考文件内联显示区域 - 惊艳设计 */
+.reference-files-inline {
+  padding: 16px 20px 12px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.03) 0%, rgba(37, 99, 235, 0.05) 100%);
+  border-top: 1px solid rgba(59, 130, 246, 0.1);
+  animation: slideDown 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+    padding-top: 16px;
+    padding-bottom: 12px;
+  }
+}
+
+.reference-files-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: #3B82F6;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.reference-files-header svg {
+  opacity: 0.7;
+}
+
+.reference-files-list {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
-  padding: 8px 12px;
-  background: rgba(241, 248, 255, 0.68);
-  border: 1px solid #c7d7e8;
-  border-radius: 10px;
 }
 
-.reference-file-item {
+.reference-file-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  background: rgba(76, 128, 245, 0.1);
-  border: 1px solid rgba(76, 128, 245, 0.3);
-  border-radius: 6px;
-  font-size: 12px;
-  color: #3f5771;
+  gap: 8px;
+  padding: 8px 12px 8px 10px;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 10px;
+  cursor: default;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+  position: relative;
+  overflow: hidden;
 }
 
-.file-name {
-  max-width: 150px;
+.reference-file-chip::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(37, 99, 235, 0.08) 100%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.reference-file-chip:hover {
+  border-color: #3B82F6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.12);
+  transform: translateY(-2px);
+}
+
+.reference-file-chip:hover::before {
+  opacity: 1;
+}
+
+.file-chip-icon {
+  position: relative;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3B82F6;
+  flex-shrink: 0;
+}
+
+.file-chip-name {
+  position: relative;
+  z-index: 1;
+  font-size: 13px;
+  color: #0F172A;
+  font-weight: 500;
+  max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.file-remove {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(76, 128, 245, 0.2);
-  color: #3f5771;
-  font-size: 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
+.file-chip-size {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  color: #94A3B8;
+  font-weight: 400;
+  flex-shrink: 0;
 }
 
-.file-remove:hover {
-  background: rgba(76, 128, 245, 0.4);
+.file-chip-remove {
+  position: relative;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: #94A3B8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.file-chip-remove:hover {
+  background: #FEE2E2;
+  color: #EF4444;
+  transform: scale(1.1);
+}
+
+.file-chip-remove-hover {
+  background: #FEE2E2;
+  color: #EF4444;
 }
 
 .icon-btn {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   border: 1px solid transparent;
   background: transparent;
-  color: #4e6784;
+  color: #64748B;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: 16px;
+  position: relative;
 }
 
 .icon-btn:hover {
-  border-color: #aec2d8;
-  background: rgba(245, 250, 255, 0.76);
-  color: #1d3f69;
+  border-color: #E2E8F0;
+  background: #F8FAFC;
+  color: #0F172A;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .icon-btn.recording {
@@ -1065,50 +1456,255 @@ async function handleNext() {
 }
 
 .aspect-select {
-  border: 1px solid #b8cade;
-  border-radius: 8px;
-  padding: 8px 10px;
-  color: #3f5771;
-  background: rgba(246, 251, 255, 0.74);
+  border: 2px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #0F172A;
+  background: #FFFFFF;
   font-size: 13px;
+  font-weight: 500;
   outline: none;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.aspect-select:hover {
+  border-color: #CBD5E1;
+}
+
+.aspect-select:focus {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
+}
+
+/* 比例下拉菜单 - 简洁设计 */
+.aspect-dropdown {
+  position: relative;
+}
+
+.aspect-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #64748B;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.aspect-trigger:hover {
+  border-color: #E2E8F0;
+  background: #F8FAFC;
+  color: #0F172A;
+}
+
+.aspect-trigger.active {
+  border-color: #3B82F6;
+  background: #EFF6FF;
+  color: #3B82F6;
+}
+
+.aspect-current {
+  font-weight: 600;
+  min-width: 32px;
+  text-align: center;
+}
+
+.dropdown-arrow {
+  transition: transform 0.2s ease;
+}
+
+.aspect-trigger.active .dropdown-arrow {
+  transform: rotate(180deg);
+}
+
+/* 下拉菜单 */
+.aspect-menu {
+  position: fixed;
+  min-width: 150px;
+  background: #FFFFFF;
+  border: 1.5px solid #E2E8F0;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  z-index: 1000;
+  animation: dropdownSlideDown 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes dropdownSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.aspect-menu-header {
+  padding: 10px 14px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #94A3B8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #F1F5F9;
+}
+
+.aspect-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: #0F172A;
+  font-family: inherit;
+}
+
+.aspect-menu-item:hover {
+  background: #F8FAFC;
+}
+
+.aspect-menu-item.active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(37, 99, 235, 0.12) 100%);
+  color: #3B82F6;
+}
+
+.aspect-menu-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.aspect-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.aspect-menu-desc {
+  font-size: 11px;
+  color: #94A3B8;
+}
+
+.aspect-menu-item.active .aspect-menu-desc {
+  color: #3B82F6;
+}
+
+/* 小预览框 */
+.aspect-preview-small {
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.aspect-preview-small::after {
+  content: '';
+  position: absolute;
+  inset: 1.5px;
+  background: currentColor;
+  opacity: 0.15;
+  border-radius: 1px;
+}
+
+.aspect-menu-item.active .aspect-preview-small::after {
+  opacity: 0.3;
+}
+
+.aspect-16-9-small {
+  width: 20px;
+  height: 11px;
+}
+
+.aspect-4-3-small {
+  width: 16px;
+  height: 12px;
+}
+
+.aspect-1-1-small {
+  width: 14px;
+  height: 14px;
+}
+
+/* Dropdown transition */
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 
 .next-btn {
   border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  color: #f6fbff;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  border-radius: 12px;
+  padding: 10px 24px;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  background: linear-gradient(140deg, rgb(76, 128, 245) 0%, rgb(56, 107, 219) 100%);
-  box-shadow: 0 8px 22px rgba(49, 90, 137, 0.26);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: inherit;
+  position: relative;
+  overflow: hidden;
+}
+
+.next-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s ease;
+}
+
+.next-btn:hover::before {
+  left: 100%;
 }
 
 .next-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 11px 26px rgba(44, 83, 128, 0.33);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+}
+
+.next-btn:active {
+  transform: translateY(0);
 }
 
 .template-head {
-  margin-top: 6px;
+  margin-top: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .template-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  color: #1f436f;
-  letter-spacing: 0.01em;
+  color: #0F172A;
+  letter-spacing: -0.01em;
 }
 
 .toggle-wrap {
@@ -1129,13 +1725,13 @@ async function handleNext() {
 }
 
 .toggle {
-  width: 44px;
-  height: 24px;
+  width: 48px;
+  height: 26px;
   border-radius: 999px;
-  background: #b6c8dc;
-  border: 1px solid #9fb4ca;
+  background: #CBD5E1;
+  border: 2px solid transparent;
   position: relative;
-  transition: background 0.2s ease;
+  transition: all 0.2s ease;
 }
 
 .toggle::after {
@@ -1146,42 +1742,59 @@ async function handleNext() {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #f7fbff;
-  box-shadow: 0 1px 2px rgba(33, 55, 80, 0.3);
-  transition: transform 0.2s ease;
+  background: #FFFFFF;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .toggle-input:checked + .toggle {
-  background: rgb(76, 128, 245);
-  border-color: rgb(56, 107, 219);
+  background: #3B82F6;
+  border-color: #2563EB;
 }
 
 .toggle-input:checked + .toggle::after {
-  transform: translateX(20px);
+  transform: translateX(22px);
 }
 
 .template-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .template-item {
   position: relative;
   aspect-ratio: 4 / 3;
-  border-radius: 12px;
-  border: 2px solid transparent;
-  background: linear-gradient(155deg, rgba(245, 250, 255, 0.85) 0%, rgba(219, 233, 248, 0.8) 100%);
+  border-radius: 14px;
+  border: 2px solid #E2E8F0;
+  background: #FFFFFF;
   overflow: hidden;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.template-item:hover {
+  border-color: #3B82F6;
+  transform: translateY(-4px);
+  box-shadow: 0 12px 28px rgba(59, 130, 246, 0.15);
+}
+
+.template-item.selected {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), 0 8px 24px rgba(59, 130, 246, 0.12);
 }
 
 .template-item img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.template-item:hover img {
+  transform: scale(1.03);
 }
 
 .template-name {
@@ -1189,129 +1802,126 @@ async function handleNext() {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 4px 6px;
-  background: linear-gradient(transparent, rgba(0,0,0,0.6));
+  padding: 8px 10px;
+  background: linear-gradient(transparent, rgba(15, 23, 42, 0.75));
   color: white;
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.template-item:hover {
-  border-color: #7a9fc7;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 22px rgba(34, 64, 100, 0.1);
-}
-
-.template-item.selected {
-  border-color: rgb(76, 128, 245);
-  box-shadow: 0 0 0 3px rgba(76, 128, 245, 0.2);
+  backdrop-filter: blur(4px);
 }
 
 .template-selected-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(76, 128, 245, 0.2);
+  background: rgba(59, 130, 246, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
+  backdrop-filter: blur(2px);
 }
 
 .template-selected-text {
-  color: #fff;
-  font-size: 16px;
-  font-weight: 600;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  color: #FFFFFF;
+  font-size: 15px;
+  font-weight: 700;
+  text-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  padding: 6px 14px;
+  background: rgba(59, 130, 246, 0.9);
+  border-radius: 8px;
 }
 
 .template-remove {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 20px;
-  height: 20px;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
+  background: rgba(239, 68, 68, 0.9);
+  color: #FFFFFF;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: all 0.2s ease;
   z-index: 2;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
 }
 
-.template-item.selected:hover .template-remove {
-  opacity: 1;
-}
-
-.template-item:hover .template-remove {
-  opacity: 1;
+.template-remove:hover {
+  background: rgba(220, 38, 38, 1);
+  transform: scale(1.1);
 }
 
 .template-upload {
-  border: 2px dashed #a8bfd8;
-  border-radius: 12px;
+  border: 2px dashed #CBD5E1;
+  border-radius: 14px;
   aspect-ratio: 4 / 3;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  gap: 6px;
-  color: #547395;
-  font-size: 12px;
+  gap: 8px;
+  color: #64748B;
+  font-size: 13px;
   font-weight: 600;
-  background: rgba(241, 248, 255, 0.7);
+  background: #FAFBFC;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .template-upload:hover {
-  border-color: rgb(76, 128, 245);
-  color: rgb(76, 128, 245);
-  background: rgba(223, 236, 249, 0.76);
+  border-color: #3B82F6;
+  color: #3B82F6;
+  background: #F0F7FF;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
 }
 
 .text-style-panel {
   display: none;
-  border: 1px solid #b6c8dd;
-  border-radius: 14px;
-  background: linear-gradient(170deg, rgba(243, 250, 255, 0.72) 0%, rgba(226, 237, 250, 0.64) 100%);
-  padding: 14px;
-  margin-bottom: 12px;
+  border: 2px solid #E2E8F0;
+  border-radius: 16px;
+  background: #FFFFFF;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
 }
 
 .text-style-panel.active {
   display: block;
-  animation: rise 0.25s ease;
+  animation: rise 0.3s ease;
 }
 
 .style-textarea {
   width: 100%;
-  min-height: 86px;
+  min-height: 100px;
   resize: vertical;
-  border-radius: 10px;
-  border: 1px solid #a8bfd7;
-  background: rgba(244, 250, 255, 0.8);
-  padding: 11px 12px;
+  border-radius: 12px;
+  border: 2px solid #E2E8F0;
+  background: #FAFBFC;
+  padding: 14px 16px;
   outline: none;
   font-size: 14px;
-  line-height: 1.6;
-  color: #17395f;
+  line-height: 1.7;
+  color: #0F172A;
   font-family: inherit;
-  margin-bottom: 10px;
-  transition: border-color 0.2s ease;
+  margin-bottom: 16px;
+  transition: all 0.2s ease;
 }
 
 .style-textarea:focus {
-  border-color: rgb(76, 128, 245);
+  border-color: #3B82F6;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
 }
 
 .preset-label {
@@ -1333,32 +1943,36 @@ async function handleNext() {
 }
 
 .preset-btn {
-  border: 1px solid #afc4db;
+  border: 2px solid #E2E8F0;
   border-radius: 999px;
-  background: rgba(245, 251, 255, 0.82);
-  color: #39587a;
-  font-size: 12px;
+  background: #FFFFFF;
+  color: #475569;
+  font-size: 13px;
   font-weight: 600;
-  height: 32px;
-  padding: 0 12px;
+  height: 36px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: inherit;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .preset-btn:hover {
-  border-color: rgb(76, 128, 245);
-  color: rgb(76, 128, 245);
-  background: rgba(223, 237, 250, 0.84);
+  border-color: #3B82F6;
+  color: #2563EB;
+  background: #F0F7FF;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
 }
 
 .preset-btn.active {
-  border-color: rgb(76, 128, 245);
-  color: rgb(76, 128, 245);
-  background: rgba(223, 237, 250, 0.84);
+  border-color: #3B82F6;
+  color: #FFFFFF;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25);
 }
 
 .preset-btn-wrap {
@@ -1371,13 +1985,25 @@ async function handleNext() {
   left: 50%;
   transform: translateX(-50%);
   z-index: 100;
-  margin-bottom: 8px;
-  width: 280px;
-  border-radius: 12px;
+  margin-bottom: 12px;
+  width: 300px;
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
   background: white;
-  border: 2px solid rgb(76, 128, 245);
+  border: 2px solid #3B82F6;
+  animation: presetPreviewFadeIn 0.2s ease;
+}
+
+@keyframes presetPreviewFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 .preset-preview-img {
@@ -1439,73 +2065,86 @@ async function handleNext() {
 }
 
 .style-tip {
-  font-size: 12px;
-  color: #6a8099;
-  line-height: 1.55;
+  font-size: 13px;
+  color: #64748B;
+  line-height: 1.6;
+  font-weight: 400;
+  padding: 10px 14px;
+  background: #F8FAFC;
+  border-radius: 10px;
+  border-left: 3px solid #3B82F6;
 }
 
 /* File Upload Zone */
 .file-upload-zone {
-  border: 2px dashed #adc2db;
+  border: 2px dashed #CBD5E1;
   border-radius: 16px;
-  padding: 28px 20px;
+  padding: 36px 24px;
   text-align: center;
-  margin-bottom: 12px;
-  background: rgba(241, 248, 255, 0.5);
-  transition: all 0.2s ease;
+  margin-bottom: 20px;
+  background: #FAFBFC;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: default;
 }
 
 .file-upload-zone.dragging {
-  border-color: rgb(76, 128, 245);
-  background: rgba(76, 128, 245, 0.08);
+  border-color: #3B82F6;
+  background: #F0F7FF;
+  border-style: solid;
+  transform: scale(1.01);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
 }
 
 .file-upload-zone.has-file {
   border-style: solid;
-  border-color: rgb(76, 128, 245);
-  background: rgba(76, 128, 245, 0.04);
-  padding: 16px 20px;
+  border-color: #3B82F6;
+  background: #F0F7FF;
+  padding: 20px 24px;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.08);
 }
 
 .upload-icon {
-  color: #7f94ab;
-  margin-bottom: 8px;
+  color: #94A3B8;
+  margin-bottom: 12px;
 }
 
 .upload-text {
-  font-size: 14px;
+  font-size: 15px;
   color: #475569;
-  margin: 0 0 4px;
+  margin: 0 0 6px;
+  font-weight: 500;
 }
 
 .upload-link {
-  color: rgb(76, 128, 245);
+  color: #3B82F6;
   cursor: pointer;
   font-weight: 600;
   text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 0.2s ease;
 }
 
 .upload-link:hover {
-  color: rgb(56, 107, 219);
+  color: #2563EB;
 }
 
 .upload-hint {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: 13px;
+  color: #94A3B8;
   margin: 0;
+  font-weight: 400;
 }
 
 .uploaded-file-info {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   justify-content: center;
-  color: #3f5771;
+  color: #0F172A;
 }
 
 .uploaded-file-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   max-width: 300px;
   overflow: hidden;
@@ -1514,47 +2153,57 @@ async function handleNext() {
 }
 
 .uploaded-file-size {
-  font-size: 12px;
-  color: #94a3b8;
+  font-size: 13px;
+  color: #64748B;
+  font-weight: 500;
 }
 
 .uploaded-file-remove {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  border: 1px solid #d5dfed;
-  background: rgba(239, 68, 68, 0.06);
-  color: #ef4444;
-  font-size: 16px;
+  border: 2px solid #FEE2E2;
+  background: #FEF2F2;
+  color: #EF4444;
+  font-size: 18px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 
 .uploaded-file-remove:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: #ef4444;
+  background: #EF4444;
+  border-color: #EF4444;
+  color: #FFFFFF;
+  transform: scale(1.1);
 }
 
 .selected-lib-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .selected-lib-tag {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  padding: 8px 14px;
   border-radius: 999px;
-  background: #eef4ff;
-  color: #2153b3;
-  font-size: 12px;
+  background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+  color: #1E40AF;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #BFDBFE;
+  transition: all 0.2s ease;
+}
+
+.selected-lib-tag:hover {
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
 }
 
 .tag-remove {
@@ -1562,44 +2211,298 @@ async function handleNext() {
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
   line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
 }
 
-.lib-picker {
-  margin-top: 12px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid #d7dfec;
-  border-radius: 16px;
-  background: #f8fbff;
+.tag-remove:hover {
+  opacity: 1;
 }
 
-.lib-section {
+/* 知识库弹窗样式 */
+.lib-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.lib-modal {
+  background: #FFFFFF;
+  border-radius: 20px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 600px;
+  width: 100%;
+  max-height: 80vh;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  overflow: hidden;
+  animation: modalSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.lib-section-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: #1f2937;
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
 }
 
-.lib-option {
+.lib-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid #E2E8F0;
+}
+
+.lib-modal-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: #46546a;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.lib-modal-title svg {
+  color: #3B82F6;
+}
+
+.lib-modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #F8FAFC;
+  border-radius: 8px;
+  font-size: 20px;
+  color: #64748B;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.lib-modal-close:hover {
+  background: #F1F5F9;
+  color: #0F172A;
+}
+
+.lib-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.lib-section {
+  margin-bottom: 24px;
+}
+
+.lib-section:last-child {
+  margin-bottom: 0;
+}
+
+.lib-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.lib-card {
+  position: relative;
+  border: 2px solid #E2E8F0;
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #FFFFFF;
+}
+
+.lib-card:hover {
+  border-color: #CBD5E1;
+  background: #FAFBFC;
+}
+
+.lib-card-selected {
+  border-color: #3B82F6;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.04) 0%, rgba(37, 99, 235, 0.06) 100%);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.lib-card-check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #3B82F6;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.lib-card-info {
+  margin-right: 40px;
+}
+
+.lib-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0F172A;
+  margin-bottom: 4px;
+}
+
+.lib-card-desc {
+  font-size: 12px;
+  color: #64748B;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lib-badge {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lib-badge.personal {
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  color: #FFFFFF;
+}
+
+.lib-badge.system {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+  color: #FFFFFF;
 }
 
 .lib-empty {
+  text-align: center;
+  padding: 48px 20px;
+  color: #94A3B8;
+}
+
+.lib-empty svg {
+  margin-bottom: 16px;
+  opacity: 0.4;
+}
+
+.lib-empty p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.lib-empty-hint {
   font-size: 12px;
-  color: #94a3b8;
+  color: #CBD5E1;
+}
+
+.lib-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-top: 1px solid #E2E8F0;
+  background: #FAFBFC;
+}
+
+.lib-modal-count {
+  font-size: 13px;
+  color: #64748B;
+  font-weight: 500;
+}
+
+.lib-modal-confirm {
+  padding: 10px 24px;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.lib-modal-confirm:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+}
+
+/* Modal transition */
+.modal-enter-active,
+.modal-leave-active {
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+}
+
+.modal-enter-active .lib-modal,
+.modal-leave-active .lib-modal {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.modal-enter-from .lib-modal,
+.modal-leave-to .lib-modal {
+  transform: scale(0.95) translateY(10px);
+}
+
+/* 旧样式保留用于兼容，但不使用 */
+.lib-picker {
+  display: none;
+}
+
+.lib-section {
+  display: none;
+}
+
+.lib-section-title {
+  display: none;
+}
+
+.lib-option {
+  display: none;
+}
+
+.lib-empty {
+  display: none;
 }
 
 .next-btn:disabled {
@@ -1617,6 +2520,34 @@ async function handleNext() {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* 模板子区域样式 */
+.template-subsection {
+  margin-bottom: 28px;
+}
+
+.template-subsection:last-child {
+  margin-bottom: 0;
+}
+
+.template-subsection-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0F172A;
+  margin-bottom: 14px;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.template-subsection-title::before {
+  content: '';
+  width: 4px;
+  height: 18px;
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  border-radius: 2px;
 }
 
 @media (max-width: 1024px) {
