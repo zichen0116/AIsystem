@@ -21,6 +21,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal
 from app.models.rehearsal import RehearsalSession, RehearsalScene
 from app.services.lesson_plan_service import stream_llm
+from app.services.rehearsal_media_service import populate_slide_media
 from app.services.tts_service import synthesize, estimate_duration_ms
 from app.services.rehearsal_session_service import compute_session_status
 
@@ -83,23 +84,26 @@ ACTIONS_SYSTEM_PROMPT = """你是一位课堂教学专家。根据幻灯片内�
 可用动作类型：
 1. speech: 讲解 { "type": "speech", "text": "讲稿内容" }
 2. spotlight: 聚焦元素 { "type": "spotlight", "elementId": "el_1", "dimOpacity": 0.4 }
-3. laser: 激光指向 { "type": "laser", "elementId": "el_1", "color": "#ff0000" }
+3. highlight: 高亮元素 { "type": "highlight", "elementIds": ["el_1"], "color": "#ff6b6b", "opacity": 0.22, "borderWidth": 3 }
+4. laser: 激光指向 { "type": "laser", "elementId": "el_1", "color": "#ff0000", "duration": 1600 }
 
 设计规范：
 - 每页 4-8 个动作
-- 通常先 spotlight 某元素，然后 speech 讲解该元素
+- 通常先 spotlight / highlight 某元素，然后 speech 讲解该元素
 - speech 文本要自然、口语化，像真正在课堂上讲课
 - 第一页要有开场白（例如“同学们好，今天我们来学习……”）
 - 中间页禁止再次问候、禁止重新自我介绍，应自然承接上一页
 - 最后一页要有收尾语
 - 所有页面属于同一节课，不要出现“上节课”“上一节”等跨课表达
-- spotlight 的 elementId 必须引用幻灯片中已有的元素 id
+- 优先聚焦正文重点、图示、公式，不要聚焦纯装饰元素
+- 所有 elementId 必须引用幻灯片中已有的元素 id
 - 不要生成 navigate 动作（翻页由系统自动处理）
 
 输出严格 JSON 数组格式，不要输出其他内容：
 [
   { "type": "spotlight", "elementId": "el_1", "dimOpacity": 0.4 },
-  { "type": "speech", "text": "这里讲解..." }
+  { "type": "speech", "text": "这里讲解..." },
+  { "type": "laser", "elementId": "el_2", "color": "#ff3b30", "duration": 1600 }
 ]"""
 
 OPENING_GREETING_RE = re.compile(
@@ -109,6 +113,8 @@ OPENING_GREETING_RE = re.compile(
 )
 
 OPENING_TODAY_RE = re.compile(r"^\s*今天(我们|咱们)来学习[，,：:。\s]*")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+VISUAL_ACTION_TYPES = {"spotlight", "highlight", "laser"}
 
 
 def _build_course_context_for_actions(all_outlines: list[dict], scene_order: int, total: int) -> str:
@@ -155,6 +161,154 @@ def normalize_actions_for_page_position(actions: list | None, scene_order: int, 
         break
 
     return updated_actions
+
+
+def _strip_html(text: str) -> str:
+    return HTML_TAG_RE.sub("", text or "").strip()
+
+
+def format_elements_for_actions_prompt(elements: list | None) -> str:
+    lines: list[str] = []
+    for el in elements or []:
+        element_id = str(el.get("id") or "").strip()
+        if not element_id:
+            continue
+
+        element_type = str(el.get("type") or "unknown")
+        summary = f"type={element_type}"
+        if element_type == "text":
+            text_summary = _strip_html(str(el.get("content") or ""))[:60]
+            if text_summary:
+                summary = f'{summary}, text="{text_summary}"'
+        elif element_type == "image":
+            summary = f"{summary}, image element"
+        elif element_type == "shape":
+            summary = f'{summary}, shape={el.get("shape") or "rect"}'
+
+        top = el.get("top")
+        left = el.get("left")
+        if isinstance(left, (int, float)) and isinstance(top, (int, float)):
+            summary = f"{summary}, position=({int(left)}, {int(top)})"
+
+        lines.append(f"- id={element_id}, {summary}")
+
+    return "\n".join(lines) if lines else "- (no elements)"
+
+
+def _pick_default_focus_element_id(elements: list | None) -> str | None:
+    focusable = [el for el in (elements or []) if el.get("id")]
+    if not focusable:
+        return None
+
+    body_text = [
+        el for el in focusable
+        if el.get("type") == "text" and isinstance(el.get("top"), (int, float)) and el.get("top", 0) >= 90
+    ]
+    if body_text:
+        return body_text[0]["id"]
+
+    media_like = [el for el in focusable if el.get("type") in ("image", "shape")]
+    if media_like:
+        return media_like[0]["id"]
+
+    text_like = [el for el in focusable if el.get("type") == "text"]
+    if text_like:
+        return text_like[0]["id"]
+
+    return focusable[0]["id"]
+
+
+def _build_default_slide_actions(outline: dict, slide_content: dict) -> list[dict]:
+    actions: list[dict] = []
+    focus_element_id = _pick_default_focus_element_id(slide_content.get("elements"))
+    if focus_element_id:
+        actions.append({
+            "type": "spotlight",
+            "elementId": focus_element_id,
+            "dimOpacity": 0.45,
+        })
+
+    speech_text = outline.get("description") or "。".join(outline.get("keyPoints", [])[:3]) or outline["title"]
+    actions.append({"type": "speech", "text": speech_text})
+    return actions
+
+
+def finalize_actions_for_slide(actions: list | None, outline: dict, slide_content: dict, scene_order: int) -> list:
+    valid_ids = {str(el.get("id")) for el in slide_content.get("elements", []) if el.get("id")}
+    preferred_id = _pick_default_focus_element_id(slide_content.get("elements"))
+    finalized: list[dict] = []
+
+    for raw_action in actions or []:
+        if not isinstance(raw_action, dict):
+            continue
+
+        action_type = str(raw_action.get("type") or "").strip()
+        if action_type == "speech":
+            text = str(raw_action.get("text") or "").strip()
+            if text:
+                finalized.append({"type": "speech", "text": text})
+            continue
+
+        if action_type == "spotlight":
+            element_id = raw_action.get("elementId")
+            if element_id not in valid_ids:
+                element_id = preferred_id
+            if element_id:
+                finalized.append({
+                    "type": "spotlight",
+                    "elementId": element_id,
+                    "dimOpacity": raw_action.get("dimOpacity", 0.4),
+                })
+            continue
+
+        if action_type == "highlight":
+            element_ids = raw_action.get("elementIds")
+            if not isinstance(element_ids, list):
+                single_id = raw_action.get("elementId")
+                element_ids = [single_id] if single_id else []
+            element_ids = [element_id for element_id in element_ids if element_id in valid_ids]
+            if not element_ids and preferred_id:
+                element_ids = [preferred_id]
+            if element_ids:
+                finalized.append({
+                    "type": "highlight",
+                    "elementIds": element_ids,
+                    "color": raw_action.get("color", "#ff6b6b"),
+                    "opacity": raw_action.get("opacity", 0.22),
+                    "borderWidth": raw_action.get("borderWidth", 3),
+                })
+            continue
+
+        if action_type == "laser":
+            element_id = raw_action.get("elementId")
+            if element_id not in valid_ids:
+                element_id = preferred_id
+            if element_id:
+                finalized.append({
+                    "type": "laser",
+                    "elementId": element_id,
+                    "color": raw_action.get("color", "#ff3b30"),
+                    "duration": raw_action.get("duration", 1600),
+                })
+
+    finalized = normalize_actions_for_page_position(finalized, scene_order, outline["title"])
+
+    if not any(action.get("type") in VISUAL_ACTION_TYPES for action in finalized):
+        focus_element_id = preferred_id
+        if focus_element_id:
+            finalized.insert(0, {
+                "type": "spotlight",
+                "elementId": focus_element_id,
+                "dimOpacity": 0.45,
+            })
+
+    if not any(action.get("type") == "speech" and action.get("text") for action in finalized):
+        finalized.append({
+            "type": "speech",
+            "text": outline.get("description") or outline["title"],
+        })
+
+    return finalized
 # ---------- LLM Helper ----------
 
 async def _call_llm_json(system_prompt: str, user_prompt: str) -> dict | list | None:
@@ -221,8 +375,17 @@ async def _generate_scene(
             if not slide_content or not isinstance(slide_content, dict):
                 slide_content = _fallback_slide(outline, scene_order)
 
+            slide_content = await populate_slide_media(
+                slide_content,
+                outline,
+                user_id=user_id,
+                session_id=session_id,
+                scene_id=scene_id,
+            )
+
             # 2. 生成 actions
             element_ids = [el.get("id", "") for el in slide_content.get("elements", [])]
+            element_summaries = format_elements_for_actions_prompt(slide_content.get("elements", []))
             outlines_for_context: list[dict] = []
             try:
                 parsed_outlines = json.loads(all_outlines_text) if all_outlines_text else []
@@ -240,25 +403,15 @@ async def _generate_scene(
                 f"幻灯片标题：{outline['title']}\n"
                 f"要点：{json.dumps(outline.get('keyPoints', []), ensure_ascii=False)}\n"
                 f"幻灯片元素 ID 列表：{json.dumps(element_ids)}\n"
+                f"幻灯片元素摘要：\n{element_summaries}\n"
                 f"这是第 {scene_order + 1}/{total} 页\n"
                 f"{course_context}"
             )
             actions = await _call_llm_json(ACTIONS_SYSTEM_PROMPT, actions_prompt)
             if not actions or not isinstance(actions, list):
-                actions = [{"type": "speech", "text": outline.get("description", outline["title"])}]
+                actions = _build_default_slide_actions(outline, slide_content)
 
-            # 过滤无效 elementId
-            valid_ids = set(element_ids)
-            for action in actions:
-                if action.get("type") in ("spotlight", "laser"):
-                    if action.get("elementId") not in valid_ids:
-                        action["type"] = "speech"
-                        action["text"] = ""
-                        action.pop("elementId", None)
-                        action.pop("dimOpacity", None)
-                        action.pop("color", None)
-            actions = [a for a in actions if not (a.get("type") == "speech" and not a.get("text"))]
-            actions = normalize_actions_for_page_position(actions, scene_order, outline["title"])
+            actions = finalize_actions_for_slide(actions, outline, slide_content, scene_order)
 
             # 补充 duration 到 speech actions
             for action in actions:

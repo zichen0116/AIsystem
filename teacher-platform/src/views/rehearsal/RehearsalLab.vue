@@ -39,7 +39,13 @@
               <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
             </svg>
           </button>
-          <button class="icon-btn" title="语音输入（敬请期待）" @click="showComingSoon">
+          <button
+            v-if="isSupported"
+            class="icon-btn"
+            :class="{ recording: isRecording }"
+            :title="isRecording ? '停止语音输入' : '语音输入'"
+            @click="toggleRecording"
+          >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
               <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -100,6 +106,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRehearsalStore } from '../../stores/rehearsal.js'
 import { useUserStore } from '../../stores/user.js'
+import { useVoiceInput } from '../../composables/useVoiceInput.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
@@ -107,6 +114,7 @@ const store = useRehearsalStore()
 const userStore = useUserStore()
 
 const topic = ref('')
+const { isRecording, isSupported, toggleRecording } = useVoiceInput(topic)
 
 const avatarLetter = computed(() => {
   const name = userStore.userInfo?.username || '老师'
@@ -153,11 +161,21 @@ function formatDate(d) {
 
 <style scoped>
 .rehearsal-lab {
+  --rehearsal-bg:
+    radial-gradient(circle at top, rgba(114, 46, 209, 0.12), transparent 34%),
+    radial-gradient(circle at 85% 12%, rgba(99, 102, 241, 0.1), transparent 26%),
+    linear-gradient(180deg, #fafbff 0%, #f5f7fc 100%);
+  --rehearsal-card-bg: rgba(255, 255, 255, 0.92);
+  --rehearsal-card-border: rgba(220, 226, 239, 0.95);
+  --rehearsal-card-shadow: 0 18px 48px rgba(37, 45, 82, 0.1);
+  --rehearsal-accent: #f6b73c;
+  --rehearsal-accent-strong: #ea580c;
+  --rehearsal-accent-soft: rgba(249, 115, 22, 0.14);
+  --rehearsal-text: #111827;
+  --rehearsal-muted: #667085;
+  --rehearsal-muted-soft: #98a2b3;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 15% 20%, rgba(249, 115, 22, 0.28), transparent 72%),
-    radial-gradient(circle at 85% 15%, rgba(236, 72, 153, 0.22), transparent 74%),
-    linear-gradient(145deg, #fff4dc 0%, #fff9f2 28%, #fdf1ff 62%, #eff7ff 100%);
+  background: var(--rehearsal-bg);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -206,7 +224,7 @@ function formatDate(d) {
 }
 
 .logo-lesson {
-  color: #1e293b;
+  color: var(--rehearsal-text);
 }
 
 .logo-rehearsal {
@@ -263,7 +281,7 @@ function formatDate(d) {
 .greeting {
   font-size: 18px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--rehearsal-text);
 }
 
 .topic-input {
@@ -315,6 +333,12 @@ function formatDate(d) {
   color: #64748b;
 }
 
+.icon-btn.recording {
+  background: var(--rehearsal-accent);
+  color: #ffffff;
+  box-shadow: 0 10px 24px rgba(212, 162, 76, 0.24);
+}
+
 .icon-btn svg {
   width: 20px;
   height: 20px;
@@ -323,7 +347,7 @@ function formatDate(d) {
 .submit-btn {
   padding: 10px 28px;
   border: none;
-  background: #ec4899;
+  background: var(--rehearsal-accent);
   color: white;
   font-size: 15px;
   font-weight: 600;
@@ -333,7 +357,7 @@ function formatDate(d) {
 }
 
 .submit-btn:hover:not(:disabled) {
-  background: #db2777;
+  background: var(--rehearsal-accent-strong);
 }
 
 .submit-btn:disabled {
@@ -354,7 +378,7 @@ function formatDate(d) {
 .courses-tab {
   font-size: 16px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--rehearsal-text);
   padding-bottom: 8px;
   border-bottom: 2px solid #ec4899;
 }
@@ -380,7 +404,7 @@ function formatDate(d) {
 .courses-empty {
   text-align: center;
   padding: 48px 0;
-  color: #94a3b8;
+  color: var(--rehearsal-muted);
   font-size: 15px;
 }
 
@@ -417,7 +441,7 @@ function formatDate(d) {
 .card-title {
   font-size: 15px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--rehearsal-text);
   line-height: 1.4;
   flex: 1;
   overflow: hidden;
@@ -430,7 +454,7 @@ function formatDate(d) {
 .card-delete {
   border: none;
   background: transparent;
-  color: #cbd5e1;
+  color: var(--rehearsal-muted-soft);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;

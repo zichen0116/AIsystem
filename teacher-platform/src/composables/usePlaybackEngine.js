@@ -1,6 +1,7 @@
 ﻿// teacher-platform/src/composables/usePlaybackEngine.js
 import { ref } from 'vue'
 import { useRehearsalStore } from '../stores/rehearsal.js'
+import { applySpotlightAction } from './rehearsalPlaybackEffects.js'
 
 /**
  * PlaybackEngine state machine: idle -> playing -> paused
@@ -10,12 +11,36 @@ export function usePlaybackEngine() {
   const store = useRehearsalStore()
   const audioRef = ref(null)
   let readingTimer = null
+  let spotlightTimer = null
+  let laserTimer = null
+  let highlightTimer = null
+  let sceneAdvanceTimer = null
+
+  function _clearEffectTimers() {
+    if (spotlightTimer) {
+      clearTimeout(spotlightTimer)
+      spotlightTimer = null
+    }
+    if (laserTimer) {
+      clearTimeout(laserTimer)
+      laserTimer = null
+    }
+    if (highlightTimer) {
+      clearTimeout(highlightTimer)
+      highlightTimer = null
+    }
+  }
 
   function _clearTimers() {
     if (readingTimer) {
       clearTimeout(readingTimer)
       readingTimer = null
     }
+    if (sceneAdvanceTimer) {
+      clearTimeout(sceneAdvanceTimer)
+      sceneAdvanceTimer = null
+    }
+    _clearEffectTimers()
     if (audioRef.value) {
       audioRef.value.pause()
       audioRef.value.onended = null
@@ -23,12 +48,98 @@ export function usePlaybackEngine() {
     }
   }
 
+  function _scheduleEffectClear(timerName, durationMs, clearFn) {
+    if (!durationMs || durationMs <= 0) return
+
+    if (timerName === 'spotlight' && spotlightTimer) {
+      clearTimeout(spotlightTimer)
+      spotlightTimer = null
+    }
+    if (timerName === 'laser' && laserTimer) {
+      clearTimeout(laserTimer)
+      laserTimer = null
+    }
+    if (timerName === 'highlight' && highlightTimer) {
+      clearTimeout(highlightTimer)
+      highlightTimer = null
+    }
+
+    const timeoutId = setTimeout(() => {
+      if (timerName === 'spotlight') spotlightTimer = null
+      if (timerName === 'laser') laserTimer = null
+      if (timerName === 'highlight') highlightTimer = null
+      clearFn()
+    }, durationMs)
+
+    if (timerName === 'spotlight') spotlightTimer = timeoutId
+    if (timerName === 'laser') laserTimer = timeoutId
+    if (timerName === 'highlight') highlightTimer = timeoutId
+  }
+
   function _getAudioCandidates(action) {
     const candidates = [action.persistent_audio_url, action.temp_audio_url, action.audioUrl].filter(Boolean)
     return [...new Set(candidates)]
   }
 
-  async function _playAudioUrl(url) {
+  function _handleSpeechFinished() {
+    if (store.playbackState !== 'playing') return
+    processNext()
+  }
+
+  function _findNextSceneIndex(currentSceneOrder) {
+    return store.scenes.findIndex(scene => scene.sceneOrder > currentSceneOrder)
+  }
+
+  function _scheduleSceneAdvanceRetry(delayMs = 1200) {
+    if (sceneAdvanceTimer) {
+      clearTimeout(sceneAdvanceTimer)
+    }
+    sceneAdvanceTimer = setTimeout(() => {
+      sceneAdvanceTimer = null
+      processNext()
+    }, delayMs)
+  }
+
+  async function _advanceToNextScene(currentSceneOrder) {
+    let nextIndex = _findNextSceneIndex(currentSceneOrder)
+    if (nextIndex >= 0) {
+      _clearEffectTimers()
+      store.setSceneIndex(nextIndex)
+      store.savePlaybackProgress()
+      processNext()
+      return
+    }
+
+    if (store.currentSession?.id) {
+      try {
+        await store.refreshPlayableScenes(store.currentSession.id)
+      } catch (error) {
+        console.error('Failed to refresh rehearsal session before advancing:', error)
+      }
+      nextIndex = _findNextSceneIndex(currentSceneOrder)
+      if (nextIndex >= 0) {
+        _clearEffectTimers()
+        store.setSceneIndex(nextIndex)
+        store.savePlaybackProgress()
+        processNext()
+        return
+      }
+    }
+
+    const hasPendingScenes = store.sceneStatuses.some(sceneStatus =>
+      sceneStatus.status === 'pending' || sceneStatus.status === 'generating')
+
+    if (hasPendingScenes) {
+      _scheduleSceneAdvanceRetry()
+      return
+    }
+
+    store.playbackState = 'idle'
+    store.clearEffects()
+    store.savePlaybackProgress()
+  }
+
+  async function _playAudioUrl(url, onDone) {
     return await new Promise((resolve) => {
       const audio = new Audio(url)
       let settled = false
@@ -36,14 +147,16 @@ export function usePlaybackEngine() {
       audio.onended = () => {
         audio.onended = null
         audio.onerror = null
-        processNext()
+        audioRef.value = null
+        onDone?.()
       }
 
       audio.onerror = () => {
         audio.onended = null
         audio.onerror = null
+        audioRef.value = null
         if (settled) {
-          processNext()
+          onDone?.()
           return
         }
         settled = true
@@ -69,10 +182,10 @@ export function usePlaybackEngine() {
     })
   }
 
-  async function _playSpeechAction(action, scene) {
+  async function _playSpeechAction(action, scene, onDone) {
     const candidates = _getAudioCandidates(action)
     for (const url of candidates) {
-      const started = await _playAudioUrl(url)
+      const started = await _playAudioUrl(url, onDone)
       if (started) return true
     }
 
@@ -89,7 +202,7 @@ export function usePlaybackEngine() {
       if (refreshedAction?.type === 'speech') {
         const refreshedCandidates = _getAudioCandidates(refreshedAction)
         for (const url of refreshedCandidates) {
-          const started = await _playAudioUrl(url)
+          const started = await _playAudioUrl(url, onDone)
           if (started) return true
         }
       }
@@ -113,16 +226,7 @@ export function usePlaybackEngine() {
     const actionIndex = store.currentActionIndex
 
     if (actionIndex >= actions.length) {
-      const nextIndex = store.currentSceneIndex + 1
-      if (nextIndex >= store.scenes.length) {
-        store.playbackState = 'idle'
-        store.clearEffects()
-        store.savePlaybackProgress()
-        return
-      }
-      store.setSceneIndex(nextIndex)
-      store.savePlaybackProgress()
-      processNext()
+      await _advanceToNextScene(scene.sceneOrder)
       return
     }
 
@@ -131,32 +235,49 @@ export function usePlaybackEngine() {
 
     switch (action.type) {
       case 'speech':
-        store.clearEffects()
         store.currentSubtitle = action.text || ''
-        if (!(await _playSpeechAction(action, scene))) {
-          _playWithTimer(action.duration || 3000)
+        if (!(await _playSpeechAction(action, scene, _handleSpeechFinished))) {
+          _playWithTimer(action.duration || 3000, _handleSpeechFinished)
         }
         break
 
       case 'spotlight':
-        store.spotlightTarget = {
-          elementId: action.elementId,
-          dimOpacity: action.dimOpacity ?? 0.4,
-        }
-        store.laserTarget = null
+        applySpotlightAction(store, action, _scheduleEffectClear)
         processNext()
         break
+
+      case 'highlight': {
+        const elementIds = Array.isArray(action.elementIds)
+          ? action.elementIds.filter(Boolean)
+          : [action.elementId].filter(Boolean)
+        if (elementIds.length > 0) {
+          store.highlightTarget = {
+            elementIds,
+            color: action.color || '#ff6b6b',
+            opacity: action.opacity ?? 0.22,
+            borderWidth: action.borderWidth ?? 3,
+          }
+          _scheduleEffectClear('highlight', action.duration || 2400, () => {
+            store.highlightTarget = null
+          })
+        }
+        processNext()
+        break
+      }
 
       case 'laser':
         store.laserTarget = {
           elementId: action.elementId,
           color: action.color || '#ff0000',
         }
-        store.spotlightTarget = null
+        _scheduleEffectClear('laser', action.duration || 1600, () => {
+          store.laserTarget = null
+        })
         processNext()
         break
 
       case 'navigate':
+        _clearEffectTimers()
         store.setSceneIndex(action.targetSceneIndex)
         processNext()
         break
@@ -166,10 +287,10 @@ export function usePlaybackEngine() {
     }
   }
 
-  function _playWithTimer(durationMs) {
+  function _playWithTimer(durationMs, onDone) {
     readingTimer = setTimeout(() => {
       readingTimer = null
-      processNext()
+      onDone?.()
     }, durationMs)
   }
 

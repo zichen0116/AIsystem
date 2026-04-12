@@ -24,6 +24,23 @@
             <label>教学主题</label>
             <el-input v-model="topic" type="textarea" :rows="3"
               placeholder="例：高中物理 - 牛顿第二定律" :disabled="isGenerating" />
+            <div v-if="isSupported" class="voice-input-row">
+              <button
+                type="button"
+                class="voice-btn"
+                :class="{ recording: isRecording }"
+                :disabled="isGenerating"
+                @click="toggleRecording"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+                <span>{{ isRecording ? '停止语音输入' : '语音输入主题' }}</span>
+              </button>
+            </div>
           </div>
 
           <div class="form-row">
@@ -176,6 +193,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useRehearsalStore } from '../../stores/rehearsal.js'
+import { useVoiceInput } from '../../composables/useVoiceInput.js'
 import { fetchSession } from '../../api/rehearsal.js'
 
 const router = useRouter()
@@ -186,6 +204,7 @@ const topic = ref('')
 const language = ref('zh-CN')
 const enableTTS = ref(true)
 let pollTimer = null
+const { isRecording, isSupported, toggleRecording } = useVoiceInput(topic, null, { lang: () => language.value })
 
 const isGenerating = computed(() => store.generatingStatus === 'generating')
 
@@ -374,8 +393,20 @@ function goToPlay() {
 <style scoped>
 /* ====== 全屏背景 ====== */
 .rehearsal-new-page {
+  --rehearsal-bg:
+    radial-gradient(circle at top, rgba(114, 46, 209, 0.12), transparent 34%),
+    radial-gradient(circle at 85% 12%, rgba(99, 102, 241, 0.1), transparent 28%),
+    linear-gradient(180deg, #fafbff 0%, #f5f7fc 100%);
+  --rehearsal-card-bg: rgba(255, 255, 255, 0.92);
+  --rehearsal-card-border: rgba(220, 226, 239, 0.95);
+  --rehearsal-card-shadow: 0 18px 48px rgba(37, 45, 82, 0.1);
+  --rehearsal-accent: #f6b73c;
+  --rehearsal-accent-strong: #ea580c;
+  --rehearsal-accent-soft: rgba(249, 115, 22, 0.14);
+  --rehearsal-text: #111827;
+  --rehearsal-muted: #667085;
   min-height: 100vh;
-  background: linear-gradient(145deg, #fff4dc 0%, #fff9f2 28%, #fdf1ff 62%, #eff7ff 100%);
+  background: var(--rehearsal-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -431,15 +462,15 @@ function goToPlay() {
   -webkit-backdrop-filter: blur(12px);
   padding: 8px 16px;
   border-radius: 12px;
-  color: #475569;
+  color: var(--rehearsal-muted);
   font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .back-btn:hover {
-  background: rgba(255, 255, 255, 0.85);
-  color: #1e293b;
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--rehearsal-text);
 }
 
 .back-btn svg {
@@ -456,13 +487,11 @@ function goToPlay() {
 
 /* ====== 毛玻璃卡片 ====== */
 .glass-card {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.85);
+  background: var(--rehearsal-card-bg);
+  border: 1px solid var(--rehearsal-card-border);
   border-radius: 24px;
   padding: 40px 36px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--rehearsal-card-shadow);
   min-height: 400px;
   display: flex;
   flex-direction: column;
@@ -474,12 +503,12 @@ function goToPlay() {
   margin: 0 0 4px;
   font-size: 24px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--rehearsal-text);
   text-align: center;
 }
 
 .card-desc {
-  color: #64748b;
+  color: var(--rehearsal-muted);
   font-size: 14px;
   margin: 0 0 28px;
   text-align: center;
@@ -490,10 +519,51 @@ function goToPlay() {
   width: 100%;
 }
 
+.voice-input-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.voice-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.74);
+  color: #64748b;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.voice-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.voice-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.voice-btn.recording {
+  background: var(--rehearsal-accent);
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(249, 115, 22, 0.24);
+}
+
+.voice-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .form-group label {
   display: block;
   font-size: 13px;
-  color: #475569;
+  color: var(--rehearsal-muted);
   margin-bottom: 6px;
   font-weight: 500;
 }
@@ -512,7 +582,7 @@ function goToPlay() {
   width: 100%;
   padding: 12px 24px;
   border: none;
-  background: linear-gradient(135deg, #ec4899, #f97316);
+  background: linear-gradient(135deg, #f6b73c, #f97316);
   color: white;
   font-size: 15px;
   font-weight: 600;
@@ -524,7 +594,7 @@ function goToPlay() {
 
 .primary-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 8px 24px rgba(236, 72, 153, 0.3);
+  box-shadow: 0 14px 30px rgba(249, 115, 22, 0.28);
 }
 
 .primary-btn:disabled {
@@ -535,9 +605,9 @@ function goToPlay() {
 .ghost-btn {
   width: 100%;
   padding: 10px 24px;
-  border: 1px solid #e2e8f0;
-  background: rgba(255, 255, 255, 0.5);
-  color: #64748b;
+  border: 1px solid var(--rehearsal-card-border);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--rehearsal-muted);
   font-size: 14px;
   border-radius: 12px;
   cursor: pointer;
@@ -546,8 +616,8 @@ function goToPlay() {
 }
 
 .ghost-btn:hover {
-  background: rgba(255, 255, 255, 0.8);
-  color: #1e293b;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--rehearsal-text);
 }
 
 /* ====== 进度步骤指示器 ====== */
@@ -767,14 +837,14 @@ function goToPlay() {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
-  color: #1e293b;
+  color: var(--rehearsal-text);
   text-align: center;
 }
 
 .status-desc {
   margin: 6px 0 0;
   font-size: 14px;
-  color: #64748b;
+  color: var(--rehearsal-muted);
   text-align: center;
   line-height: 1.5;
 }
@@ -798,7 +868,7 @@ function goToPlay() {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #ec4899, #f97316);
+  background: linear-gradient(90deg, #f6b73c, #f97316);
   border-radius: 3px;
   transition: width 0.6s ease;
   position: relative;
@@ -815,7 +885,7 @@ function goToPlay() {
 .progress-label {
   font-size: 13px;
   font-weight: 600;
-  color: #ec4899;
+  color: var(--rehearsal-accent);
   min-width: 36px;
   text-align: right;
 }
@@ -870,7 +940,7 @@ function goToPlay() {
 .scene-name {
   flex: 1;
   font-size: 13px;
-  color: #334155;
+  color: var(--rehearsal-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -928,7 +998,7 @@ function goToPlay() {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #94a3b8;
+  color: var(--rehearsal-muted);
   font-size: 13px;
   font-weight: 500;
   text-transform: uppercase;
