@@ -18,6 +18,17 @@ RED = '\033[91m'
 RESET = '\033[0m'
 
 
+def build_celery_worker_command(python_executable, platform=None):
+    current_platform = platform or sys.platform
+    command = [
+        python_executable, "-m", "celery", "-A", "app.celery",
+        "worker", "--loglevel=info", "-Q", "default,celery",
+    ]
+    if current_platform == 'win32':
+        command.extend(["--pool=solo", "--concurrency=1"])
+    return command
+
+
 def print_status(status, message):
     colors = {
         "INFO": GREEN,
@@ -25,6 +36,12 @@ def print_status(status, message):
         "ERROR": RED
     }
     print(f"{colors.get(status, '')}[{status}]{RESET} {message}")
+
+
+def build_child_process_env(env=None):
+    child_env = dict(env or os.environ)
+    child_env.setdefault("PYTHONUNBUFFERED", "1")
+    return child_env
 
 
 def is_port_open(host, port, timeout=1.0):
@@ -81,10 +98,7 @@ class ProcessManager:
         # 用于正确处理 Ctrl+C
         kwargs = {
             'cwd': cwd,
-            'stdout': subprocess.PIPE,
-            'stderr': subprocess.STDOUT,
-            'text': True,
-            'bufsize': 1
+            'env': build_child_process_env(),
         }
         
         if sys.platform == 'win32':
@@ -188,10 +202,11 @@ def main():
         )
         
         # 4. 启动 Celery Worker
+        worker_command = build_celery_worker_command(sys.executable)
+
         manager.start_process(
             "Celery Worker",
-            [sys.executable, "-m", "celery", "-A", "app.celery",
-             "worker", "--loglevel=info", "-Q", "default,celery"],
+            worker_command,
             cwd=backend_dir,
             need_wait=False
         )

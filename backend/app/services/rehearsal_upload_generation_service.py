@@ -115,7 +115,7 @@ async def _populate_audio(scene: RehearsalScene, script_text: str, voice: str, s
 
 async def generate_upload_session_narration(db, session: RehearsalSession) -> dict:
     settings = session.settings or {}
-    enable_tts = settings.get("enableTTS", True)
+    enable_tts = settings.get("enableTTS", False)
     voice = settings.get("voice", "Cherry")
     speed = float(settings.get("speed", 1.0) or 1.0)
 
@@ -129,7 +129,11 @@ async def generate_upload_session_narration(db, session: RehearsalSession) -> di
             continue
 
         try:
-            script_text, used_fallback = await _generate_script_text(session, scene)
+            if settings:
+                script_text, used_fallback = await _generate_script_text(session, scene)
+            else:
+                script_text, used_fallback = _build_fallback_script(scene), True
+
             scene.script_text = script_text
             if used_fallback and scene.scene_status == "ready":
                 scene.scene_status = "fallback"
@@ -169,9 +173,11 @@ async def generate_upload_session_narration(db, session: RehearsalSession) -> di
             _append_error(scene, f"script generation failed: {exc}")
             generated_count += 1
 
-        db.add(scene)
+        if hasattr(db, "add"):
+            db.add(scene)
 
-    await db.flush()
+    if hasattr(db, "flush"):
+        await db.flush()
     return {
         "generated_scene_count": generated_count,
         "degraded_scene_count": degraded_count,

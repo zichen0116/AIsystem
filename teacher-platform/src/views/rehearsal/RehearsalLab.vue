@@ -115,6 +115,7 @@
           <div class="card-bottom">
             <span :class="['status-tag', `status-${session.status}`]">{{ statusLabel(session.status) }}</span>
           </div>
+        </div>
       </div>
     </div>
   </div>
@@ -203,21 +204,22 @@ async function handleUploadConfirm() {
 
   isUploadingFile.value = true
   try {
-    const payload = await store.uploadSessionFile(selectedFile.value)
+    const file = selectedFile.value
+    const payload = await store.uploadSessionFile(file)
     const sessionId = payload?.session_id
-    clearSelectedFile()
 
     if (!sessionId) {
       throw new Error('上传成功但未返回会话ID')
     }
 
-    router.push({
+    await router.push({
       path: '/rehearsal/new',
       query: {
         sessionId: String(sessionId),
         source: 'upload',
       },
     })
+    clearSelectedFile()
   } catch (error) {
     ElMessage.error(error.message || '上传失败')
   } finally {

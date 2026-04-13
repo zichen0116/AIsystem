@@ -105,8 +105,10 @@ async def process_rehearsal_session_assets(db, session: RehearsalSession) -> dic
                     scene.scene_status = 'skipped'
                     scene.is_skipped = True
                     scene.skip_reason = skip_reason
+                else:
+                    scene.scene_status = 'ready'
 
-            if scene not in db.added:
+            if getattr(scene, 'id', None) is None and hasattr(db, 'add'):
                 db.add(scene)
 
         session.total_scenes = len(page_pdf_paths)

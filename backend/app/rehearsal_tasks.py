@@ -72,7 +72,7 @@ async def _run_rehearsal_upload_processing(session_id: int, user_id: int) -> dic
 @celery_app.task(
     bind=True,
     base=RehearsalUploadTask,
-    name='app.tasks.process_rehearsal_upload_session',
+    name='app.rehearsal_tasks.process_rehearsal_upload_session',
 )
 def process_rehearsal_upload_session(self, session_id: int, user_id: int):
     """Process uploaded rehearsal files in the background."""

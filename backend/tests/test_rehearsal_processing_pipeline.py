@@ -175,3 +175,9 @@ def test_process_rehearsal_upload_session_persists_assets_for_session_detail(mon
     assert detail.converted_pdf_url == 'https://oss.example/rehearsal-pdf/7/file.pdf'
     assert detail.scenes[0].page_image_url == 'https://oss.example/rehearsal-pages/7/page-1.png'
     assert detail.scenes[0].page_text == '# Page 1'
+
+
+def test_process_rehearsal_upload_session_uses_unique_task_name():
+    assert rehearsal_tasks.process_rehearsal_upload_session.name == (
+        'app.rehearsal_tasks.process_rehearsal_upload_session'
+    )

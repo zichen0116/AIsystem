@@ -23,6 +23,20 @@ class FakeDB:
         self.flushed = True
 
 
+class MinimalDB:
+    def __init__(self):
+        self.flushed = False
+        self.add_calls = 0
+
+    def add(self, obj):
+        self.add_calls += 1
+        if getattr(obj, 'id', None) is None:
+            obj.id = self.add_calls
+
+    async def flush(self):
+        self.flushed = True
+
+
 class FakeRenovationService:
     def __init__(self, *, pdf_path, page_paths, image_paths, parse_results):
         self._pdf_path = pdf_path
@@ -165,3 +179,38 @@ def test_compute_session_status_returns_partial_when_fallback_and_failed_pages_c
     )
 
     assert compute_session_status(session) == 'partial'
+
+
+@pytest.mark.asyncio
+async def test_process_rehearsal_session_assets_marks_successful_page_ready_without_added_attr(tmp_path, monkeypatch):
+    db = MinimalDB()
+    pdf_path = tmp_path / 'lesson.pdf'
+    page_pdf = tmp_path / 'page_1.pdf'
+    page_png = tmp_path / 'page_1.png'
+    pdf_path.write_bytes(b'%PDF-1.4 pdf')
+    page_pdf.write_bytes(b'%PDF-1.4 page1')
+    page_png.write_bytes(b'png-1')
+
+    monkeypatch.setattr(file_svc.oss_service, 'download_to_temp', lambda url: str(pdf_path))
+
+    async def fake_upload_bytes(content: bytes, ext: str, user_id: int, prefix: str = 'rehearsal-audio') -> str:
+        return f'https://oss.example/{prefix}/page-1.{ext}'
+
+    monkeypatch.setattr(file_svc.oss_service, 'upload_bytes', fake_upload_bytes)
+    monkeypatch.setattr(
+        file_svc,
+        'RenovationService',
+        lambda: FakeRenovationService(
+            pdf_path=str(pdf_path),
+            page_paths=[page_pdf],
+            image_paths=[page_png],
+            parse_results={page_pdf.name: ('Page content', None)},
+        ),
+    )
+
+    session = make_session('lesson.pdf')
+    await file_svc.process_rehearsal_session_assets(db, session)
+
+    assert session.scenes[0].scene_status == 'ready'
+    assert session.scenes[0].is_skipped is False
+    assert db.flushed is True

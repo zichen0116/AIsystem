@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from backend import start_dev
+import start_dev
 
 
 class DummyProcess:
@@ -13,7 +13,7 @@ class DummyProcess:
 
 
 class StartDevWaitTests(unittest.TestCase):
-    @patch("backend.start_dev.time.sleep", return_value=None)
+    @patch("start_dev.time.sleep", return_value=None)
     def test_wait_for_condition_retries_until_success(self, _sleep):
         checker = Mock(side_effect=[False, False, True])
 
@@ -27,7 +27,7 @@ class StartDevWaitTests(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(checker.call_count, 3)
 
-    @patch("backend.start_dev.time.sleep", return_value=None)
+    @patch("start_dev.time.sleep", return_value=None)
     def test_wait_for_condition_raises_timeout_after_retries(self, _sleep):
         checker = Mock(return_value=False)
 
@@ -41,7 +41,7 @@ class StartDevWaitTests(unittest.TestCase):
 
         self.assertEqual(checker.call_count, 2)
 
-    @patch("backend.start_dev.time.sleep", return_value=None)
+    @patch("start_dev.time.sleep", return_value=None)
     def test_wait_for_condition_fails_fast_when_process_exits(self, _sleep):
         checker = Mock(return_value=False)
         process = DummyProcess(poll_result=1)

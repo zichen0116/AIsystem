@@ -286,15 +286,7 @@ function mapSceneStatus(rawScene) {
 }
 
 function mapPlayableScene(rawScene) {
-  return {
-    sceneOrder: rawScene.scene_order,
-    title: rawScene.title,
-    slideContent: rawScene.slide_content,
-    actions: rawScene.actions,
-    keyPoints: rawScene.key_points,
-    sceneStatus: rawScene.scene_status,
-    audioStatus: rawScene.audio_status,
-  }
+  return store._mapScene(rawScene)
 }
 
 function hydrateSession(data) {

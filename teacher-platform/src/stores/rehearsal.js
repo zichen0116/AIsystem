@@ -10,17 +10,10 @@ import {
   updatePlaybackSnapshot,
   deleteSession,
 } from '../api/rehearsal.js'
+import { mapRehearsalScene, preloadSceneImages, preloadUpcomingSceneImages } from './rehearsalSceneMapping.js'
 
 
 const PLAYABLE_SCENE_STATUSES = new Set(['ready', 'fallback'])
-
-function estimateSpeechDuration(text) {
-  const normalized = String(text || '').trim()
-  if (!normalized) return 3000
-  const cjkChars = Array.from(normalized).filter(char => /[一-鿿]/.test(char)).length
-  const latinWords = normalized.replace(/[一-鿿]/g, ' ').trim().split(/\s+/).filter(Boolean).length
-  return Math.max(cjkChars * 150 + latinWords * 240, 2000)
-}
 
 export const useRehearsalStore = defineStore('rehearsal', {
   state: () => ({
@@ -73,86 +66,7 @@ export const useRehearsalStore = defineStore('rehearsal', {
 
   actions: {
     _mapScene(rawScene) {
-      const source = this.currentSession?.source || 'topic'
-      const slideContent = rawScene.slide_content || this._buildUploadSlide(rawScene)
-      const actions = Array.isArray(rawScene.actions) && rawScene.actions.length > 0
-        ? rawScene.actions
-        : this._buildUploadActions(rawScene)
-
-      return {
-        sceneOrder: rawScene.scene_order,
-        title: rawScene.title,
-        slideContent,
-        actions,
-        keyPoints: rawScene.key_points,
-        sceneStatus: rawScene.scene_status,
-        audioStatus: rawScene.audio_status,
-        source,
-        pageImageUrl: rawScene.page_image_url,
-        scriptText: rawScene.script_text,
-      }
-    },
-
-    _buildUploadSlide(rawScene) {
-      if (rawScene.page_image_url) {
-        return {
-          id: `upload-slide-${rawScene.id || rawScene.scene_order}`,
-          viewportSize: 1000,
-          viewportRatio: 0.5625,
-          background: { type: 'solid', color: '#0f172a' },
-          elements: [
-            {
-              id: `upload-page-image-${rawScene.id || rawScene.scene_order}`,
-              type: 'image',
-              src: rawScene.page_image_url,
-              left: 0,
-              top: 0,
-              width: 1000,
-              height: 562,
-            },
-          ],
-        }
-      }
-
-      return {
-        id: `upload-fallback-${rawScene.id || rawScene.scene_order}`,
-        viewportSize: 1000,
-        viewportRatio: 0.5625,
-        background: { type: 'solid', color: '#ffffff' },
-        elements: [
-          {
-            id: `upload-title-${rawScene.id || rawScene.scene_order}`,
-            type: 'text',
-            content: `<p style="font-size:32px;font-weight:700;margin:0;">${rawScene.title || 'Uploaded page'}</p>`,
-            left: 60,
-            top: 56,
-            width: 880,
-            height: 56,
-          },
-          {
-            id: `upload-text-${rawScene.id || rawScene.scene_order}`,
-            type: 'text',
-            content: `<p style="font-size:18px;line-height:1.8;margin:0;">${rawScene.page_text || rawScene.script_text || 'This page will be explained in narration mode.'}</p>`,
-            left: 60,
-            top: 144,
-            width: 880,
-            height: 320,
-          },
-        ],
-      }
-    },
-
-    _buildUploadActions(rawScene) {
-      const text = rawScene.script_text || rawScene.page_text || rawScene.title
-      if (!text) return []
-
-      return [{
-        type: 'speech',
-        text,
-        duration: estimateSpeechDuration(text),
-        audio_status: rawScene.audio_status || 'failed',
-        ...(rawScene.audio_url ? { persistent_audio_url: rawScene.audio_url } : {}),
-      }]
+      return mapRehearsalScene(rawScene, this.currentSession?.source || 'topic')
     },
 
     _mapSceneStatus(rawScene) {
@@ -181,6 +95,43 @@ export const useRehearsalStore = defineStore('rehearsal', {
       this.currentSceneIndex = this.scenes.length > 0
         ? Math.min(this.currentSceneIndex, this.scenes.length - 1)
         : 0
+    },
+
+    _normalizePlaybackPosition() {
+      if (this.scenes.length === 0) {
+        this.currentSceneIndex = 0
+        this.currentActionIndex = 0
+        return
+      }
+
+      this.currentSceneIndex = Math.min(
+        Math.max(this.currentSceneIndex, 0),
+        this.scenes.length - 1,
+      )
+
+      const currentScene = this.scenes[this.currentSceneIndex]
+      const actionCount = Array.isArray(currentScene?.actions) ? currentScene.actions.length : 0
+      if (actionCount === 0) {
+        this.currentActionIndex = 0
+        return
+      }
+
+      if (this.currentActionIndex >= actionCount) {
+        if (this.currentSceneIndex < this.scenes.length - 1) {
+          this.currentSceneIndex += 1
+          this.currentActionIndex = 0
+          return
+        }
+        this.currentActionIndex = 0
+        return
+      }
+
+      this.currentActionIndex = Math.max(this.currentActionIndex, 0)
+    },
+
+    async warmCurrentSceneAssets() {
+      await preloadSceneImages(this.currentScene)
+      preloadUpcomingSceneImages(this.scenes, this.currentSceneIndex + 1)
     },
 
     // --- SSE 生成（通知模式） ---
@@ -387,8 +338,10 @@ export const useRehearsalStore = defineStore('rehearsal', {
         this.currentSceneIndex = 0
         this.currentActionIndex = 0
       }
+      this._normalizePlaybackPosition()
       this.playbackState = 'idle'
       this.clearEffects()
+      await this.warmCurrentSceneAssets()
     },
 
     async refreshPlayableScenes(sessionId) {
@@ -400,15 +353,28 @@ export const useRehearsalStore = defineStore('rehearsal', {
       this.sceneStatuses = (data.scenes || []).map(scene => this._mapSceneStatus(scene))
       this._replaceReadyScenes(data.scenes || [], preserveSceneOrder)
       this.currentActionIndex = preserveSceneOrder !== null ? preserveActionIndex : 0
+      this._normalizePlaybackPosition()
+      await this.warmCurrentSceneAssets()
       return data
     },
 
     async savePlaybackProgress() {
       if (!this.currentSession?.id) return
       try {
+        const currentScene = this.currentScene
+        const actionCount = Array.isArray(currentScene?.actions) ? currentScene.actions.length : 0
+        let actionIndex = this.currentActionIndex
+        if (this.playbackState === 'playing' && actionIndex > 0) {
+          actionIndex -= 1
+        }
+        if (actionCount > 0) {
+          actionIndex = Math.min(actionIndex, actionCount - 1)
+        } else {
+          actionIndex = 0
+        }
         await updatePlaybackSnapshot(this.currentSession.id, {
           sceneIndex: this.currentSceneIndex,
-          actionIndex: this.currentActionIndex,
+          actionIndex,
         })
       } catch (e) {
         console.error('Failed to save progress:', e)

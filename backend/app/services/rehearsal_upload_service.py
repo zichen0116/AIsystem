@@ -61,9 +61,9 @@ def count_pages_for_upload(file_path: str, ext: str) -> int:
 
 
 def trigger_rehearsal_processing_task(session_id: int, user_id: int) -> None:
-    from app.rehearsal_tasks import process_rehearsal_upload_session
+    from app.rehearsal_task_dispatcher import dispatch_rehearsal_upload_processing_task
 
-    process_rehearsal_upload_session.delay(session_id, user_id)
+    dispatch_rehearsal_upload_processing_task(session_id, user_id)
 
 
 async def create_rehearsal_upload_session(db, user_id: int, file: UploadFile) -> dict:

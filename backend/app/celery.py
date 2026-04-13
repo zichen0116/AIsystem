@@ -3,6 +3,17 @@ Celery 异步任务配置
 """
 from celery import Celery
 import os
+import sys
+
+
+def get_platform_worker_settings(platform: str | None = None) -> dict:
+    current = platform or sys.platform
+    if current.startswith("win"):
+        return {
+            "worker_pool": "solo",
+            "worker_concurrency": 1,
+        }
+    return {}
 
 # 配置 Celery
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -29,7 +40,9 @@ celery_app.conf.update(
     task_soft_time_limit=25 * 60,
     task_routes={
         "app.tasks.*": {"queue": "default"},
+        "app.rehearsal_tasks.*": {"queue": "default"},
         "banana-slides.*": {"queue": "default"},
         "app.generators.ppt.celery_tasks.*": {"queue": "default"},
     },
+    **get_platform_worker_settings(),
 )

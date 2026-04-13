@@ -43,7 +43,7 @@
       </div>
 
       <!-- Subtitle -->
-      <SubtitlePanel :text="store.currentSubtitle" />
+      <SubtitlePanel :text="subtitleText" />
 
       <!-- Controls -->
       <PlaybackControls
@@ -61,10 +61,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRehearsalStore } from '../../stores/rehearsal.js'
 import { usePlaybackEngine } from '../../composables/usePlaybackEngine.js'
+import { getSceneSubtitle } from '../../stores/rehearsalSceneMapping.js'
 import SlideRenderer from '../../components/rehearsal/SlideRenderer.vue'
 import HighlightOverlay from '../../components/rehearsal/HighlightOverlay.vue'
 import SpotlightOverlay from '../../components/rehearsal/SpotlightOverlay.vue'
@@ -81,6 +82,7 @@ const loading = ref(true)
 const error = ref('')
 
 const canvasEl = computed(() => slideRef.value?.canvasRef || null)
+const subtitleText = computed(() => store.currentSubtitle || getSceneSubtitle(store.currentScene))
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -107,6 +109,15 @@ onUnmounted(() => {
   engine.cleanup()
   store.savePlaybackProgress()
 })
+
+watch(
+  () => store.currentSceneIndex,
+  () => {
+    store.warmCurrentSceneAssets().catch(loadError => {
+      console.error('Failed to warm rehearsal scene assets:', loadError)
+    })
+  },
+)
 
 function handlePlay() {
   if (store.isPaused) {
