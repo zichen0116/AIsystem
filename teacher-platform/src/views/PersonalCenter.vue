@@ -32,6 +32,113 @@ const profileForm = ref({
 const profileSaving = ref(false)
 const profileMsg = ref('')
 
+const AVATAR_STORAGE_KEY = (userId) => `eduprep_profile_avatar_${userId}`
+const avatarDataUrl = ref('')
+const avatarFileInput = ref(null)
+
+function loadAvatarFromStorage() {
+  const id = userStore.userInfo?.id
+  if (!id) {
+    avatarDataUrl.value = ''
+    return
+  }
+  try {
+    const raw = localStorage.getItem(AVATAR_STORAGE_KEY(id))
+    avatarDataUrl.value = raw && raw.startsWith('data:image/') ? raw : ''
+  } catch {
+    avatarDataUrl.value = ''
+  }
+}
+
+watch(() => userStore.userInfo?.id, loadAvatarFromStorage, { immediate: true })
+
+function triggerAvatarSelect() {
+  avatarFileInput.value?.click()
+}
+
+function onAvatarFileChange(e) {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file) return
+  if (!file.type.startsWith('image/')) {
+    profileMsg.value = '请选择图片文件'
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    profileMsg.value = '图片请小于 5MB'
+    return
+  }
+  const uid = userStore.userInfo?.id
+  if (!uid) {
+    profileMsg.value = '请先登录后再更换照片'
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    const result = reader.result
+    if (typeof result !== 'string') return
+    const img = new Image()
+    img.onload = () => {
+      const maxSide = 400
+      let w = img.naturalWidth
+      let h = img.naturalHeight
+      if (w < 1 || h < 1) {
+        profileMsg.value = '无法读取该图片'
+        return
+      }
+      if (w > maxSide || h > maxSide) {
+        if (w >= h) {
+          h = Math.round((h * maxSide) / w)
+          w = maxSide
+        } else {
+          w = Math.round((w * maxSide) / h)
+          h = maxSide
+        }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = w
+      canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        profileMsg.value = '浏览器不支持图片处理'
+        return
+      }
+      ctx.drawImage(img, 0, 0, w, h)
+      let dataUrl = ''
+      try {
+        dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+      } catch {
+        profileMsg.value = '该图片格式无法处理，请换一张试试'
+        return
+      }
+      try {
+        localStorage.setItem(AVATAR_STORAGE_KEY(uid), dataUrl)
+      } catch {
+        profileMsg.value = '保存失败：图片仍过大或浏览器存储已满，请选更小的图片'
+        return
+      }
+      avatarDataUrl.value = dataUrl
+      profileMsg.value = '头像已更新（保存在本机浏览器）'
+    }
+    img.onerror = () => {
+      profileMsg.value = '图片加载失败'
+    }
+    img.src = result
+  }
+  reader.onerror = () => {
+    profileMsg.value = '读取文件失败'
+  }
+  reader.readAsDataURL(file)
+}
+
+const avatarLetter = computed(() => {
+  const u = userStore.userInfo
+  const raw = u?.full_name?.trim() || u?.phone || ''
+  if (!raw) return '用'
+  const ch = raw[0]
+  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : ch
+})
+
 function initProfileForm() {
   const u = userStore.userInfo
   if (!u) return
@@ -355,9 +462,9 @@ function toggleFavorite(item) {
 }
 
 const loginHistory = [
-  { device: 'MacBook Pro / Chrome', location: '芝加哥，美国', ip: '192.168.1.45', time: '刚刚', status: '成功' },
-  { device: 'iPhone 14 / Safari', location: '芝加哥，美国', ip: '172.56.21.90', time: '2 小时前', status: '成功' },
-  { device: 'Windows PC / Edge', location: '芝加哥，美国', ip: '10.0.42.115', time: '昨天 14:20', status: '成功' }
+  { device: 'MacBook Pro / Chrome', location: '北京市，中国', ip: '192.168.1.45', time: '刚刚', status: '成功' },
+  { device: 'iPhone 14 / Safari', location: '上海市，中国', ip: '183.195.12.88', time: '2 小时前', status: '成功' },
+  { device: 'Windows PC / Edge', location: '深圳市，中国', ip: '10.0.42.115', time: '昨天 14:20', status: '成功' }
 ]
 
 // ---- Logout ----
@@ -438,16 +545,26 @@ const sideItems = [
           </div>
           <!-- 个人信息 -->
           <div v-if="activeSideItem === 'profile'" class="content-panel">
+            <input
+              ref="avatarFileInput"
+              type="file"
+              class="avatar-file-input"
+              accept="image/*"
+              aria-hidden="true"
+              tabindex="-1"
+              @change="onAvatarFileChange"
+            />
 
             <div class="profile-header-row">
-              <div class="profile-avatar">
-                {{ userStore.userInfo?.full_name?.[0] || '用' }}
+              <div class="profile-avatar" :class="{ 'has-image': !!avatarDataUrl }">
+                <img v-if="avatarDataUrl" :src="avatarDataUrl" alt="" class="profile-avatar-img" />
+                <span v-else class="profile-avatar-letter">{{ avatarLetter }}</span>
               </div>
               <div class="profile-info">
                 <h2 class="profile-name">{{ userStore.userInfo?.full_name || userStore.userInfo?.phone || '用户' }}</h2>
                 <p class="profile-title">{{ userStore.userInfo?.subject || '' }}{{ userStore.userInfo?.school ? ' | ' + userStore.userInfo.school : '' }}</p>
               </div>
-              <button class="change-photo-btn">📷 更换照片</button>
+              <button type="button" class="change-photo-btn" @click="triggerAvatarSelect">📷 更换照片</button>
             </div>
 
             <div class="form-grid">
@@ -1061,6 +1178,18 @@ const sideItems = [
   margin-bottom: 28px;
 }
 
+.avatar-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .profile-avatar {
   width: 80px;
   height: 80px;
@@ -1073,6 +1202,23 @@ const sideItems = [
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.profile-avatar.has-image {
+  background: #e2e8f0;
+}
+
+.profile-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-avatar-letter {
+  line-height: 1;
 }
 
 .profile-info {

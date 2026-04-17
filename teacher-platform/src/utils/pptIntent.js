@@ -121,6 +121,7 @@ export function buildOutlinePromptFromIntent(summary) {
 
 export function resolveIntentPhase(project, pageCount, intentState) {
   if (project?.cover_image_url) return 'preview'
+  if (project?.creation_type === 'renovation') return 'description'
   if (pageCount > 0) return 'outline'
   if (intentState?.status === 'CONFIRMED') return 'outline'
   if (project?.status === 'INTENT_CONFIRMED') return 'outline'

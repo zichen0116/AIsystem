@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.core.config import settings
+from app.core.logging_setup import configure_logging
+
+configure_logging(settings.DEBUG)
 
 
 def main():

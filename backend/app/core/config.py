@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
 
+    # ========== 阿里云 TTS 语音合成 ==========
+    TTS_MODEL: str = "qwen3-tts-flash"
+    TTS_VOICE: str = "Cherry"
+
+    # ========== 课堂预演图片生成 ==========
+    REHEARSAL_IMAGE_MODEL: str = "qwen-image-2.0"
+    REHEARSAL_IMAGE_BASE_URL: str = "https://dashscope.aliyuncs.com"
+    REHEARSAL_IMAGE_SIZE: str = "1280*720"
+    REHEARSAL_IMAGE_TIMEOUT_SECONDS: float = 120.0
+
     # ========== 阿里云 ASR 语音识别 ==========
     ASR_MODEL: str = "qwen3-asr-flash"
 
