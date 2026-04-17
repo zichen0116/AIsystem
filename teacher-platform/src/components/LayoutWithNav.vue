@@ -18,6 +18,7 @@ const adminDigitalHumanStore = useAdminDigitalHumanStore()
 const primaryItems = [
   { id: 'lesson-prep', path: '/lesson-prep', label: '备课中心', icon: 'lesson' },
   { id: 'courseware', path: '/courseware', label: '课件管理', icon: 'folder' },
+  { id: 'rehearsal', path: '/rehearsal', label: '课堂预演', icon: 'rehearsal' },
   { id: 'knowledge-base', path: '/knowledge-base', label: '知识库', icon: 'graph' },
   { id: 'question', path: '/question-gen', label: '试题生成', icon: 'exam' },
   { id: 'resource', path: '/resource-search', label: '资源搜索', icon: 'search' }
@@ -305,6 +306,18 @@ function toggleAdminDigitalHumanVoice() {
             >
               <path d="M3 3v18h18" />
               <path d="M7 16v-5M11 16v-8M15 16v-11M19 16v-3" />
+            </svg>
+            <!-- 课堂预演：播放按钮 -->
+            <svg
+              v-else-if="item.icon === 'rehearsal'"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
             <!-- 知识库：节点连线 -->
             <svg

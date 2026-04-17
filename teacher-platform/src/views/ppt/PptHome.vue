@@ -24,7 +24,20 @@ let recognition = null
 const uploadedReferenceFiles = ref([])
 const userTemplates = ref([])
 
+// 文件生成 / 翻新 专用上传文件
+const uploadedFile = ref(null) // File object for file-generation / renovation
+const isDragging = ref(false)
+const isCreating = ref(false)
+
 const MAX_THEME_LENGTH = 50
+
+// 加载提示文案
+const loadingMessage = computed(() => {
+  if (!isCreating.value) return ''
+  if (creationType.value === 'renovation') return '正在解析文件并创建翻新项目，文件越大耗时越长，请耐心等待...'
+  if (creationType.value === 'file') return '正在解析文档并生成大纲，请稍候...'
+  return '正在创建项目...'
+})
 
 // 预设风格 - 描述来自 banana-slides
 const stylePresets = [
@@ -263,6 +276,53 @@ function goToHistory() {
   pptStore.setPhase('history')
 }
 
+// ============ 文件生成/翻新 文件上传 ============
+
+const fileAcceptMap = {
+  file: '.pdf,.doc,.docx',
+  renovation: '.pdf,.ppt,.pptx'
+}
+
+const fileAccept = computed(() => fileAcceptMap[creationType.value] || '')
+
+function handleFileUpload(event) {
+  const file = event.target.files?.[0]
+  if (file) uploadedFile.value = file
+  event.target.value = ''
+}
+
+function removeUploadedFile() {
+  uploadedFile.value = null
+}
+
+function handleDragOver(event) {
+  event.preventDefault()
+  if (creationType.value === 'file' || creationType.value === 'renovation') {
+    isDragging.value = true
+  }
+}
+
+function handleDragLeave() {
+  isDragging.value = false
+}
+
+function handleDrop(event) {
+  event.preventDefault()
+  isDragging.value = false
+  if (creationType.value !== 'file' && creationType.value !== 'renovation') return
+
+  const file = event.dataTransfer?.files?.[0]
+  if (!file) return
+
+  const ext = '.' + file.name.split('.').pop().toLowerCase()
+  const allowed = fileAcceptMap[creationType.value].split(',')
+  if (!allowed.includes(ext)) {
+    alert(`不支持的文件类型 ${ext}，请上传 ${allowed.join('、')} 格式`)
+    return
+  }
+  uploadedFile.value = file
+}
+
 // 上传图片自动识别风格
 async function handleStyleImageUpload(event) {
   const file = event.target.files?.[0]
@@ -340,25 +400,27 @@ function parseBackendValidationDetails(rawMessage) {
 }
 
 async function handleNext() {
+  if (isCreating.value) return
+  isCreating.value = true
   try {
     const templateImageUrl = resolveSelectedTemplateUrl()
     const effectiveTheme = (mainText.value || '').trim() || null
     const effectiveTemplateStyle = useTextStyle.value ? (templateStyle.value || '').trim() : null
 
-    if (effectiveTheme && effectiveTheme.length > MAX_THEME_LENGTH) {
+    if (creationType.value === 'dialog' && effectiveTheme && effectiveTheme.length > MAX_THEME_LENGTH) {
       alert(`主题（theme）最多 ${MAX_THEME_LENGTH} 个字符，请精简 main-textarea 内容。`)
       return
     }
 
     if (useTextStyle.value && !effectiveTemplateStyle) {
-      alert('请先填写风格描述，或关闭“文字描述风格”。')
+      alert('请先填写风格描述，或关闭”文字描述风格”。')
       return
     }
+
     const effectiveTemplateId = useTextStyle.value
       ? null
       : (selectedTemplateId.value || selectedPresetTemplateId.value || null)
 
-    // 构建 settings
     const settings = {
       aspect_ratio: aspectRatio.value,
       template_id: effectiveTemplateId,
@@ -366,6 +428,47 @@ async function handleNext() {
       template_style: effectiveTemplateStyle
     }
 
+    // ---- 文件生成模式 ----
+    if (creationType.value === 'file') {
+      const hasFile = !!uploadedFile.value
+      const hasText = !!(mainText.value || '').trim()
+      if (!hasFile && !hasText) {
+        alert('请上传文档或粘贴文本内容')
+        return
+      }
+      const res = await pptStore.createFileGenerationProject({
+        file: uploadedFile.value || undefined,
+        sourceText: hasText ? mainText.value.trim() : undefined,
+        title: (mainText.value || '').slice(0, 100) || '未命名PPT',
+        theme: effectiveTheme,
+        templateStyle: effectiveTemplateStyle,
+        settings
+      })
+      pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
+      pptStore.setPhase('outline')
+      pptStore.pollFileGenerationTask(res.project_id, res.task_id)
+      return
+    }
+
+    // ---- PPT 翻新模式 ----
+    if (creationType.value === 'renovation') {
+      if (!uploadedFile.value) {
+        alert('请先上传 PDF 或 PPTX 文件')
+        return
+      }
+      const res = await pptStore.createRenovationProjectAction({
+        file: uploadedFile.value,
+        keepLayout: false,
+        templateStyle: effectiveTemplateStyle,
+        language: 'zh'
+      })
+      pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
+      pptStore.setPhase('description')
+      pptStore.pollRenovationTask(res.project_id, res.task_id)
+      return
+    }
+
+    // ---- 普通对话模式 ----
     const data = {
       title: mainText.value.slice(0, 100) || '未命名PPT',
       creation_type: creationType.value,
@@ -377,20 +480,14 @@ async function handleNext() {
 
     await pptStore.createProject(data)
     pptStore.projectSettings = { ...pptStore.projectSettings, ...settings }
-
-    // Navigate to appropriate phase
-    if (creationType.value === 'dialog') {
-      pptStore.setPhase('dialog')
-    } else if (creationType.value === 'file') {
-      pptStore.setPhase('outline')
-    } else if (creationType.value === 'renovation') {
-      pptStore.setPhase('outline')
-    }
+    pptStore.setPhase('dialog')
   } catch (error) {
     console.error('create project failed:', error)
     const rawMessage = String(error?.message || '')
     const detailLines = parseBackendValidationDetails(rawMessage)
     alert(`创建项目失败：\n${detailLines.join('\n')}`)
+  } finally {
+    isCreating.value = false
   }
 }
 </script>
@@ -425,15 +522,55 @@ async function handleNext() {
 
         <p class="mode-desc">{{ modeDescription }}</p>
 
+        <!-- 文件上传区域（file / renovation 模式） -->
+        <div
+          v-if="creationType === 'file' || creationType === 'renovation'"
+          class="file-upload-zone"
+          :class="{ dragging: isDragging, 'has-file': !!uploadedFile }"
+          @dragover="handleDragOver"
+          @dragleave="handleDragLeave"
+          @drop="handleDrop"
+        >
+          <template v-if="uploadedFile">
+            <div class="uploaded-file-info">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <span class="uploaded-file-name">{{ uploadedFile.name }}</span>
+              <span class="uploaded-file-size">{{ (uploadedFile.size / 1024 / 1024).toFixed(2) }} MB</span>
+              <button class="uploaded-file-remove" @click="removeUploadedFile">×</button>
+            </div>
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="32" height="32" class="upload-icon">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p class="upload-text">
+              拖拽文件到此处，或
+              <label class="upload-link">
+                点击选择文件
+                <input type="file" :accept="fileAccept" @change="handleFileUpload" hidden>
+              </label>
+            </p>
+            <p class="upload-hint">
+              {{ creationType === 'file' ? '支持 PDF、DOC、DOCX 格式' : '支持 PDF、PPT、PPTX 格式' }}
+            </p>
+          </template>
+        </div>
+
         <div class="composer">
           <textarea
             v-model="mainText"
             class="main-textarea"
-            :placeholder="creationType === 'dialog' ? '输入你想制作的PPT主题，例如：帮我制作一份关于人工智能发展历程的教学演示文稿...' : creationType === 'file' ? '上传或粘贴文档内容...' : '上传 PDF 或 PPTX...'"
+            :placeholder="creationType === 'dialog' ? '输入你想制作的PPT主题，例如：帮我制作一份关于人工智能发展历程的教学演示文稿...' : creationType === 'file' ? '粘贴或输入文本内容（可选，也可只上传文件）...' : '上传 PDF 或 PPTX 后点击下一步'"
+            :rows="creationType === 'renovation' ? 2 : undefined"
           ></textarea>
           <div class="composer-toolbar">
             <div class="toolbar-left">
-              <button class="icon-btn" type="button" title="上传参考文件" @click="triggerReferenceFileUpload">📎</button>
+              <button v-if="creationType === 'dialog'" class="icon-btn" type="button" title="上传参考文件" @click="triggerReferenceFileUpload">📎</button>
               <button class="icon-btn" type="button" :title="isRecording ? '停止录音' : '语音输入'" @click="toggleVoiceInput">🎙️</button>
               <select v-model="aspectRatio" class="aspect-select">
                 <option value="16:9">16:9</option>
@@ -442,9 +579,17 @@ async function handleNext() {
               </select>
             </div>
             <div class="toolbar-right">
-              <button class="next-btn" type="button" @click="handleNext">下一步</button>
+              <button class="next-btn" type="button" @click="handleNext" :disabled="isCreating">
+                {{ isCreating ? '创建中...' : '下一步' }}
+              </button>
             </div>
           </div>
+        </div>
+
+        <!-- 创建中加载提示 -->
+        <div v-if="isCreating" class="creating-hint">
+          <div class="creating-spinner"></div>
+          <span>{{ loadingMessage }}</span>
         </div>
 
         <!-- 隐藏的参考文件上传输入框 -->
@@ -1216,6 +1361,137 @@ async function handleNext() {
   font-size: 12px;
   color: #6a8099;
   line-height: 1.55;
+}
+
+/* File Upload Zone */
+.file-upload-zone {
+  border: 2px dashed #adc2db;
+  border-radius: 16px;
+  padding: 28px 20px;
+  text-align: center;
+  margin-bottom: 12px;
+  background: rgba(241, 248, 255, 0.5);
+  transition: all 0.2s ease;
+  cursor: default;
+}
+
+.file-upload-zone.dragging {
+  border-color: rgb(76, 128, 245);
+  background: rgba(76, 128, 245, 0.08);
+}
+
+.file-upload-zone.has-file {
+  border-style: solid;
+  border-color: rgb(76, 128, 245);
+  background: rgba(76, 128, 245, 0.04);
+  padding: 16px 20px;
+}
+
+.upload-icon {
+  color: #7f94ab;
+  margin-bottom: 8px;
+}
+
+.upload-text {
+  font-size: 14px;
+  color: #475569;
+  margin: 0 0 4px;
+}
+
+.upload-link {
+  color: rgb(76, 128, 245);
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.upload-link:hover {
+  color: rgb(56, 107, 219);
+}
+
+.upload-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.uploaded-file-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  color: #3f5771;
+}
+
+.uploaded-file-name {
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uploaded-file-size {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.uploaded-file-remove {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid #d5dfed;
+  background: rgba(239, 68, 68, 0.06);
+  color: #ef4444;
+  font-size: 16px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.uploaded-file-remove:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: #ef4444;
+}
+
+.next-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* Creating hint */
+.creating-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid #bfd0e4;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f0f7ff 0%, #e8f0fe 100%);
+  color: #3f5f82;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 16px;
+  animation: rise 0.3s ease;
+}
+
+.creating-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2.5px solid #bfd0e4;
+  border-top-color: rgb(76, 128, 245);
+  border-radius: 50%;
+  animation: creating-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes creating-spin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes rise {

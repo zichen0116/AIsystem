@@ -37,7 +37,7 @@ class PptParseService:
         ext = os.path.splitext(filename)[1].lower()
 
         if ext in ['.pdf']:
-            return await self._parse_pdf(file_path)
+            return await self._parse_pdf_v4(file_path)
         elif ext in ['.pptx', '.ppt']:
             return await self._parse_pptx(file_path)
         elif ext in ['.txt', '.md']:
@@ -102,6 +102,97 @@ class PptParseService:
         except Exception as e:
             logger.exception("PDF 解析异常")
             return None, f"PDF 解析异常: {str(e)}"
+
+    async def _parse_pdf_v4(self, file_path: str) -> Tuple[Optional[str], Optional[str]]:
+        """MinerU v4 PDF parsing flow."""
+        try:
+            import asyncio
+            import io
+            import requests
+            import zipfile
+
+            upload_url_api = f"{self.mineru_api_base}/api/v4/file-urls/batch"
+            headers = {"Authorization": f"Bearer {self.mineru_token}"}
+            payload = {
+                "files": [{
+                    "name": os.path.basename(file_path),
+                    "is_ocr": True,
+                    "data_id": f"pdf-{int(os.path.getmtime(file_path))}-{os.path.getsize(file_path)}",
+                }]
+            }
+
+            resp = requests.post(upload_url_api, headers=headers, json=payload, timeout=30)
+            if resp.status_code != 200:
+                return None, f"MinerU upload failed: {resp.text}"
+
+            upload_payload = resp.json()
+            if upload_payload.get("code") != 0:
+                return None, f"MinerU upload failed: {upload_payload.get('msg', upload_payload)}"
+
+            data = upload_payload.get("data") or {}
+            batch_id = data.get("batch_id")
+            file_urls = data.get("file_urls") or []
+            if not batch_id or not file_urls:
+                return None, f"MinerU upload response missing batch_id/file_urls: {upload_payload}"
+
+            with open(file_path, "rb") as f:
+                file_data = f.read()
+            upload_resp = requests.put(file_urls[0], data=file_data, timeout=60)
+            if upload_resp.status_code not in (200, 201):
+                return None, f"MinerU file upload failed: {upload_resp.status_code}"
+
+            result_url = f"{self.mineru_api_base}/api/v4/extract-results/batch/{batch_id}"
+            for _ in range(30):
+                await asyncio.sleep(10)
+                result_resp = requests.get(result_url, headers=headers, timeout=30)
+                if result_resp.status_code != 200:
+                    continue
+
+                result_data = result_resp.json()
+                if result_data.get("code") != 0:
+                    return None, f"MinerU parse failed: {result_data.get('msg', result_data)}"
+
+                extract_result = ((result_data.get("data") or {}).get("extract_result") or [])
+                current = extract_result[0] if isinstance(extract_result, list) and extract_result else extract_result
+                if not isinstance(current, dict):
+                    continue
+
+                state = str(current.get("state") or "").lower()
+                if state in {"done", "success", "completed"}:
+                    markdown_url = current.get("full_md_url")
+                    if markdown_url:
+                        md_resp = requests.get(markdown_url, timeout=60)
+                        if md_resp.status_code == 200:
+                            return md_resp.text, None
+                        return None, f"Download markdown failed: {md_resp.status_code}"
+
+                    zip_url = current.get("full_zip_url")
+                    if zip_url:
+                        zip_resp = requests.get(zip_url, timeout=120)
+                        if zip_resp.status_code != 200:
+                            return None, f"Download zip failed: {zip_resp.status_code}"
+                        with zipfile.ZipFile(io.BytesIO(zip_resp.content)) as zf:
+                            candidates = [
+                                name for name in zf.namelist()
+                                if name.lower().endswith("full.md")
+                            ]
+                            if not candidates:
+                                candidates = [name for name in zf.namelist() if name.lower().endswith(".md")]
+                            if not candidates:
+                                return None, "MinerU zip does not contain markdown output"
+                            with zf.open(candidates[0]) as md_file:
+                                return md_file.read().decode("utf-8", errors="ignore"), None
+
+                    return None, "MinerU result missing markdown/zip url"
+
+                if state in {"failed", "error"}:
+                    return None, f"MinerU parse failed: {current.get('err_msg') or current.get('state')}"
+
+            return None, "PDF parse timed out, please retry later"
+
+        except Exception as e:
+            logger.exception("PDF v4 parse exception")
+            return None, f"PDF parse exception: {str(e)}"
 
     async def _parse_pptx(self, file_path: str) -> Tuple[Optional[str], Optional[str]]:
         """解析 PPTX 文件"""
@@ -171,10 +262,25 @@ class PptParseService:
         Returns:
             拆分后的 PDF 页面路径列表
         """
-        import fitz  # PyMuPDF
+        output_paths = []
+
+        try:
+            import fitz  # PyMuPDF
+        except ModuleNotFoundError:
+            from PyPDF2 import PdfReader, PdfWriter
+
+            with open(pdf_path, "rb") as f:
+                reader = PdfReader(f)
+                for page_num, page in enumerate(reader.pages, start=1):
+                    writer = PdfWriter()
+                    writer.add_page(page)
+                    output_path = os.path.join(output_dir, f"page_{page_num}.pdf")
+                    with open(output_path, "wb") as out:
+                        writer.write(out)
+                    output_paths.append(output_path)
+            return output_paths
 
         pdf_document = fitz.open(pdf_path)
-        output_paths = []
 
         for page_num in range(len(pdf_document)):
             page = pdf_document[page_num]

@@ -77,6 +77,24 @@ const routes = [
     component: () => import('../views/admin/AdminSystemLogs.vue'),
     meta: { requiresAuth: true, layout: 'nav' }
   },
+  {
+    path: '/rehearsal',
+    name: 'RehearsalLab',
+    component: () => import('../views/rehearsal/RehearsalLab.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/rehearsal/new',
+    name: 'RehearsalNew',
+    component: () => import('../views/rehearsal/RehearsalNew.vue'),
+    meta: { requiresAuth: true, layout: 'nav' }
+  },
+  {
+    path: '/rehearsal/play/:id',
+    name: 'RehearsalPlay',
+    component: () => import('../views/rehearsal/RehearsalPlay.vue'),
+    meta: { requiresAuth: true }
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ]
 

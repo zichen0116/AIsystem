@@ -10,38 +10,38 @@ const ROLE_OPTIONS = ['高级教师', '备课教师', '教研组长', '平台管
 
 /** @type {import('vue').Ref<Teacher[]>} */
 const teachers = ref([
-  { id: 1, name: '陈明华', employeeId: 'T20236901', department: '数学教研组', role: '高级教师', lastActive: '2023-11-24 09:15', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 2, name: '周丽君', employeeId: 'T20236789', department: '生物教研组', role: '备课教师', lastActive: '2023-11-22 08:45', status: 'active', avatarClass: 'avatar-green' },
-  { id: 3, name: '何建国', employeeId: 'T20235990', department: '历史教研组', role: '教研组长', lastActive: '2023-11-21 17:20', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 4, name: '刘晓彤', employeeId: 'T20234881', department: '信息技术组', role: '平台管理员', lastActive: '2023-11-19 11:05', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 5, name: '李春彤', employeeId: 'T20236445', department: '语文教研组', role: '备课教师', lastActive: '2023-11-23 16:40', status: 'active', avatarClass: 'avatar-green' },
-  { id: 6, name: '王小波', employeeId: 'T20231802', department: '英语教研组', role: '年级组长', lastActive: '2023-11-20 10:22', status: 'disabled', avatarClass: 'avatar-orange' },
-  { id: 7, name: '张凯齐', employeeId: 'T20231555', department: '物理教研组', role: '备课教师', lastActive: '2023-11-24 14:30', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 8, name: '孙艺宁', employeeId: 'T20237012', department: '化学教研组', role: '备课教师', lastActive: '2023-11-25 08:10', status: 'active', avatarClass: 'avatar-green' },
-  { id: 9, name: '赵文博', employeeId: 'T20237120', department: '地理教研组', role: '备课教师', lastActive: '2023-11-25 10:02', status: 'pending', avatarClass: 'avatar-orange' },
-  { id: 10, name: '钱思远', employeeId: 'T20237121', department: '政治教研组', role: '教研组长', lastActive: '2023-11-25 11:18', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 11, name: '冯雨晴', employeeId: 'T20237122', department: '音乐教研组', role: '备课教师', lastActive: '2023-11-26 08:30', status: 'active', avatarClass: 'avatar-green' },
-  { id: 12, name: '韩雪松', employeeId: 'T20237123', department: '体育教研组', role: '高级教师', lastActive: '2023-11-26 09:45', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 13, name: '杨若溪', employeeId: 'T20237124', department: '美术教研组', role: '备课教师', lastActive: '2023-11-26 14:00', status: 'pending', avatarClass: 'avatar-blue' },
-  { id: 14, name: '许嘉怡', employeeId: 'T20237125', department: '心理健康中心', role: '备课教师', lastActive: '2023-11-27 08:12', status: 'active', avatarClass: 'avatar-green' },
-  { id: 15, name: '邓志强', employeeId: 'T20237126', department: '通用技术组', role: '年级组长', lastActive: '2023-11-27 15:22', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 16, name: '曹婉清', employeeId: 'T20237127', department: '图书馆 / 阅读课', role: '备课教师', lastActive: '2023-11-28 10:05', status: 'disabled', avatarClass: 'avatar-blue' },
-  { id: 17, name: 'James Porter', employeeId: 'T20238001', department: 'English Dept.', role: '备课教师', lastActive: '2023-11-28 16:40', status: 'active', avatarClass: 'avatar-green' },
-  { id: 18, name: 'Sarah Mitchell', employeeId: 'T20238002', department: 'International Programs', role: '教研组长', lastActive: '2023-11-29 09:00', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 19, name: 'Elena Vogt', employeeId: 'T20238003', department: '德语兴趣班', role: '备课教师', lastActive: '2023-11-29 11:30', status: 'pending', avatarClass: 'avatar-blue' },
-  { id: 20, name: 'Marc Dubois', employeeId: 'T20238004', department: '法语选修', role: '备课教师', lastActive: '2023-11-30 08:50', status: 'active', avatarClass: 'avatar-green' },
-  { id: 21, name: 'Yuki Tanaka', employeeId: 'T20238005', department: '日语第二外语', role: '高级教师', lastActive: '2023-11-30 13:15', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 22, name: '罗宇航', employeeId: 'T20237128', department: '创客 / 机器人实验室', role: '平台管理员', lastActive: '2023-12-01 09:20', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 23, name: '方雅琳', employeeId: 'T20237129', department: 'STEM 中心', role: '备课教师', lastActive: '2023-12-01 11:05', status: 'active', avatarClass: 'avatar-green' },
-  { id: 24, name: '史俊杰', employeeId: 'T20237130', department: '德育处', role: '年级组长', lastActive: '2023-12-02 08:00', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 25, name: '丁佳慧', employeeId: 'T20237131', department: '团委 / 社团指导', role: '备课教师', lastActive: '2023-12-02 08:00', status: 'pending', avatarClass: 'avatar-blue' },
-  { id: 26, name: '崔明轩', employeeId: 'T20237132', department: '总务后勤', role: '备课教师', lastActive: '2023-12-03 07:45', status: 'disabled', avatarClass: 'avatar-green' },
-  { id: 27, name: 'Anna Kowalski', employeeId: 'T20238006', department: 'STEM Center (Co-teach)', role: '备课教师', lastActive: '2023-12-03 10:10', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 28, name: '龚子墨', employeeId: 'T20237133', department: '书法与传统文化', role: '高级教师', lastActive: '2023-12-04 14:28', status: 'active', avatarClass: 'avatar-blue' },
-  { id: 29, name: '梁诗涵', employeeId: 'T20237134', department: '戏剧与影视', role: '备课教师', lastActive: '2023-12-04 14:28', status: 'active', avatarClass: 'avatar-green' },
-  { id: 30, name: '邱振华', employeeId: 'T20237135', department: '竞赛教练组', role: '教研组长', lastActive: '2023-12-05 18:00', status: 'active', avatarClass: 'avatar-orange' },
-  { id: 31, name: '赖思琪', employeeId: 'T20237136', department: '校本课程开发', role: '备课教师', lastActive: '2023-12-06 09:00', status: 'pending', avatarClass: 'avatar-blue' },
-  { id: 32, name: '钟伟杰', employeeId: 'T20237137', department: '实验室安全督导', role: '平台管理员', lastActive: '2023-12-01 09:20', status: 'active', avatarClass: 'avatar-green' }
+  { id: 1, name: '陈明华', employeeId: 'T20236901', department: '数学教研组', role: '高级教师', lastActive: '2026-04-01 09:15', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 2, name: '周丽君', employeeId: 'T20236789', department: '生物教研组', role: '备课教师', lastActive: '2026-04-02 08:45', status: 'active', avatarClass: 'avatar-green' },
+  { id: 3, name: '何建国', employeeId: 'T20235990', department: '历史教研组', role: '教研组长', lastActive: '2026-04-03 17:20', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 4, name: '刘晓彤', employeeId: 'T20234881', department: '信息技术组', role: '平台管理员', lastActive: '2026-04-04 11:05', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 5, name: '李春彤', employeeId: 'T20236445', department: '语文教研组', role: '备课教师', lastActive: '2026-04-05 16:40', status: 'active', avatarClass: 'avatar-green' },
+  { id: 6, name: '王小波', employeeId: 'T20231802', department: '英语教研组', role: '年级组长', lastActive: '2026-04-06 10:22', status: 'disabled', avatarClass: 'avatar-orange' },
+  { id: 7, name: '张凯齐', employeeId: 'T20231555', department: '物理教研组', role: '备课教师', lastActive: '2026-04-07 14:30', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 8, name: '孙艺宁', employeeId: 'T20237012', department: '化学教研组', role: '备课教师', lastActive: '2026-04-08 08:10', status: 'active', avatarClass: 'avatar-green' },
+  { id: 9, name: '赵文博', employeeId: 'T20237120', department: '地理教研组', role: '备课教师', lastActive: '2026-04-09 10:02', status: 'pending', avatarClass: 'avatar-orange' },
+  { id: 10, name: '钱思远', employeeId: 'T20237121', department: '政治教研组', role: '教研组长', lastActive: '2026-04-10 11:18', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 11, name: '冯雨晴', employeeId: 'T20237122', department: '音乐教研组', role: '备课教师', lastActive: '2026-04-01 08:30', status: 'active', avatarClass: 'avatar-green' },
+  { id: 12, name: '韩雪松', employeeId: 'T20237123', department: '体育教研组', role: '高级教师', lastActive: '2026-04-02 09:45', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 13, name: '杨若溪', employeeId: 'T20237124', department: '美术教研组', role: '备课教师', lastActive: '2026-04-03 14:00', status: 'pending', avatarClass: 'avatar-blue' },
+  { id: 14, name: '许嘉怡', employeeId: 'T20237125', department: '心理健康中心', role: '备课教师', lastActive: '2026-04-04 08:12', status: 'active', avatarClass: 'avatar-green' },
+  { id: 15, name: '邓志强', employeeId: 'T20237126', department: '通用技术组', role: '年级组长', lastActive: '2026-04-05 15:22', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 16, name: '曹婉清', employeeId: 'T20237127', department: '图书馆 / 阅读课', role: '备课教师', lastActive: '2026-04-06 10:05', status: 'disabled', avatarClass: 'avatar-blue' },
+  { id: 17, name: 'James Porter', employeeId: 'T20238001', department: 'English Dept.', role: '备课教师', lastActive: '2026-04-07 16:40', status: 'active', avatarClass: 'avatar-green' },
+  { id: 18, name: 'Sarah Mitchell', employeeId: 'T20238002', department: 'International Programs', role: '教研组长', lastActive: '2026-04-08 09:00', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 19, name: 'Elena Vogt', employeeId: 'T20238003', department: '德语兴趣班', role: '备课教师', lastActive: '2026-04-09 11:30', status: 'pending', avatarClass: 'avatar-blue' },
+  { id: 20, name: 'Marc Dubois', employeeId: 'T20238004', department: '法语选修', role: '备课教师', lastActive: '2026-04-10 08:50', status: 'active', avatarClass: 'avatar-green' },
+  { id: 21, name: 'Yuki Tanaka', employeeId: 'T20238005', department: '日语第二外语', role: '高级教师', lastActive: '2026-04-01 13:15', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 22, name: '罗宇航', employeeId: 'T20237128', department: '创客 / 机器人实验室', role: '平台管理员', lastActive: '2026-04-02 09:20', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 23, name: '方雅琳', employeeId: 'T20237129', department: 'STEM 中心', role: '备课教师', lastActive: '2026-04-03 11:05', status: 'active', avatarClass: 'avatar-green' },
+  { id: 24, name: '史俊杰', employeeId: 'T20237130', department: '德育处', role: '年级组长', lastActive: '2026-04-04 08:00', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 25, name: '丁佳慧', employeeId: 'T20237131', department: '团委 / 社团指导', role: '备课教师', lastActive: '2026-04-05 08:00', status: 'pending', avatarClass: 'avatar-blue' },
+  { id: 26, name: '崔明轩', employeeId: 'T20237132', department: '总务后勤', role: '备课教师', lastActive: '2026-04-06 07:45', status: 'disabled', avatarClass: 'avatar-green' },
+  { id: 27, name: 'Anna Kowalski', employeeId: 'T20238006', department: 'STEM Center (Co-teach)', role: '备课教师', lastActive: '2026-04-07 10:10', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 28, name: '龚子墨', employeeId: 'T20237133', department: '书法与传统文化', role: '高级教师', lastActive: '2026-04-08 14:28', status: 'active', avatarClass: 'avatar-blue' },
+  { id: 29, name: '梁诗涵', employeeId: 'T20237134', department: '戏剧与影视', role: '备课教师', lastActive: '2026-04-09 14:28', status: 'active', avatarClass: 'avatar-green' },
+  { id: 30, name: '邱振华', employeeId: 'T20237135', department: '竞赛教练组', role: '教研组长', lastActive: '2026-04-10 18:00', status: 'active', avatarClass: 'avatar-orange' },
+  { id: 31, name: '赖思琪', employeeId: 'T20237136', department: '校本课程开发', role: '备课教师', lastActive: '2026-04-01 09:00', status: 'pending', avatarClass: 'avatar-blue' },
+  { id: 32, name: '钟伟杰', employeeId: 'T20237137', department: '实验室安全督导', role: '平台管理员', lastActive: '2026-04-02 09:20', status: 'active', avatarClass: 'avatar-green' }
 ])
 
 const searchQuery = ref('')
@@ -137,7 +137,7 @@ function renderUserCharts() {
   const roleValues = roleChartValues.value.slice(0, roleNames.length)
   chartRoleInstance.setOption({
     title: {
-      text: '教师 · 系统角色分布',
+      text: '系统角色分布',
       left: 'center',
       top: 8,
       textStyle: { fontSize: 15, fontWeight: 600, color: '#0f172a' }
@@ -514,7 +514,7 @@ function saveAdd() {
           </label>
           <label class="field">
             <span>最近活跃时间</span>
-            <input v-model="editForm.lastActive" type="text" placeholder="如 2023-11-24 09:15" />
+            <input v-model="editForm.lastActive" type="text" placeholder="如 2026-04-08 09:15" />
           </label>
           <label class="field">
             <span>账号状态</span>

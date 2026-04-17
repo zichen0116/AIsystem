@@ -3,7 +3,6 @@ PDF 解析器
 同时提取文本和图片，处理图文混排
 支持调用视觉模型理解图片内容
 """
-import fitz  # PyMuPDF
 from pathlib import Path
 from typing import Any, Optional
 import os
@@ -57,6 +56,12 @@ class PDFParser(BaseParser):
         images: list[str] = []
 
         # 打开 PDF
+        try:
+            import fitz  # PyMuPDF
+        except ModuleNotFoundError:
+            logger.warning("PyMuPDF(fitz) unavailable, falling back to PyPDF2 text parsing")
+            return await self._parse_with_pypdf(file_path)
+
         doc = fitz.open(str(file_path))
         file_name = file_path.name
 
@@ -144,6 +149,41 @@ class PDFParser(BaseParser):
         logger.info(f"PDF 解析完成: {file_name}, 共 {len(chunks)} 个文本块, {len(images)} 张图片")
 
         return ParseResult(chunks=chunks, images=images)
+
+    async def _parse_with_pypdf(self, file_path: Path) -> ParseResult:
+        """Fallback parser when PyMuPDF is unavailable."""
+        from PyPDF2 import PdfReader
+
+        chunks: list[ParsedChunk] = []
+        file_name = file_path.name
+
+        with open(file_path, "rb") as f:
+            reader = PdfReader(f)
+            for page_num, page in enumerate(reader.pages, start=1):
+                text = (page.extract_text() or "").strip()
+                if not text:
+                    continue
+
+                chunks.append(
+                    ParsedChunk(
+                        content=text,
+                        metadata={
+                            "source": file_name,
+                            "page": page_num,
+                            "type": "text",
+                            "has_image": False,
+                            "image_count": 0,
+                            "image_descriptions": [],
+                        },
+                    )
+                )
+
+        logger.info(
+            "PDF fallback parse completed: %s, chunks=%s, images=0",
+            file_name,
+            len(chunks),
+        )
+        return ParseResult(chunks=chunks, images=[])
 
     async def _generate_image_description(
         self, image_path: str, width: int, height: int, img_ext: str

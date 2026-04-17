@@ -115,6 +115,10 @@ watch(contextUploadedFiles, (files, previousFiles = []) => {
   contextUploadedFileUrls.value = files.map(file => URL.createObjectURL(file))
 })
 
+const hasRenovationFailedPages = computed(() => {
+  return isRenovationMode.value && pages.value.some(p => p.renovationStatus === 'failed')
+})
+
 function syncPages() {
   pages.value = pptStore.outlinePages.map(p => ({
     id: p.id,
@@ -123,7 +127,9 @@ function syncPages() {
     description: p.description,
     imageUrl: p.imageUrl,
     thumbnail: p.imageUrl || null,
-    status: p.isImageGenerating ? 'generating' : (p.imageUrl ? 'completed' : 'pending')
+    status: p.isImageGenerating ? 'generating' : (p.imageUrl ? 'completed' : 'pending'),
+    renovationStatus: p.renovationStatus || null,
+    renovationError: p.renovationError || null
   }))
 }
 
@@ -564,7 +570,7 @@ function _pollEditableExport() {
       clearInterval(editableExportPollTimer)
       editableExportStatus.value = 'error'
     }
-  }, 2000)
+  }, 3000)
 }
 
 async function handleExportImages() {
@@ -604,7 +610,7 @@ function _pollImagesExport() {
       clearInterval(imagesExportPollTimer)
       imagesExportStatus.value = 'error'
     }
-  }, 2000)
+  }, 3000)
 }
 
 // 统一导出结果下载（兼容 OSS URL 和 is_local 本地路径）
@@ -679,7 +685,7 @@ function _pollEditTask() {
       editStatus.value = 'error'
       editErrorMsg.value = '查询任务状态失败'
     }
-  }, 2000)
+  }, 3000)
 }
 
 function retryEdit() {
@@ -802,9 +808,10 @@ async function handleRenovateCurrentPage() {
     await regeneratePageRenovation(pptStore.projectId, currentPage.value.id)
     await pptStore.fetchPages(pptStore.projectId)
     syncPages()
+    alert('该页已重新解析完成')
   } catch (e) {
     console.error('翻新再生成失败:', e)
-    alert('翻新再生成失败：' + e.message)
+    alert('该页重试失败：' + e.message)
   } finally {
     renovationRegenerating.value = false
   }
@@ -860,7 +867,7 @@ function _pollMaterialTask() {
       clearInterval(materialPollTimer)
       materialGenerating.value = false
     }
-  }, 2000)
+  }, 3000)
 }
 
 function toggleMaterialPanel() {
@@ -1095,7 +1102,10 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 
             <div class="thumbnail-info">
               <span class="thumbnail-title">{{ page.title || '未命名' }}</span>
-              <span class="thumbnail-status" :class="getStatusClass(page.status)">
+              <span v-if="page.renovationStatus === 'failed'" class="thumbnail-status status-failed">
+                解析失败
+              </span>
+              <span v-else class="thumbnail-status" :class="getStatusClass(page.status)">
                 {{ getStatusText(page.status) }}
               </span>
             </div>
@@ -1117,6 +1127,14 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
         </template>
 
         <template v-else>
+          <!-- 翻新失败页提示 -->
+          <div v-if="hasRenovationFailedPages" class="renovation-fail-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+            </svg>
+            <span>部分页面解析失败，可在预览页逐页重试</span>
+          </div>
+
           <!-- 预览区 -->
           <div class="preview-container">
             <div
@@ -1912,6 +1930,23 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 .thumbnail-status.status-pending {
   background: #f1f5f9;
   color: #94a3b8;
+}
+
+.thumbnail-status.status-failed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.renovation-fail-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fffbeb;
+  border-bottom: 1px solid #fcd34d;
+  font-size: 13px;
+  color: #92400e;
+  flex-shrink: 0;
 }
 
 /* Preview Area */

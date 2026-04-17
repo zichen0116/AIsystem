@@ -119,6 +119,7 @@ class PPTProjectResponse(BaseModel):
     description: Optional[str]
     creation_type: str
     outline_text: Optional[str]
+    description_text: Optional[str] = None
     settings: dict
     theme: Optional[str]
     template_style: Optional[str]
@@ -199,6 +200,8 @@ class PPTPageResponse(BaseModel):
     is_description_generating: bool
     is_image_generating: bool
     material_ids: list[int]
+    renovation_status: Optional[str] = None
+    renovation_error: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -263,10 +266,19 @@ class PPTReferenceFileResponse(BaseModel):
     file_size: Optional[int]
     parse_status: str
     parse_error: Optional[str]
-    parsed_outline: Optional[dict]
+    parsed_outline: Optional[dict] = None
+    parsed_content: Optional[dict] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FileGenerationResponse(BaseModel):
+    """文件生成一站式入口响应"""
+    project_id: int
+    task_id: str
+    status: str = "processing"
+    reference_file_id: Optional[int] = None
 
 
 # ============= Session Schemas =============

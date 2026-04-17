@@ -1,2 +1,6 @@
 .superpowers/
 _tmp_docmee_aippt_vue/
+/backend/media/
+/.planning
+/docs/详细设计文档
+RAG-plus.md

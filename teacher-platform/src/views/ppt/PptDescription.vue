@@ -130,12 +130,21 @@ function syncPages() {
         if (Array.isArray(parsed)) displayDesc = ''
       } catch (e) {}
     }
+
+    // 翻新项目页面状态
+    const renovationStatus = p.renovationStatus || null
+    let status = displayDesc ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending')
+    if (renovationStatus === 'failed') status = 'failed'
+    else if (renovationStatus === 'pending') status = 'renovation_pending'
+
     return {
       id: p.id,
       pageNumber: p.pageNumber,
       title: p.title,
       description: displayDesc,
-      status: displayDesc ? 'completed' : (p.status === 'generating' ? 'generating' : 'pending'),
+      status,
+      renovationStatus,
+      renovationError: p.renovationError || null,
       config: p.config || {},
       extraFields: {
         visual_element: p.extraFields?.visual_element || '',
@@ -152,8 +161,21 @@ const completedCount = computed(() => {
   return pages.value.filter(p => p.status === 'completed').length
 })
 
+// 翻新解析是否仍在进行中
+const isRenovationParsing = computed(() => {
+  return pptStore.creationType === 'renovation' &&
+    (pptStore.renovationTaskStatus === 'PENDING' || pptStore.renovationTaskStatus === 'PROCESSING')
+})
+
+const renovationProgress = computed(() => {
+  if (!isRenovationParsing.value) return null
+  const total = pages.value.length
+  const done = pages.value.filter(p => p.status === 'completed' || p.status === 'failed').length
+  return { done, total }
+})
+
 async function handleBatchGenerate() {
-  if (!pptStore.projectId) return
+  if (!pptStore.projectId || isRenovationParsing.value) return
 
   isGenerating.value = true
   try {
@@ -196,7 +218,15 @@ function goToOutline() {
   pptStore.setPhase('outline')
 }
 
+// 描述是否全部完成（排除翻新解析中的页面）
+const allDescriptionsReady = computed(() => {
+  if (pages.value.length === 0) return false
+  return pages.value.every(p => p.status === 'completed')
+})
+
 function goToPreview() {
+  if (isRenovationParsing.value) return
+  if (!allDescriptionsReady.value) return
   pptStore.setPhase('preview')
 }
 
@@ -388,7 +418,7 @@ function getFieldIcon(iconType) {
             </svg>
             上一步
           </button>
-          <button class="nav-btn primary" @click="goToPreview">
+          <button class="nav-btn primary" :disabled="isRenovationParsing || !allDescriptionsReady" @click="goToPreview" :title="isRenovationParsing ? '翻新解析中，请等待完成' : !allDescriptionsReady ? '请先完成所有页面描述' : ''">
             生成图片
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <path d="M5 12h14M12 5l7 7-7 7"/>
@@ -401,11 +431,11 @@ function getFieldIcon(iconType) {
     <!-- 操作栏 -->
     <div class="action-bar">
       <div class="action-bar-inner">
-        <button class="action-btn primary" :disabled="isGenerating" @click="handleBatchGenerate">
+        <button class="action-btn primary" :disabled="isGenerating || isRenovationParsing" @click="handleBatchGenerate">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
           </svg>
-          {{ isGenerating ? '生成中...' : '批量生成描述' }}
+          {{ isRenovationParsing ? '翻新解析中...' : isGenerating ? '生成中...' : '批量生成描述' }}
         </button>
 
         <!-- 设置下拉 -->
@@ -569,6 +599,20 @@ function getFieldIcon(iconType) {
       </div>
     </div>
 
+    <!-- 翻新解析进度提示 -->
+    <div v-if="isRenovationParsing" class="renovation-progress-bar">
+      <div class="renovation-progress-inner">
+        <svg class="spin-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <circle cx="12" cy="12" r="10" opacity=".25"/>
+          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+        </svg>
+        <span>翻新解析进行中，请等待解析完成后再生成描述</span>
+        <span v-if="renovationProgress" class="renovation-progress-count">
+          {{ renovationProgress.done }} / {{ renovationProgress.total }} 页已解析
+        </span>
+      </div>
+    </div>
+
     <!-- 主内容区 - 3列网格 -->
     <main class="main-content">
       <div v-if="pages.length === 0" class="empty-state">
@@ -602,10 +646,12 @@ function getFieldIcon(iconType) {
                 :class="{
                   completed: page.status === 'completed',
                   generating: page.status === 'generating',
-                  pending: page.status === 'pending' || !page.status
+                  pending: page.status === 'pending' || !page.status,
+                  failed: page.status === 'failed',
+                  'renovation-pending': page.status === 'renovation_pending'
                 }"
               >
-                {{ page.status === 'completed' ? '已完成' : page.status === 'generating' ? '生成中...' : '待生成' }}
+                {{ page.status === 'completed' ? '已完成' : page.status === 'generating' ? '生成中...' : page.status === 'failed' ? '解析失败' : page.status === 'renovation_pending' ? '解析中' : '待生成' }}
               </span>
             </div>
             <div class="header-actions" v-if="editingCardId !== page.id">
@@ -630,8 +676,14 @@ function getFieldIcon(iconType) {
             <div class="desc-card-body">
               <h4 class="desc-title">{{ page.title }}</h4>
 
-              <div v-if="page.description" class="desc-content">
-                <p>{{ page.description }}</p>
+              <div v-if="page.status === 'failed'" class="desc-failed">
+                解析失败{{ page.renovationError ? '：' + page.renovationError : '' }}
+              </div>
+              <div v-else-if="page.status === 'renovation_pending'" class="desc-processing">
+                正在解析中，请稍候...
+              </div>
+              <div v-else-if="page.description" class="desc-content">
+                <p>{{ typeof page.description === 'object' ? JSON.stringify(page.description) : page.description }}</p>
               </div>
               <div v-else class="desc-empty">
                 此页面的详细描述尚未生成，请点击"批量生成描述"按钮来生成内容。
@@ -833,8 +885,13 @@ function getFieldIcon(iconType) {
   border: none;
 }
 
-.nav-btn.primary:hover {
+.nav-btn.primary:hover:not(:disabled) {
   background: #2563eb;
+}
+
+.nav-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Action Bar */
@@ -1263,6 +1320,16 @@ function getFieldIcon(iconType) {
   color: #94a3b8;
 }
 
+.status-badge.failed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.status-badge.renovation-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .header-actions {
   display: flex;
   gap: 4px;
@@ -1329,6 +1396,24 @@ function getFieldIcon(iconType) {
   font-size: 13px;
   color: #94a3b8;
   font-style: italic;
+}
+
+.desc-failed {
+  font-size: 13px;
+  color: #dc2626;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border-radius: 6px;
+  border: 1px solid #fca5a5;
+}
+
+.desc-processing {
+  font-size: 13px;
+  color: #92400e;
+  padding: 8px 10px;
+  background: #fffbeb;
+  border-radius: 6px;
+  border: 1px solid #fcd34d;
 }
 
 .desc-extra-fields {
@@ -1436,6 +1521,38 @@ function getFieldIcon(iconType) {
 .save-btn:hover {
   background: #2563eb;
 }
+
+/* Renovation Progress Bar */
+.renovation-progress-bar {
+  background: #fffbeb;
+  border-bottom: 1px solid #fcd34d;
+  padding: 10px 20px;
+  flex-shrink: 0;
+}
+
+.renovation-progress-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #92400e;
+  font-weight: 500;
+}
+
+.renovation-progress-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b45309;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Empty State */
 .empty-state {
