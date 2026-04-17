@@ -14,10 +14,14 @@ from fastapi import APIRouter, Body, HTTPException, status
 from app.core.auth import CurrentUser
 from app.core.config import get_settings
 from app.schemas.digital_human import (
+    AdminDigitalHumanChatRequest,
+    AdminDigitalHumanChatResponse,
     IflytekWebSdkConfigResponse,
     Vms2dStartRequest,
     VmsSessionRequest,
 )
+from app.services.admin_digital_human import generate_admin_chat_response
+from app.services.ai.dashscope_service import get_llm_service
 from app.services import iflytek_vms_client
 
 router = APIRouter(prefix="/digital-human", tags=["数字人"])
@@ -61,6 +65,24 @@ async def get_iflytek_web_sdk_config(_user: CurrentUser):
         stream_protocol=s.IFLYTEK_VMS_STREAM_PROTOCOL,
         default_tts_vcn=s.IFLYTEK_AVATAR_TTS_VCN or "x4_xiaoxuan",
     )
+
+
+@router.post(
+    "/admin/chat",
+    response_model=AdminDigitalHumanChatResponse,
+    summary="Admin digital human intro and chat",
+)
+async def post_admin_chat(
+    body: AdminDigitalHumanChatRequest,
+    _user: CurrentUser,
+):
+    llm_service = get_llm_service()
+    result = await generate_admin_chat_response(
+        message=body.message,
+        history=[item.model_dump() for item in body.history],
+        llm_invoke=llm_service.ainvoke,
+    )
+    return AdminDigitalHumanChatResponse(**result)
 
 
 @router.post(
