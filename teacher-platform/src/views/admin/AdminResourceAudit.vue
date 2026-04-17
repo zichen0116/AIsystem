@@ -263,8 +263,8 @@ function buildRowFromAudit(item, idx) {
   const uploaderName = uploaderNames[idx % uploaderNames.length]
   const uploaderDept = uploaderDepts[(idx + 3) % uploaderDepts.length]
 
-  const base = new Date('2023-11-01T00:00:00Z').getTime()
-  const dayOffset = idx % 26
+  const base = new Date('2026-04-01T00:00:00Z').getTime()
+  const dayOffset = idx % 10
   const hour = (idx * 7) % 24
   const min = (idx * 13) % 60
   const submitTs = base + dayOffset * 86400000 + hour * 3600000 + min * 60000

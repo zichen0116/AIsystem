@@ -1,17 +1,39 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../../stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
 
-const profileForm = ref({
-  name: '管理员',
-  email: 'admin@school.edu.cn',
-  phone: '138-0000-1234',
-  title: '系统管理员'
-})
+/** 与后端 /auth/me 的 User 对齐：手机号即登录账号 */
+function profileFromUser(u) {
+  if (!u) {
+    return {
+      name: '管理员',
+      email: '',
+      phone: '',
+      title: '系统管理员',
+    }
+  }
+  const name = (u.full_name && String(u.full_name).trim()) || '管理员'
+  return {
+    name,
+    email: (u.email && String(u.email).trim()) || '',
+    phone: (u.phone && String(u.phone).trim()) || '',
+    title: '系统管理员',
+  }
+}
+
+const profileForm = ref(profileFromUser(null))
+
+watch(
+  () => userStore.userInfo,
+  (u) => {
+    profileForm.value = profileFromUser(u)
+  },
+  { immediate: true, deep: true }
+)
 
 const editOpen = ref(false)
 const securityOpen = ref(false)
@@ -25,7 +47,11 @@ const pwdForm = ref({
 const avatarLetter = computed(() => profileForm.value.name.slice(0, 1).toUpperCase())
 
 function openEdit() {
-  editDraft.value = { ...profileForm.value }
+  const u = userStore.userInfo
+  editDraft.value = {
+    ...profileForm.value,
+    phone: u?.phone != null && String(u.phone).trim() !== '' ? String(u.phone).trim() : profileForm.value.phone,
+  }
   editOpen.value = true
 }
 
@@ -225,7 +251,13 @@ async function handleLogout() {
           </label>
           <label class="field">
             <span>手机号</span>
-            <input v-model="editDraft.phone" type="text" />
+            <input
+              v-model="editDraft.phone"
+              type="text"
+              readonly
+              class="input-readonly"
+              title="与登录账号一致，如需更换请在账号安全中走手机号变更流程"
+            />
           </label>
           <label class="field">
             <span>职务</span>
@@ -618,6 +650,12 @@ async function handleLogout() {
   border-radius: 10px;
   padding: 9px 10px;
   font-size: 14px;
+}
+
+.field input.input-readonly {
+  background: #f8fafc;
+  color: #475569;
+  cursor: default;
 }
 
 .modal-footer {
