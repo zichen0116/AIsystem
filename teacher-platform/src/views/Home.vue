@@ -1,22 +1,75 @@
 <script setup>
-import { computed, inject } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
-import LottiePlayer from '../components/LottiePlayer.vue'
 
 const openLoginModal = inject('openLoginModal', null)
 const router = useRouter()
 const userStore = useUserStore()
 
+const heroScrollProgress = ref(0)
+const heroReady = ref(false)
+
+const badges = ['MULTIMODAL AI', 'RAG ENGINE']
+
+const visionPills = ['意图理解', '多模态融合', '全息生成']
+
+const features = [
+  {
+    titleEn: 'RAG KNOWLEDGE BASE',
+    titleCn: '领域知识增强',
+    desc: '基于本地专业知识库的大模型检索增强，确保生成内容具备专业性与准确性。',
+  },
+  {
+    titleEn: 'MULTIMODAL INTERACTION',
+    titleCn: '多模态意图解析',
+    desc: '支持文本、语音和多种文档输入，通过多轮对话理解教学目标。',
+  },
+  {
+    titleEn: 'GENERATIVE ENGINE',
+    titleCn: '课件教案全息生成',
+    desc: '一键生成 PPT、教案与互动创意，服务完整备课流程。',
+  },
+  {
+    titleEn: 'ITERATIVE LOOP',
+    titleCn: '闭环反馈优化',
+    desc: '通过预览与对话式修改形成生成、反馈、再生成的闭环。',
+  },
+]
+
 const userInitial = computed(() => {
   const raw = userStore.userInfo?.name || userStore.userInfo?.phone || ''
-  const s = String(raw).trim()
-  if (!s) return '用'
-  const ch = s[0]
-  return /[a-zA-Z]/.test(ch) ? ch.toUpperCase() : ch
+  const text = String(raw).trim()
+  if (!text) return '我'
+  return /[a-zA-Z]/.test(text[0]) ? text[0].toUpperCase() : text[0]
 })
 
-/** 未登录先去登录页并带回跳；已登录进教师端对应页 */
+const curtainStyles = computed(() => {
+  const progress = heroScrollProgress.value
+  const heroOpacity = Math.min(1, Math.max(0, (progress - 0.08) / 0.42))
+  const heroTranslate = 50 - progress * 50
+  const heroScale = 0.9 + progress * 0.1
+
+  return {
+    left: {
+      transform: `translateX(${(-100 * progress).toFixed(2)}%) scaleX(${(1 - progress * 0.5).toFixed(3)}) skewX(${(3 - progress * 15).toFixed(2)}deg)`,
+    },
+    right: {
+      transform: `translateX(${(100 * progress).toFixed(2)}%) scaleX(${(1 - progress * 0.5).toFixed(3)}) skewX(${(-3 + progress * 15).toFixed(2)}deg)`,
+    },
+    hero: {
+      opacity: `${heroOpacity}`,
+      transform: `translateY(${heroTranslate.toFixed(2)}px) scale(${heroScale.toFixed(3)})`,
+    },
+  }
+})
+
+function syncScrollProgress() {
+  const maxScroll = Math.max(window.innerHeight * 1.8, 1)
+  heroScrollProgress.value = Math.min(1, Math.max(0, window.scrollY / maxScroll))
+  heroReady.value = true
+}
+
 function goTeacherPath(path) {
   if (userStore.isLoggedIn) {
     router.push(path)
@@ -34,6 +87,7 @@ function handleAvatarClick() {
     openLoginModal?.()
     return
   }
+
   if (userStore.userInfo?.is_admin) {
     router.push('/admin/profile')
   } else {
@@ -41,547 +95,615 @@ function handleAvatarClick() {
   }
 }
 
-const featureCards = [
-  {
-    id: 'lesson-prep',
-    path: '/lesson-prep',
-    icon: '✏️',
-    title: '智能备课',
-    desc: '借助AI辅助设计完整教案。根据您的教学目标，秒级生成测验、摘要和活动创意。',
-    color: 'blue',
-    link: '了解更多 →'
-  },
-  {
-    id: 'courseware',
-    path: '/courseware',
-    icon: '📁',
-    title: '课件管理',
-    desc: '在结构化资源库中管理所有教学材料。支持拖拽上传、版本控制，一键分享给学生或同事。',
-    color: 'orange',
-    link: '了解更多 →'
-  },
-  {
-    id: 'knowledge-base',
-    path: '/knowledge-base',
-    icon: '📚',
-    title: '知识库',
-    desc: '访问海量学术资源、标准化题库和互动教材。用经过验证的教育内容丰富您的课堂。',
-    color: 'purple',
-    link: '了解更多 →'
-  }
-]
+onMounted(() => {
+  syncScrollProgress()
+  window.addEventListener('scroll', syncScrollProgress, { passive: true })
+  window.addEventListener('resize', syncScrollProgress)
+})
 
-const stats = [
-  { value: '40%', title: '备课提速', desc: '使用智能模板和AI助手，减少人工文档整理时间。' },
-  { value: '10k+', title: '资源库', desc: '集成经过验证的学术数据库和教学材料。' },
-  { value: '98%', title: '教师满意度', desc: '由教育者打造，为教育者服务。在易用性和可靠性方面评分最高。' }
-]
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', syncScrollProgress)
+  window.removeEventListener('resize', syncScrollProgress)
+})
 </script>
 
 <template>
   <div class="home-page">
     <header class="landing-topbar">
-      <div class="logo-wrap">
-        <span class="logo-icon">📖</span>
-        <h1 class="logo">EduPrep</h1>
+      <div class="brand-lockup">
+        <img
+          data-test="brand-logo"
+          class="brand-logo"
+          src="/logo-character.svg"
+          alt="智课坊 | EDU Prep"
+        />
       </div>
+
       <button
         v-if="!userStore.isLoggedIn"
-        class="login-btn"
+        data-test="home-login"
+        class="topbar-action login-btn"
         type="button"
         @click="openLoginModal?.()"
       >
-        <span class="login-btn-text">登录</span>
+        登录
       </button>
+
       <button
         v-else
+        class="topbar-action user-avatar-btn"
         type="button"
-        class="user-avatar-btn"
-        :title="(userStore.userInfo?.name || userStore.userInfo?.phone || '个人中心') + ' — 点击进入'"
         @click="handleAvatarClick"
       >
-        <span class="avatar-initial">{{ userInitial }}</span>
+        {{ userInitial }}
       </button>
     </header>
 
-    <main class="content-area">
-      <div class="home-content">
-        <section class="hero-section">
-          <div class="hero-left">
-            <h2 class="hero-title">
-              <span class="line1">提升备课效率，</span>
-              <span class="line2">实现智能备课</span>
-            </h2>
-            <p class="hero-desc">
-              专为现代教师打造的一站式平台。
-              创建精彩内容、管理课程体系，借助AI取回您最宝贵的时间资源。
+    <main class="page-main">
+      <section
+        data-test="curtain-hero"
+        class="curtain-hero"
+        :data-scroll-ready="heroReady ? 'true' : 'false'"
+      >
+        <div class="hero-grid"></div>
+        <div class="hero-orb"></div>
+
+        <div class="hero-sticky">
+          <div class="hero-content" :style="curtainStyles.hero">
+            <div class="hero-badges">
+              <span v-for="badge in badges" :key="badge" class="hero-badge">{{ badge }}</span>
+            </div>
+
+            <h1 class="hero-title">
+              <span class="hero-title-top">智课坊</span>
+              <span class="gradient-text">EDU Prep</span>
+            </h1>
+
+            <p class="hero-tagline">
+              重塑教育边界，智启未来课堂
+              <span class="hero-tagline-en">The Next Generation Teaching Agent Paradigm</span>
             </p>
-            <div class="hero-btns">
-              <button class="hero-btn-primary" type="button" @click="goLessonPrep">
-                <span class="hero-btn-text">立即备课</span>
-              </button>
-            </div>
-            <div class="hero-tags">
-              <span class="tag"><span class="tag-check">✓</span>高效</span>
-              <span class="tag"><span class="tag-check">✓</span>AI驱动</span>
-              <span class="tag"><span class="tag-check">✓</span>知识管理</span>
-            </div>
-          </div>
-          <div class="hero-right">
-            <div class="hero-visual">
-              <LottiePlayer src="/isometric-animation.json" />
-            </div>
-          </div>
-        </section>
 
-        <section class="features-section">
-          <h3 class="section-title">核心功能</h3>
-          <p class="section-subtitle">全方位满足您的所有备课需求</p>
-          <div class="feature-cards">
-            <div
-              v-for="card in featureCards"
-              :key="card.id"
-              class="feature-card"
-              role="link"
-              tabindex="0"
-              @click="goTeacherPath(card.path)"
-              @keydown.enter.prevent="goTeacherPath(card.path)"
+            <button
+              data-test="hero-cta"
+              class="hero-cta"
+              type="button"
+              @click="goLessonPrep"
             >
-              <div class="card-icon" :class="card.color">{{ card.icon }}</div>
-              <h4 class="card-title">{{ card.title }}</h4>
-              <p class="card-desc">{{ card.desc }}</p>
-              <span class="card-link" :class="card.color">{{ card.link }}</span>
-            </div>
+              开启智能备课
+            </button>
           </div>
-        </section>
 
-        <section class="stats-section">
-          <div v-for="(stat, i) in stats" :key="i" class="stat-item">
-            <span class="stat-value">{{ stat.value }}</span>
-            <h4 class="stat-title">{{ stat.title }}</h4>
-            <p class="stat-desc">{{ stat.desc }}</p>
+          <div class="curtain curtain-left" :style="curtainStyles.left"></div>
+          <div class="curtain curtain-right" :style="curtainStyles.right"></div>
+        </div>
+      </section>
+
+      <section class="vision-section">
+        <div class="vision-copy">
+          <p class="section-kicker">Paradigm Shift</p>
+          <h2 class="section-title">
+            从割裂的工具
+            <br />
+            <span>到统一的智能体</span>
+          </h2>
+          <p class="section-body">
+            传统备课往往在多个工具之间切换。EDU Prep 通过多模态理解、知识增强与生成闭环，
+            让教师回到真正重要的教学设计。
+          </p>
+
+          <div class="vision-pills">
+            <span v-for="pill in visionPills" :key="pill" class="vision-pill">{{ pill }}</span>
           </div>
-        </section>
-      </div>
+        </div>
+
+        <div class="vision-visual">
+          <div class="vision-visual-shell">
+            <img
+              data-test="vision-image"
+              src="/home-preview.png"
+              alt="EDU Prep dashboard preview"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section class="features-section">
+        <p class="section-kicker center">Core Capabilities</p>
+        <h2 class="section-title centered">核心能力矩阵</h2>
+        <p class="section-intro">
+          构建以教师思路为驱动的共创系统，突破传统工具的单向指令限制。
+        </p>
+
+        <div class="feature-grid">
+          <article v-for="feature in features" :key="feature.titleEn" class="feature-card">
+            <div class="feature-icon"></div>
+            <p class="feature-en">{{ feature.titleEn }}</p>
+            <h3 class="feature-title">{{ feature.titleCn }}</h3>
+            <p class="feature-desc">{{ feature.desc }}</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="closing-section">
+        <span class="closing-kicker">Closing Manifesto</span>
+        <h2 class="closing-title">
+          把时间还给教学设计，
+          <br />
+          把创造力留给教师。
+        </h2>
+        <p class="closing-subtitle">Crafted for the future of lesson preparation.</p>
+      </section>
     </main>
+
+    <footer class="page-footer">
+      <div class="footer-brand">
+        <img
+          class="footer-logo"
+          src="/logo-character.svg"
+          alt="鏅鸿鍧?| EDU Prep"
+        />
+      </div>
+      <div class="footer-meta">
+        <span>Creators: LZC, ZZT, MCM, YCX</span>
+        <span>&copy; 2026 EDU Prep. All rights reserved.</span>
+      </div>
+    </footer>
   </div>
 </template>
 
 <style scoped>
 .home-page {
   min-height: 100vh;
-  background: linear-gradient(to bottom, #fff 0%, #eff6ff 40%, #dbeafe 100%);
-  display: flex;
-  flex-direction: column;
+  color: #f8fafc;
+  background:
+    radial-gradient(circle at top, rgba(0, 240, 255, 0.12), transparent 28%),
+    linear-gradient(180deg, #050505 0%, #030712 100%);
 }
 
 .landing-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 48px;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
+  padding: 18px 32px;
+  backdrop-filter: blur(18px);
+  background: rgba(5, 5, 5, 0.72);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.logo-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.logo-icon {
-  font-size: 1.5rem;
-}
-
-.logo {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.login-btn {
-  position: relative;
+.brand-lockup {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 8px 22px;
-  border-radius: 999px;
-  border: 1px solid rgba(37, 99, 235, 0.15);
-  background: radial-gradient(circle at 0 0, rgba(191, 219, 254, 0.8), transparent 55%),
-    linear-gradient(135deg, #2563eb, #3b82f6);
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
+  gap: 12px;
+}
+
+.brand-logo {
+  display: block;
+  height: 64px;
+  width: auto;
+}
+
+.footer-logo {
+  display: block;
+  height: 52px;
+  width: auto;
+}
+
+.topbar-action {
+  border: none;
   cursor: pointer;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.35);
-  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
-.login-btn:hover {
+.login-btn,
+.hero-cta {
+  padding: 0.9rem 1.5rem;
+  border-radius: 999px;
+  color: #050505;
+  background: #00f0ff;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  box-shadow: 0 14px 40px rgba(0, 240, 255, 0.28);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.login-btn:hover,
+.hero-cta:hover,
+.user-avatar-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 12px 26px rgba(37, 99, 235, 0.4);
-  border-color: rgba(37, 99, 235, 0.35);
-}
-
-.login-btn:active {
-  transform: translateY(0);
-  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.32);
-}
-
-.login-btn-text {
-  position: relative;
-  z-index: 1;
-  letter-spacing: 0.02em;
+  box-shadow: 0 18px 46px rgba(0, 240, 255, 0.2);
 }
 
 .user-avatar-btn {
-  width: 42px;
-  height: 42px;
-  padding: 0;
-  border: 2px solid rgba(37, 99, 235, 0.22);
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
-  background: linear-gradient(145deg, #2563eb, #3b82f6);
-  color: #fff;
-  font-size: 16px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
+  color: #f8fafc;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(12px);
+  font-weight: 700;
+}
+
+.page-main {
+  overflow: clip;
+}
+
+.curtain-hero {
+  position: relative;
+  height: 360vh;
+}
+
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.hero-orb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 440px;
+  height: 440px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 240, 255, 0.12);
+  filter: blur(72px);
+}
+
+.hero-sticky {
+  position: sticky;
+  top: 0;
+  min-height: 100vh;
+  overflow: hidden;
+  display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.32);
 }
 
-.user-avatar-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.38);
-  border-color: rgba(37, 99, 235, 0.4);
+.hero-content {
+  position: relative;
+  z-index: 2;
+  width: min(980px, calc(100vw - 48px));
+  padding: 0 20px;
+  text-align: center;
+  will-change: transform, opacity;
 }
 
-.user-avatar-btn:active {
-  transform: translateY(0);
-}
-
-.avatar-initial {
-  line-height: 1;
-  user-select: none;
-}
-
-.content-area {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
-}
-
-.home-content {
-  min-height: 100%;
-}
-
-/* Hero */
-.hero-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 45px 4vw 41px;
-  max-width: 1200px;
-  margin: 0 auto;
-  gap: 48px;
+.hero-badges {
+  display: inline-flex;
   flex-wrap: wrap;
-}
-
-.hero-left {
-  flex: 1;
-  min-width: 260px;
-  max-width: 560px;
-}
-
-.hero-title {
-  font-size: 3.9rem;
-  font-weight: 800;
-  color: #1e293b;
-  line-height: 1.4;
-  margin-bottom: 16px;
-}
-
-.hero-title .line1 {
-  display: block;
-}
-
-.hero-title .line2 {
-  display: block;
-  color: #2563eb;
-}
-
-.hero-desc {
-  font-size: 1.28rem;
-  color: #64748b;
-  line-height: 1.6;
-  margin-bottom: 20px;
-}
-
-.hero-btns {
-  display: flex;
-  gap: 16px;
+  justify-content: center;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
-.hero-btn-primary {
+.hero-badge,
+.section-kicker,
+.closing-kicker {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 30px;
-  font-weight: 600;
-  font-size: 1.15rem;
-  color: #2563eb;
-  background: #fff;
-  border: 1px solid #93c5fd;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, transform 0.2s;
-}
-
-.hero-btn-primary:hover {
-  background: #eff6ff;
-  border-color: #60a5fa;
-  transform: translateY(-1px);
-}
-
-.hero-btn-primary:active {
-  transform: translateY(0);
-}
-
-.hero-btn-text {
-  color: #2563eb;
-}
-
-.btn-outline {
-  padding: 12px 24px;
-  background: #fff;
-  color: #6b7280;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  font-size: 15px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-outline:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
-}
-
-.hero-tags {
-  display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-}
-
-.tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 1.08rem;
-  color: #374151;
-}
-
-.tag-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background:rgb(80, 216, 130);
-  color: #fff;
-  font-size: 0.75rem;
+  padding: 0.48rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.72rem;
   font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
-.hero-right {
-  flex-shrink: 0;
+.hero-title {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 20px;
+  font-size: clamp(3.8rem, 10vw, 7.5rem);
+  line-height: 0.9;
+  font-weight: 900;
+  letter-spacing: -0.06em;
 }
 
-.hero-visual {
+.hero-title-top {
+  color: #f8fafc;
+}
+
+.gradient-text {
+  background: linear-gradient(180deg, #ffffff 0%, #71717a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-tagline {
+  max-width: 760px;
+  margin: 0 auto 32px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: clamp(1.05rem, 2vw, 1.45rem);
+  line-height: 1.7;
+}
+
+.hero-tagline-en {
+  display: block;
+  margin-top: 14px;
+  color: rgba(255, 255, 255, 0.44);
+  font-size: 0.8rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.curtain {
+  position: absolute;
+  top: -10%;
+  width: 60%;
+  height: 120%;
+  transform-origin: top;
+  background: repeating-linear-gradient(90deg, #020202 0, #151515 40px, #050505 80px);
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.9);
+  will-change: transform;
+}
+
+.curtain::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.1;
+  background: linear-gradient(rgba(255, 255, 255, 0.2) 1px, transparent 1px);
+  background-size: 100% 4px;
+}
+
+.curtain-left {
+  left: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.curtain-right {
+  right: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.vision-section,
+.features-section,
+.closing-section {
   position: relative;
-  width: min(480px, 42vw);
-  aspect-ratio: 1 / 1;
+  z-index: 1;
+  width: min(1200px, calc(100vw - 48px));
+  margin: 0 auto;
 }
 
-/* Features */
-.features-section {
-  padding: 32px 48px 40px;
-  background:rgb(250, 252, 255);
+.vision-section {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  gap: 48px;
+  padding: 120px 0 96px;
+  align-items: center;
+}
+
+.section-kicker {
+  margin-bottom: 20px;
 }
 
 .section-title {
-  font-size: 1.75rem;
-  font-weight: 700;
-  color: #1e293b;
-  text-align: center;
-  margin-bottom: 8px;
+  margin: 0 0 18px;
+  font-size: clamp(2.4rem, 4vw, 3.7rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
 }
 
-.section-subtitle {
-  font-size: 1rem;
-  color: #64748b;
-  text-align: center;
-  margin-bottom: 28px;
+.section-title span {
+  color: rgba(255, 255, 255, 0.48);
 }
 
-.feature-cards {
+.section-body,
+.section-intro,
+.feature-desc,
+.closing-subtitle,
+.footer-meta {
+  color: rgba(255, 255, 255, 0.62);
+  line-height: 1.75;
+}
+
+.vision-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 28px;
+}
+
+.vision-pill {
+  padding: 0.8rem 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.vision-visual-shell {
+  position: relative;
+  padding: 22px;
+  border-radius: 28px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
+}
+
+.vision-visual-shell::before {
+  content: '';
+  position: absolute;
+  inset: -18px;
+  border-radius: 36px;
+  background: radial-gradient(circle at top right, rgba(0, 240, 255, 0.12), transparent 58%);
+  z-index: -1;
+}
+
+.vision-visual img {
+  display: block;
+  width: 100%;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.features-section {
+  padding: 24px 0 120px;
+}
+
+.center,
+.centered,
+.section-intro,
+.closing-section {
+  text-align: center;
+}
+
+.section-intro {
+  max-width: 720px;
+  margin: 0 auto 36px;
+}
+
+.feature-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
-  max-width: 1100px;
-  margin: 0 auto;
 }
 
 .feature-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 28px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  cursor: pointer;
-  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+  padding: 32px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
 }
 
-.feature-card:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  transform: translateY(-2px);
+.feature-card::after {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -60px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 240, 255, 0.16), transparent 70%);
 }
 
-.card-icon {
-  width: 48px;
-  height: 48px;
+.feature-icon {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 22px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.9), rgba(255, 255, 255, 0.3));
+  box-shadow: 0 12px 28px rgba(0, 240, 255, 0.18);
+}
+
+.feature-en {
+  margin: 0 0 10px;
+  color: #00f0ff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.feature-title {
+  margin: 0 0 12px;
+  font-size: 1.5rem;
+}
+
+.closing-section {
+  padding: 24px 0 140px;
+}
+
+.closing-title {
+  margin: 24px 0 18px;
+  font-size: clamp(2.3rem, 4.5vw, 4.6rem);
+  line-height: 1.18;
+  letter-spacing: -0.04em;
+}
+
+.page-footer {
+  width: min(1200px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 28px 0 42px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.footer-brand,
+.footer-meta {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 1.5rem;
-  border-radius: 10px;
-  margin-bottom: 16px;
+  gap: 14px;
 }
 
-.card-icon.blue {
-  background: #dbeafe;
-  color: #2563eb;
+.footer-meta {
+  gap: 22px;
+  font-size: 0.88rem;
 }
 
-.card-icon.orange {
-  background: #ffedd5;
-  color: #ea580c;
-}
+@media (max-width: 960px) {
+  .vision-section {
+    grid-template-columns: 1fr;
+  }
 
-.card-icon.purple {
-  background: #ede9fe;
-  color: #7c3aed;
-}
-
-.card-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #1e293b;
-  margin-bottom: 12px;
-}
-
-.card-desc {
-  font-size: 0.9rem;
-  color: #64748b;
-  line-height: 1.5;
-  margin-bottom: 16px;
-}
-
-.card-link {
-  font-size: 0.9rem;
-  font-weight: 500;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.card-link.blue {
-  color: #2563eb;
-}
-
-.card-link.orange {
-  color: #ea580c;
-}
-
-.card-link.purple {
-  color: #7c3aed;
-}
-
-.card-link:hover {
-  text-decoration: underline;
-}
-
-/* Stats */
-.stats-section {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 38px;
-  padding: 38px 48px 50px;
-  max-width: 1000px;
-  margin: 0 auto;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-value {
-  display: block;
-  font-size: 2.5rem;
-  font-weight: 700;
-  color: #2563eb;
-  margin-bottom: 8px;
-}
-
-.stat-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #1e293b;
-  margin-bottom: 8px;
-}
-
-.stat-desc {
-  font-size: 0.9rem;
-  color: #64748b;
-  line-height: 1.5;
+  .feature-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 900px) {
-  .hero-section {
-    flex-direction: column;
-    text-align: center;
-    padding: 40px 20px 32px;
+  .landing-topbar {
+    padding: 16px 18px;
   }
 
-  .hero-left {
-    max-width: 640px;
+  .brand-logo {
+    height: 52px;
   }
 
-  .hero-btns {
-    justify-content: center;
+  .footer-logo {
+    height: 42px;
   }
 
-  .hero-tags {
-    justify-content: center;
+  .page-footer {
+    align-items: center;
   }
 
-  .hero-visual {
-    width: min(380px, 80vw);
+  .curtain-hero {
     height: auto;
+    min-height: 100vh;
   }
 
-  .feature-cards {
-    grid-template-columns: 1fr;
+  .hero-sticky {
+    position: relative;
+    min-height: 100vh;
+    padding: 120px 0 84px;
   }
 
-  .stats-section {
-    grid-template-columns: 1fr;
+  .curtain {
+    opacity: 0.18;
+    width: 72%;
+  }
+
+  .vision-section,
+  .features-section,
+  .closing-section,
+  .page-footer {
+    width: min(100vw - 32px, 1200px);
+  }
+
+  .page-footer,
+  .footer-meta {
+    flex-direction: column;
   }
 }
 </style>
