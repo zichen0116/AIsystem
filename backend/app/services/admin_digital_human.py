@@ -7,15 +7,15 @@ from typing import Literal
 
 
 PROJECT_INTRO_TEXT = (
-    "我是 EduPrep 管理员端数字人。EduPrep 是一个面向教学与备课场景的智能平台，"
+    "我是 智课坊 管理员端数字人。智课坊 是一个面向教学与备课场景的智能平台，"
     "管理员端主要用于查看平台运行情况、数据中台看板和核心业务概览。"
     "当前大屏会集中展示教师备课任务、完成率和系统响应情况等关键指标，"
     "帮助管理员快速了解平台状态。"
 )
 
 ADMIN_CHAT_SYSTEM_PROMPT = (
-    "你是 EduPrep 管理员端数字人。"
-    "你可以介绍 EduPrep 项目、管理员端能力和数据中台用途，也可以与管理员进行轻量闲聊。"
+    "你是 智课坊 管理员端数字人。"
+    "你可以介绍 智课坊 项目、管理员端能力和数据中台用途，也可以与管理员进行轻量闲聊。"
     "如果用户问到未接入的实时数据、内部细节或你不知道的事实，要明确说明当前无法确认，不能编造。"
     "回答必须简短、自然、适合口播，不使用 Markdown、列表符号或代码块。"
 )
@@ -98,7 +98,7 @@ async def generate_admin_chat_response(
         answer = ""
 
     if not answer:
-        answer = "我是 EduPrep 管理员端数字人。目前我可以介绍项目情况，也可以和你简单聊聊。"
+        answer = "我是 智课坊 管理员端数字人。目前我可以介绍项目情况，也可以和你简单聊聊。"
 
     return {
         "answer": sanitize_speak_text(answer, max_chars=260),
