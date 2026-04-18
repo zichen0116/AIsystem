@@ -113,12 +113,17 @@ function handleClickOutside(event) {
 // Examples removed per user request
 
 const modeDescriptions = {
-  dialog: '输入你的想法，AI 将为你生成完整的 PPT',
+  dialog: '输入想法，智课坊为您生成完整PPT',
   file: '上传或粘贴文档内容，AI 自动解析并生成教学演示文稿',
   renovation: '上传 PDF 或 PPTX，AI 会解析并输出翻新版本 PPT'
 }
 
-const modeDescription = computed(() => modeDescriptions[creationType.value])
+const modeDescription = computed(() => {
+  if (creationType.value === 'file') {
+    return '上传或粘贴文档、视频内容，AI 自动解析并生成教学演示文稿'
+  }
+  return modeDescriptions[creationType.value]
+})
 const selectedLibraries = computed(() => {
   const all = [...personalLibs.value, ...systemLibs.value]
   return all.filter(item => selectedLibIds.value.includes(item.id))
@@ -387,11 +392,17 @@ function goToHistory() {
 // ============ 文件生成/翻新 文件上传 ============
 
 const fileAcceptMap = {
-  file: '.pdf,.doc,.docx',
+  file: '.pdf,.doc,.docx,.mp4,.mov,.avi,.mkv,.flv',
   renovation: '.pdf,.ppt,.pptx'
 }
 
 const fileAccept = computed(() => fileAcceptMap[creationType.value] || '')
+const fileUploadHint = computed(() => {
+  if (creationType.value === 'file') {
+    return '支持 PDF、DOC、DOCX、MP4、MOV、AVI、MKV、FLV；未配置多模态/ASR 时，视频可能仅提取关键帧与基础内容'
+  }
+  return '支持 PDF、PPT、PPTX 格式'
+})
 
 function handleFileUpload(event) {
   const file = event.target.files?.[0]
@@ -622,8 +633,16 @@ async function handleNext() {
     </button>
     <div class="shell">
       <section class="hero">
-        <h1>智能 PPT 生成</h1>
-        <p>从灵感到成稿，一次输入就能完成教学演示设计</p>
+        <h1
+          data-test="ppt-home-hero-title"
+          class="hero-title-editorial"
+        >
+          让每一页，都更像作品
+        </h1>
+        <p data-test="ppt-home-hero-subtitle" class="hero-subtitle-editorial">
+          <span class="hero-subtitle-line">从教学主题到完整演示，</span>
+          <span class="hero-subtitle-line">智课坊助力完成构思、结构与表达</span>
+        </p>
       </section>
 
       <section class="workspace">
@@ -675,7 +694,7 @@ async function handleNext() {
               </label>
             </p>
             <p class="upload-hint">
-              {{ creationType === 'file' ? '支持 PDF、DOC、DOCX 格式' : '支持 PDF、PPT、PPTX 格式' }}
+              {{ fileUploadHint }}
             </p>
           </template>
         </div>
@@ -1144,29 +1163,93 @@ async function handleNext() {
 
 .hero {
   text-align: center;
-  padding: 56px 0 40px;
+  padding: 68px 0 44px;
   animation: rise 0.55s ease;
+  position: relative;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  width: min(120px, 22vw);
+  height: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, rgba(130, 145, 168, 0) 0%, rgba(130, 145, 168, 0.7) 50%, rgba(130, 145, 168, 0) 100%);
 }
 
 .hero h1 {
-  margin-top: 0;
-  font-size: clamp(2.2rem, 5.5vw, 3.6rem);
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-  color: #0F172A;
-  font-weight: 800;
-  background: linear-gradient(135deg, #0F172A 0%, #1E40AF 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  margin: 0;
+  font-size: clamp(2.5rem, 6vw, 4.75rem);
+  line-height: 1.02;
+  letter-spacing: -0.052em;
+  color: #162033;
+  font-weight: 600;
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+  text-wrap: balance;
+}
+
+.hero-title-editorial {
+  display: inline-block;
+  position: relative;
+  padding: 0 0.08em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+
+.hero-title-editorial::after {
+  content: '';
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: -0.16em;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(104, 117, 139, 0) 0%, rgba(104, 117, 139, 0.5) 50%, rgba(104, 117, 139, 0) 100%);
 }
 
 .hero p {
-  margin-top: 16px;
-  font-size: clamp(1rem, 2vw, 1.2rem);
-  color: #64748B;
+  margin: 22px auto 0;
+  max-width: 720px;
+  font-size: clamp(0.98rem, 1.65vw, 1.14rem);
+  color: #6D778A;
   font-weight: 400;
-  line-height: 1.6;
+  line-height: 1.82;
+  letter-spacing: 0.045em;
+  font-family: "Avenir Next", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  text-wrap: balance;
+}
+
+.hero-subtitle-editorial {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 20px;
+  width: fit-content;
+  max-width: none;
+  white-space: normal;
+  text-align: center;
+}
+
+.hero-subtitle-editorial::before,
+.hero-subtitle-editorial::after {
+  content: '';
+  width: clamp(36px, 5vw, 58px);
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(120, 132, 152, 0) 0%, rgba(120, 132, 152, 0.42) 100%);
+}
+
+.hero-subtitle-editorial::after {
+  background: linear-gradient(90deg, rgba(120, 132, 152, 0.42) 0%, rgba(120, 132, 152, 0) 100%);
+}
+
+.hero-subtitle-line {
+  display: block;
+  white-space: nowrap;
 }
 
 .workspace {
@@ -1220,6 +1303,7 @@ async function handleNext() {
   font-size: 14px;
   margin-bottom: 20px;
   font-weight: 400;
+  text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
@@ -2562,7 +2646,44 @@ async function handleNext() {
   }
 
   .hero {
-    padding: 32px 0 22px;
+    padding: 42px 0 26px;
+  }
+
+  .hero::before {
+    top: 18px;
+    width: min(88px, 28vw);
+  }
+
+  .hero h1 {
+    font-size: clamp(2.1rem, 11vw, 3rem);
+    line-height: 1.08;
+  }
+
+  .hero-title-editorial {
+    white-space: normal;
+  }
+
+  .hero p {
+    max-width: 100%;
+    margin-top: 16px;
+    font-size: 1rem;
+    line-height: 1.76;
+  }
+
+  .hero-subtitle-editorial {
+    display: block;
+    padding: 0;
+    width: auto;
+    white-space: normal;
+  }
+
+  .hero-subtitle-editorial::before,
+  .hero-subtitle-editorial::after {
+    display: none;
+  }
+
+  .hero-subtitle-line {
+    white-space: normal;
   }
 
   .mode-tabs {

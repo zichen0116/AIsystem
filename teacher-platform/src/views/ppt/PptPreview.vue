@@ -10,6 +10,7 @@ import {
   regeneratePageRenovation, updateProjectSettings
 } from '@/api/ppt'
 import { authFetch } from '@/api/http'
+import { downloadBlobAsFile, downloadUrlAsFile } from '@/api/download'
 
 const pptStore = usePptStore()
 
@@ -481,18 +482,20 @@ async function handleRefreshPreview() {
 
 async function openProjectSettingsModal() {
   if (!pptStore.projectId) return
+
   const currentAspectRatio = pptStore.projectSettings?.aspect_ratio || '16:9'
   const input = window.prompt(
-    '设置图片比例（可选：16:9、4:3、1:1、9:16、3:4）',
+    '设置页面比例（16:9 / 4:3 / 1:1 / 9:16 / 3:4）',
     currentAspectRatio
   )
-  if (!input) return
+  if (input === null) return
   const value = input.trim()
   const allowed = ['16:9', '4:3', '1:1', '9:16', '3:4']
   if (!allowed.includes(value)) {
-    alert('比例无效，请输入 16:9、4:3、1:1、9:16 或 3:4')
+    alert('页面比例无效，请输入 16:9、4:3、1:1、9:16 或 3:4')
     return
   }
+
   try {
     await updateProjectSettings(pptStore.projectId, { aspect_ratio: value })
     pptStore.projectSettings = { ...pptStore.projectSettings, aspect_ratio: value }
@@ -562,6 +565,9 @@ function _pollEditableExport() {
         if (editableExportUrl.value) {
           await _downloadExportResult(task.result, pptStore.projectData?.title || 'presentation', 'pptx')
         }
+        if (task.result?.warning) {
+          alert(task.result.warning)
+        }
       } else if (task.status === 'FAILED') {
         clearInterval(editableExportPollTimer)
         editableExportStatus.value = 'error'
@@ -617,6 +623,7 @@ function _pollImagesExport() {
 async function _downloadExportResult(result, basename, ext) {
   const url = result?.url
   if (!url) return
+  const downloadName = `${basename}.${ext}`
   if (result?.is_local) {
     // OSS 不可达，文件在本地：通过带鉴权的接口下载
     const filename = url.replace(/\\/g, '/').split('/').pop()
@@ -624,16 +631,16 @@ async function _downloadExportResult(result, basename, ext) {
       const res = await authFetch(`/api/v1/ppt/exports/local/${encodeURIComponent(filename)}`)
       if (!res.ok) { alert('本地文件下载失败，OSS 服务不可用'); return }
       const blob = await res.blob()
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `${basename}.${ext}`
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000)
+      downloadBlobAsFile(blob, downloadName)
     } catch (e) {
       alert('下载失败：' + e.message)
     }
   } else {
-    window.open(url, '_blank')
+    try {
+      await downloadUrlAsFile(url, downloadName)
+    } catch (e) {
+      alert('下载失败：' + e.message)
+    }
   }
 }
 
@@ -1013,7 +1020,7 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
             </svg>
-            {{ isMultiSelectMode && selectedPageIds.size > 0 ? `生成选中页面 (${selectedPageIds.size})` : `批量生成图片 (${pages.length})` }}
+            {{ isMultiSelectMode && selectedPageIds.size > 0 ? `生成选中页面 (${selectedPageIds.size})` : `批量生成 (${pages.length})` }}
           </button>
         </div>
 
@@ -1196,7 +1203,7 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
                   </div>
                 </div>
                 <div v-else class="slide-placeholder">
-                  <div class="placeholder-icon">🍌</div>
+                  <img class="placeholder-logo" src="/logo-character.svg" alt="" />
                   <p class="placeholder-text">尚未生成图片</p>
                   <button
                     class="generate-page-btn"
@@ -2040,8 +2047,11 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
   gap: 12px;
 }
 
-.placeholder-icon {
-  font-size: 64px;
+.placeholder-logo {
+  width: 112px;
+  height: 48px;
+  object-fit: contain;
+  display: block;
 }
 
 .placeholder-text {

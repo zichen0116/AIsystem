@@ -3,7 +3,6 @@
 视频提出来的音频进行语音识别转文字
 使用 OpenAI 兼容接口调用
 """
-import os
 import json
 import logging
 import uuid
@@ -11,6 +10,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 
 import httpx
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +29,16 @@ class QwenASRService:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        settings = get_settings()
+        self.api_key = api_key or settings.DASHSCOPE_API_KEY
         self.base_url = OPENAI_BASE_URL
-        self.model = os.getenv("ASR_MODEL", "qwen3-asr-flash")
+        self.model = settings.ASR_MODEL or "qwen3-asr-flash"
         
         # OSS 配置（可选，用于文件上传）
-        self.oss_endpoint = os.getenv("OSS_ENDPOINT", "https://oss-cn-hangzhou.aliyuncs.com")
-        self.oss_bucket = os.getenv("OSS_BUCKET", "")
-        self.oss_access_key_id = os.getenv("OSS_ACCESS_KEY_ID", "")
-        self.oss_access_key_secret = os.getenv("OSS_ACCESS_KEY_SECRET", "")
+        self.oss_endpoint = settings.OSS_ENDPOINT or "https://oss-cn-hangzhou.aliyuncs.com"
+        self.oss_bucket = settings.OSS_BUCKET
+        self.oss_access_key_id = settings.OSS_ACCESS_KEY_ID
+        self.oss_access_key_secret = settings.OSS_ACCESS_KEY_SECRET
         
         if not self.api_key:
             logger.warning("未配置 DASHSCOPE_API_KEY")

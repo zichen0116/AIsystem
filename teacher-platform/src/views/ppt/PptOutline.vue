@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
 import { intentSummaryToText } from '@/utils/pptIntent'
+import { mergeReferenceSummariesIntoPlanningContext } from '@/utils/pptPlanningContext'
 
 const pptStore = usePptStore()
 
@@ -86,7 +87,10 @@ onMounted(async () => {
     await pptStore.fetchReferenceFiles(pptStore.projectId).catch(() => {})
     const confirmedIntent = pptStore.intentSummary
     if (pptStore.planningContext) {
-      ideaPrompt.value = pptStore.planningContext
+      ideaPrompt.value = mergeReferenceSummariesIntoPlanningContext(
+        pptStore.planningContext,
+        pptStore.referenceFiles
+      )
     } else if (confirmedIntent && Object.keys(confirmedIntent).length > 0) {
       ideaPrompt.value = intentSummaryToText(confirmedIntent)
     }
@@ -188,14 +192,20 @@ async function handleRefreshPlanningContext(forceOverwrite = true) {
   isRefreshingPlanningContext.value = true
   planningContextNotice.value = ''
   try {
+    await pptStore.fetchReferenceFiles(pptStore.projectId).catch(() => {})
     const response = await pptStore.refreshPlanningContext(pptStore.projectId)
+    const planningContextText = mergeReferenceSummariesIntoPlanningContext(
+      response?.planning_context_text || '',
+      pptStore.referenceFiles
+    )
+    pptStore.planningContext = planningContextText
     planningContextPartial.value = !!response?.partial
     pendingReferenceFiles.value = response?.pending_reference_files || []
     if (forceOverwrite || !isInputDirty.value) {
-      ideaPrompt.value = response?.planning_context_text || ''
+      ideaPrompt.value = planningContextText
       isInputDirty.value = false
       pptStore.planningContextDirty = false
-    } else if (response?.planning_context_text) {
+    } else if (planningContextText) {
       planningContextNotice.value = '有新的资料解析结果可用，点击“刷新构想”即可更新。'
     }
     if (response?.partial) {

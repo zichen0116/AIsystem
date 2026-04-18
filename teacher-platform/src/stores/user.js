@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { apiRequest, setToken, removeToken, getToken } from '../api/http'
+import { apiRequest, setToken, removeToken, getToken, resolveApiUrl } from '../api/http'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -13,8 +13,7 @@ export const useUserStore = defineStore('user', {
      * 返回 { requires_2fa, temp_token, masked_email } 或直接完成登录
      */
     async login(phone, password) {
-      const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '')
-      const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+      const res = await fetch(resolveApiUrl('/api/v1/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, password }),
@@ -73,8 +72,7 @@ export const useUserStore = defineStore('user', {
       this.userInfo = null
       if (token) {
         try {
-          const API_BASE = (import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000').replace(/\/$/, '')
-          await fetch(`${API_BASE}/api/v1/auth/logout`, {
+          await fetch(resolveApiUrl('/api/v1/auth/logout'), {
             method: 'POST',
             headers: { Authorization: `Bearer ${token}` },
           })

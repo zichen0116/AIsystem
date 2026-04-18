@@ -1057,11 +1057,10 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
                 async with AsyncSessionLocal() as db2:
                     await _update_task_status(db2, task_id_str, "PROCESSING", 50)
 
-            pptx_bytes = export_svc.create_pptx_from_images(
+            pptx_bytes, export_meta = export_svc.create_editable_pptx(
                 image_paths,
                 aspect_ratio=aspect_ratio,
                 pages_data=pages_data,
-                add_text_layer=True,
             )
             if not pptx_bytes:
                 raise ValueError("可编辑PPTX生成失败")
@@ -1076,6 +1075,12 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
             if is_local:
                 result["is_local"] = True
                 result["warning"] = "OSS不可用，文件已保存到本地"
+            if export_meta:
+                result["mode"] = export_meta.get("mode")
+                result["warnings"] = export_meta.get("warnings") or []
+                result["warning_details"] = export_meta.get("warning_details") or {}
+                if export_meta.get("warning"):
+                    result["warning"] = export_meta["warning"]
             if task_id_str:
                 async with AsyncSessionLocal() as db3:
                     await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
@@ -1740,10 +1745,19 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     chunks_meta = []
     text_parts = []
     all_image_descriptions: list[dict] = []
+    video_summary = ""
 
     for chunk in parse_result.chunks:
         raw_content = str(chunk.content or "")
         chunk_metadata = dict(chunk.metadata or {})
+        if not video_summary:
+            candidate_summary = str(
+                chunk_metadata.get("video_summary")
+                or chunk_metadata.get("summary")
+                or ""
+            ).strip()
+            if candidate_summary:
+                video_summary = candidate_summary
         image_descriptions = _normalize_image_descriptions(chunk_metadata.get("image_descriptions"))
 
         cleaned_content = _clean_chunk_text(raw_content)
@@ -1770,6 +1784,9 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
         "images": list(parse_result.images),
         "image_descriptions": all_image_descriptions,
     }
+    if video_summary:
+        parsed_content["video_summary"] = video_summary
+        parsed_content["summary"] = video_summary
 
     return normalized_text, parsed_content
 

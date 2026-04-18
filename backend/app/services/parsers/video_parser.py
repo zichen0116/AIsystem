@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +18,7 @@ import ffmpeg
 import imagehash
 from PIL import Image
 
+from app.core.config import get_settings
 from app.services.ai.asr_service import QwenASRService
 from app.services.ai.gemini_multimodal_service import GeminiMultimodalService
 from app.services.ai.vision_service import VisionService
@@ -39,10 +39,11 @@ class VideoParser(BaseParser):
         interval_seconds: int = 2,
         api_key: Optional[str] = None,
     ):
+        settings = get_settings()
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.interval_seconds = interval_seconds
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        self.api_key = api_key or settings.DASHSCOPE_API_KEY
 
         if self.api_key:
             self.asr_service = QwenASRService(api_key=self.api_key)
@@ -100,8 +101,9 @@ class VideoParser(BaseParser):
                     content=searchable_text,
                     metadata={
                         "source": file_name,
-                        "type": "multimodal",
+                        "type": "video_summary",
                         "parser_provider": "gemini",
+                        "video_summary": str(gemini_summary.get("summary") or searchable_text).strip(),
                         "knowledge_points": list(gemini_summary.get("knowledge_points") or []),
                         "teaching_cases": list(gemini_summary.get("teaching_cases") or []),
                         "time_segments": list(gemini_summary.get("time_segments") or []),
@@ -158,9 +160,54 @@ class VideoParser(BaseParser):
                 logger.warning("Audio transcription failed but visual parsing continues: %s", exc)
 
             all_chunks = self._merge_multimodal_chunks(chunks, audio_chunks)
+            video_summary = await self._summarize_legacy_video(file_name, all_chunks)
+            if video_summary:
+                all_chunks.insert(
+                    0,
+                    ParsedChunk(
+                        content=video_summary,
+                        metadata={
+                            "source": file_name,
+                            "type": "video_summary",
+                            "parser_provider": "dashscope_summary",
+                            "video_summary": video_summary,
+                            "is_partial": False,
+                        },
+                    ),
+                )
             return ParseResult(chunks=all_chunks, images=images)
         finally:
             await self._cleanup_temp_files(task_temp_dir)
+
+    async def _summarize_legacy_video(self, file_name: str, chunks: list[ParsedChunk]) -> str:
+        source_text = "\n\n".join(str(chunk.content or "").strip() for chunk in chunks if str(chunk.content or "").strip())
+        if not source_text:
+            return ""
+
+        try:
+            from app.services.ai.dashscope_service import get_dashscope_service
+
+            prompt = (
+                f"视频文件名：{file_name}\n\n"
+                "下面是视频解析得到的 ASR 转写和画面理解材料，可能包含关键帧日志、时间块标记和无意义寒暄。"
+                "请不要逐帧描述，不要输出“截图显示/关键帧/时间块”等字样。"
+                "请综合整个视频，生成一段 80-160 字的中文视频总结，说明视频主要讲了什么、展示了什么流程、可用于课件的核心信息是什么。\n\n"
+                f"{source_text[:6000]}"
+            )
+            summary = await get_dashscope_service().chat(
+                prompt,
+                system_prompt="你是教学视频内容总结助手，只输出整体视频总结，不输出逐帧分析。",
+                temperature=0.2,
+                max_tokens=500,
+            )
+        except Exception as exc:
+            logger.warning("Legacy video summary generation failed: %s", exc)
+            return ""
+
+        summary = str(summary or "").strip()
+        if not summary or summary.startswith(("错误:", "API 调用失败", "响应格式异常", "请求成功，但响应格式异常")):
+            return ""
+        return summary
 
     def _apply_fallback_metadata(self, result: ParseResult, fallback_reason: str) -> ParseResult:
         for chunk in result.chunks:

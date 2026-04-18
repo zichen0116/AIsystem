@@ -28,10 +28,88 @@ SECTION_TITLES = {
 }
 
 EMPTY_TEXT = "暂无"
+LEGACY_VIDEO_MARKERS = ("[时间块", "视频关键帧", "【看到】", "【听到】", "[音频转录]")
+LOW_INFORMATION_ASR = {
+    "thank you",
+    "thank you.",
+    "thanks",
+    "thanks.",
+    "谢谢",
+    "谢谢。",
+    "谢谢大家",
+    "谢谢大家。",
+    "谢谢观看",
+    "谢谢观看。",
+}
 
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _looks_like_legacy_video_text(text: str) -> bool:
+    return any(marker in _clean_text(text) for marker in LEGACY_VIDEO_MARKERS)
+
+
+def _strip_video_log_markers(text: str) -> str:
+    cleaned = _clean_text(text)
+    cleaned = re.sub(r"\[时间块[^\]]*\]", " ", cleaned)
+    cleaned = re.sub(r"\[视频关键帧[^\]]*\]", " ", cleaned)
+    cleaned = cleaned.replace("【看到】", " ").replace("【听到】", " ")
+    cleaned = cleaned.replace("[音频转录]", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _is_informative_video_summary(text: str) -> bool:
+    value = _strip_video_log_markers(text)
+    if not value:
+        return False
+    normalized = re.sub(r"[\s.!！。?？,，]+", " ", value).strip().lower()
+    compact = re.sub(r"[\s.!！。?？,，]+", "", value).lower()
+    if normalized in LOW_INFORMATION_ASR or compact in LOW_INFORMATION_ASR:
+        return False
+
+    cjk_count = len(re.findall(r"[\u4e00-\u9fff]", value))
+    letter_count = len(re.findall(r"[A-Za-z]", value))
+    digit_count = len(re.findall(r"\d", value))
+    return (cjk_count + letter_count + digit_count) >= 12
+
+
+def _extract_video_channel_text(text: str, marker: str) -> str:
+    if marker == "audio":
+        pattern = r"(?:【听到】|\[音频转录\])\s*(.*?)(?=(?:【看到】|\[时间块|\Z))"
+    else:
+        pattern = r"【看到】\s*(.*?)(?=(?:【听到】|\[时间块|\Z))"
+    parts = re.findall(pattern, text, flags=re.S)
+    return _strip_video_log_markers(" ".join(part for part in parts if _clean_text(part)))
+
+
+def _condense_legacy_video_text(text: str) -> str:
+    value = _clean_text(text)
+    if not value:
+        return ""
+
+    audio_text = _extract_video_channel_text(value, "audio")
+    if _is_informative_video_summary(audio_text):
+        return f"视频概要：{audio_text[:220]}"
+
+    visual_text = _extract_video_channel_text(value, "visual") or _strip_video_log_markers(value)
+    if _is_informative_video_summary(visual_text):
+        return f"视频概要：{visual_text[:220]}"
+
+    if audio_text:
+        return f"视频概要：{audio_text[:220]}"
+    return ""
+
+
+def _summarize_material_content(text: Any, *, limit: int = 220) -> str:
+    value = _clean_text(text)
+    if not value:
+        return ""
+    if _looks_like_legacy_video_text(value):
+        return _condense_legacy_video_text(value)
+    return value[:limit]
 
 
 def _tokenize(text: str) -> list[str]:
@@ -154,6 +232,19 @@ def _extract_reference_chunks(ref_file: PPTReferenceFile) -> list[dict[str, Any]
     parsed_content = ref_file.parsed_content or {}
     chunks_meta = parsed_content.get("chunks_meta") or []
     snippets: list[dict[str, Any]] = []
+    video_summary = _clean_text(parsed_content.get("video_summary") or parsed_content.get("summary"))
+    if video_summary:
+        snippets.append(
+            {
+                "title": f"{ref_file.filename} / 视频总结",
+                "content": video_summary,
+                "keywords": [],
+                "file_id": ref_file.id,
+                "filename": ref_file.filename,
+                "parse_status": ref_file.parse_status,
+                "is_video_summary": True,
+            }
+        )
 
     for idx, chunk in enumerate(chunks_meta, start=1):
         if not isinstance(chunk, dict):
@@ -220,15 +311,39 @@ def _build_query_from_intent(intent_summary: dict[str, str], extra: str | None =
 def _format_material_summary(snippets: list[dict[str, Any]], completed_files: list[PPTReferenceFile]) -> str:
     if snippets:
         return "\n".join(
-            f"- {item['title']}：{_clean_text(item.get('content'))[:180]}"
+            f"- {item['title']}：{_summarize_material_content(item.get('content'), limit=180)}"
             for item in snippets
         )
 
     if completed_files:
-        return "\n".join(
-            f"- {ref.filename}：已完成解析，可用于内容参考。"
-            for ref in completed_files[:3]
-        )
+        lines = []
+        for ref in completed_files[:3]:
+            parsed_content = ref.parsed_content or {}
+            summary = _clean_text(
+                parsed_content.get("video_summary")
+                or parsed_content.get("summary")
+                or parsed_content.get("searchable_text")
+                or parsed_content.get("normalized_text")
+            )
+            if not summary:
+                for chunk in parsed_content.get("chunks_meta") or []:
+                    if not isinstance(chunk, dict):
+                        continue
+                    summary = _clean_text(
+                        chunk.get("video_summary")
+                        or chunk.get("summary")
+                        or chunk.get("searchable_text")
+                        or chunk.get("content")
+                        or chunk.get("raw_content")
+                    )
+                    if summary:
+                        break
+
+            if summary:
+                lines.append(f"- {ref.filename}：{_summarize_material_content(summary)}")
+            else:
+                lines.append(f"- {ref.filename}：已完成解析，可用于内容参考。")
+        return "\n".join(lines)
 
     return "暂无已完成解析的项目资料。"
 
@@ -309,6 +424,67 @@ async def _fetch_knowledge_context(
     return "\n\n".join(parts).strip(), len(parts)
 
 
+async def _generate_video_summary_from_legacy_text(filename: str, source_text: str) -> str:
+    text = _clean_text(source_text)
+    if not text or not _looks_like_legacy_video_text(text):
+        return ""
+
+    try:
+        from app.services.ai.dashscope_service import get_dashscope_service
+
+        prompt = (
+            f"视频文件名：{filename}\n\n"
+            "下面是视频解析得到的材料，可能包含关键帧、时间块、ASR 和无意义寒暄。"
+            "请综合整个视频生成一段 80-160 字中文总结。"
+            "不要逐帧分析，不要输出“截图显示/关键帧/时间块”等字样。\n\n"
+            f"{text[:6000]}"
+        )
+        summary = await get_dashscope_service().chat(
+            prompt,
+            system_prompt="你是教学视频内容总结助手，只输出整体视频总结，不输出逐帧分析。",
+            temperature=0.2,
+            max_tokens=500,
+        )
+    except Exception as exc:
+        logger.warning("Generate legacy PPT reference video summary failed: %s", exc)
+        return ""
+
+    summary = _clean_text(summary)
+    if not summary or summary.startswith(("错误:", "API 调用失败", "响应格式异常", "请求成功，但响应格式异常")):
+        return ""
+    return summary
+
+
+async def _ensure_reference_video_summaries(db: AsyncSession, ref_files: list[PPTReferenceFile]) -> None:
+    changed = False
+    for ref in ref_files:
+        parsed_content = dict(ref.parsed_content or {})
+        if _clean_text(parsed_content.get("video_summary") or parsed_content.get("summary")):
+            continue
+
+        source_text = _clean_text(parsed_content.get("searchable_text") or parsed_content.get("normalized_text"))
+        if not source_text:
+            source_text = "\n\n".join(
+                _clean_text(chunk.get("content") or chunk.get("raw_content"))
+                for chunk in parsed_content.get("chunks_meta") or []
+                if isinstance(chunk, dict)
+            )
+        if not _looks_like_legacy_video_text(source_text):
+            continue
+
+        summary = await _generate_video_summary_from_legacy_text(ref.filename, source_text)
+        if not summary:
+            continue
+
+        parsed_content["video_summary"] = summary
+        parsed_content["summary"] = summary
+        ref.parsed_content = parsed_content
+        changed = True
+
+    if changed:
+        await db.commit()
+
+
 async def build_generation_evidence(
     db: AsyncSession,
     project: PPTProject,
@@ -325,6 +501,7 @@ async def build_generation_evidence(
     ref_files = await _fetch_reference_files(db, project, user_id)
     completed_files = [ref for ref in ref_files if ref.parse_status == "completed" and ref.parsed_content]
     pending_files = [ref for ref in ref_files if ref.parse_status in {"pending", "processing"}]
+    await _ensure_reference_video_summaries(db, completed_files)
 
     all_snippets: list[dict[str, Any]] = []
     for ref in completed_files:

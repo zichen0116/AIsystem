@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query, Path, Form
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -101,6 +101,11 @@ def _normalize_file_ext(filename: Optional[str], content_type: Optional[str] = N
         "image/jpg": "jpg",
         "image/webp": "webp",
         "image/gif": "gif",
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+        "video/x-msvideo": "avi",
+        "video/x-matroska": "mkv",
+        "video/x-flv": "flv",
         "application/pdf": "pdf",
         "application/vnd.ms-powerpoint": "ppt",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
@@ -353,6 +358,14 @@ def _build_export_download_urls(export_url: str, *, is_local: bool, api_base: st
         "download_url": export_url,
         "download_url_absolute": export_url,
     }
+
+
+def _build_attachment_content_disposition(filename: str) -> str:
+    """Build an ASCII-safe attachment header that preserves Unicode filenames."""
+    quoted_filename = quote(filename)
+    if quoted_filename != filename:
+        return f"attachment; filename*=utf-8''{quoted_filename}"
+    return f'attachment; filename="{filename}"'
 
 
 def _clamp_score(value: object, default: int = 35) -> int:
@@ -1654,14 +1667,22 @@ async def export_project(
             return StreamingResponse(
                 iter([content]),
                 media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                headers={"Content-Disposition": f"attachment; filename={project.title}.pptx"}
+                headers={
+                    "Content-Disposition": _build_attachment_content_disposition(
+                        f"{project.title}.pptx"
+                    )
+                }
             )
         elif format == "pdf":
             content = export_service.create_pdf_from_images(local_paths, aspect_ratio=aspect_ratio)
             return StreamingResponse(
                 iter([content]),
                 media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename={project.title}.pdf"}
+                headers={
+                    "Content-Disposition": _build_attachment_content_disposition(
+                        f"{project.title}.pdf"
+                    )
+                }
             )
         else:
             # images 导出走异步任务接口：POST /api/v1/ppt/projects/{id}/export/images
@@ -1949,7 +1970,7 @@ async def file_generation(
         raise HTTPException(status_code=400, detail="请上传文件或输入文本内容")
 
     # 校验文件类型
-    ALLOWED_FILE_EXTS = {"pdf", "doc", "docx"}
+    ALLOWED_FILE_EXTS = {"pdf", "doc", "docx", "mp4", "mov", "avi", "mkv", "flv"}
     file_ext = None
     if has_file:
         file_ext = _normalize_file_ext(file.filename, file.content_type)
