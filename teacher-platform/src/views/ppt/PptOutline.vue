@@ -787,7 +787,7 @@ async function saveCard(index) {
                   <div class="page-points" v-if="page.points && page.points.length > 0">
                     <div v-for="(point, pIdx) in page.points.slice(0, 3)" :key="pIdx" class="point-item">
                       <span class="point-bullet"></span>
-                      <span class="point-text">{{ point }}</span>
+                      <span class="point-text">{{ typeof point === 'object' ? (point.content || point.text || point.title || '') : point }}</span>
                     </div>
                     <div v-if="page.points.length > 3" class="points-more">
                       还有 {{ page.points.length - 3 }} 条...

@@ -1107,28 +1107,25 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
     from app.generators.ppt.banana_models import PPTProject, PPTPage, PPTReferenceFile
     from app.generators.ppt.renovation_service import get_renovation_service
     from app.generators.ppt.file_service import get_oss_service
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     import shutil
 
-    def _process_page_in_thread(
+    async def _process_page(
         page_id: int,
         page_number: int,
         page_pdf_path: str,
         page_image_url: str | None,
         keep_layout: bool,
         language: str,
+        semaphore: asyncio.Semaphore,
     ) -> dict:
-        """在独立线程中处理单页，包含独立 event loop 和 DB session"""
-        import asyncio
-
-        async def _inner():
+        """在同一个 event loop 中处理单页，用 semaphore 控制并发"""
+        async with semaphore:
             renovation_svc = get_renovation_service()
             try:
                 content = await renovation_svc.process_single_page(
                     page_pdf_path, page_image_url, keep_layout, language,
                 )
 
-                # 独立 DB session 写回
                 async with AsyncSessionLocal() as db:
                     res = await db.execute(select(PPTPage).where(PPTPage.id == page_id))
                     page = res.scalar_one_or_none()
@@ -1144,7 +1141,6 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
 
             except Exception as e:
                 logger.error("翻新解析页面 %d 失败: %s", page_number, e)
-                # 标记页面失败
                 async with AsyncSessionLocal() as db:
                     res = await db.execute(select(PPTPage).where(PPTPage.id == page_id))
                     page = res.scalar_one_or_none()
@@ -1154,12 +1150,6 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
                     await db.commit()
 
                 return {"success": False, "page_id": page_id, "page_number": page_number, "error": str(e)}
-
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(_inner())
-        finally:
-            loop.close()
 
     async def _run():
         oss_svc = get_oss_service()
@@ -1243,40 +1233,40 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
             if len(pages) != len(page_pdfs):
                 logger.warning("页面数量不匹配: DB=%d, PDF=%d", len(pages), len(page_pdfs))
 
-            # ThreadPoolExecutor 并行逐页处理
-            results: list[dict] = []
-            max_workers = min(5, len(page_pdfs))
+            # asyncio.gather + semaphore 并发逐页处理（同一 event loop，避免跨线程 loop 冲突）
+            max_concurrent = min(5, len(page_pdfs))
+            semaphore = asyncio.Semaphore(max_concurrent)
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {}
-                for i, page_pdf in enumerate(page_pdfs):
-                    if i < len(pages):
-                        page = pages[i]
-                        future = executor.submit(
-                            _process_page_in_thread,
+            page_tasks = []
+            for i, page_pdf in enumerate(page_pdfs):
+                if i < len(pages):
+                    page = pages[i]
+                    page_tasks.append(
+                        _process_page(
                             page.id,
                             page.page_number,
                             page_pdf,
                             page.image_url,
                             keep_layout,
                             language,
+                            semaphore,
                         )
-                        futures[future] = i
+                    )
 
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        results.append(result)
-                    except Exception as e:
-                        idx = futures[future]
-                        logger.error("线程异常 page_index=%d: %s", idx, e)
-                        if idx < len(pages):
-                            results.append({
-                                "success": False,
-                                "page_id": pages[idx].id,
-                                "page_number": pages[idx].page_number,
-                                "error": str(e),
-                            })
+            gather_results = await asyncio.gather(*page_tasks, return_exceptions=True)
+            results: list[dict] = []
+            for i, result in enumerate(gather_results):
+                if isinstance(result, Exception):
+                    logger.error("协程异常 page_index=%d: %s", i, result)
+                    if i < len(pages):
+                        results.append({
+                            "success": False,
+                            "page_id": pages[i].id,
+                            "page_number": pages[i].page_number,
+                            "error": str(result),
+                        })
+                else:
+                    results.append(result)
 
             # 统计结果
             success_count = sum(1 for r in results if r.get("success"))
@@ -1319,7 +1309,7 @@ def renovation_parse_task(self: Task, project_id: int, file_id: int, task_id_str
                     proj.description_text = "\n\n".join(desc_parts)
 
                     if success_count > 0:
-                        proj.status = "DESCRIPTIONS_GENERATED"
+                        proj.status = "COMPLETED"
                     else:
                         proj.status = "FAILED"
 
@@ -1735,6 +1725,42 @@ def _build_image_context(image_descs: list[dict]) -> str:
             lines.append(f"- 图片{idx}: {desc}")
     return "\n".join(lines) if len(lines) > 1 else ""
 
+
+def _sanitize_outline_points(raw_points, max_count: int = 3) -> list[str]:
+    """清洗大纲 points，去除占位符/省略号等无效文本。"""
+    if not isinstance(raw_points, list):
+        return []
+
+    placeholder_terms = (
+        "...", "……", "待补充", "待完善", "待确认", "tbd", "todo", "placeholder",
+        "[核心概念", "[关键技能", "[实际应用", "[示例", "[要点",
+    )
+    results: list[str] = []
+    for item in raw_points:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = item.get("content") or item.get("text") or item.get("title") or json.dumps(item, ensure_ascii=False)
+            text = str(text).strip()
+        else:
+            text = str(item).strip()
+
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(term in lowered for term in placeholder_terms):
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            continue
+        if re.fullmatch(r"[\[\](){}\s._\-:：;；,，/\\]+", text):
+            continue
+        if len(text) < 2:
+            continue
+
+        results.append(text)
+
+    return results[:max_count]
+
 def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     """
     规范化 parser 输出，生成用于大纲模型的文本输入。
@@ -1905,29 +1931,24 @@ def _combine_outline_source(
     source_text: str | None,
 ) -> str:
     """
-    组合文件解析内容和用户补充文本，明确区分信息来源。
+    组合文件解析结果和用户文本为统一的大纲输入源。
+
+    规则：
+    - 有文件无文本 → 文件内容
+    - 无文件有文本 → 用户文本
+    - 两者都有 → 文件为主，用户文本为补充
     """
     has_file = bool(normalized_text and normalized_text.strip())
     has_text = bool(source_text and source_text.strip())
 
     if has_file and has_text:
-        return (
-            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
-            f"{normalized_text}\n\n"
-            "以下是用户补充要求：\n"
-            f"{source_text}"
-        )
-    if has_file:
-        return (
-            "以下是从参考文件解析出的内容（含图片语义描述）：\n"
-            f"{normalized_text}"
-        )
-    if has_text:
-        return (
-            "以下是用户补充要求：\n"
-            f"{source_text}"
-        )
-    return ""
+        return f"{normalized_text}\n\n---\n用户补充说明：\n{source_text}"
+    elif has_file:
+        return normalized_text
+    elif has_text:
+        return source_text
+    else:
+        return ""
 
 
 def _parse_outline_pages(data) -> list[dict]:
@@ -2279,7 +2300,7 @@ def file_generation_task(
                 if page_data.get("part"):
                     cfg["part"] = page_data["part"]
                 if page_data.get("points") is not None:
-                    cfg["points"] = page_data.get("points", [])
+                    cfg["points"] = _sanitize_outline_points(page_data.get("points", []))
 
                 page = PPTPage(
                     project_id=project_id,

@@ -224,6 +224,37 @@ def _sync_project_template_style_to_settings(project: PPTProject) -> None:
 
 
 
+def _sanitize_points(raw_points: list, max_count: int = 3) -> list[str]:
+    """将 points 强制转为纯字符串列表，最多保留 max_count 条。"""
+    placeholder_terms = (
+        "...", "……", "待补充", "待完善", "待确认", "tbd", "todo", "placeholder",
+        "[核心概念", "[关键技能", "[实际应用", "[示例", "[要点",
+    )
+    result = []
+    for p in raw_points:
+        if isinstance(p, str):
+            text = p.strip()
+        elif isinstance(p, dict):
+            text = p.get("content") or p.get("text") or p.get("title") or json.dumps(p, ensure_ascii=False)
+            text = str(text).strip()
+        else:
+            text = str(p).strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(term in lowered for term in placeholder_terms):
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            continue
+        if re.fullmatch(r"[\[\](){}\s._\-:：;；,，/\\]+", text):
+            continue
+        if len(text) < 2:
+            continue
+        if text:
+            result.append(text)
+    return result[:max_count]
+
+
 def _apply_generated_description(page: PPTPage, generated_text: str, extra_fields_config: list[dict]) -> None:
     parsed = split_generated_description(generated_text, extra_fields_config)
     page.description = parsed["description"] or generated_text
@@ -1068,16 +1099,21 @@ Additional user requirements:
 Output the outline as a JSON array. Choose the format that best fits the content:
 
 1. Simple format (no major sections):
-[{{"title": "title1", "points": ["point1", "point2"]}}, ...]
+[{{"title": "封面标题", "points": ["副标题或演讲者信息"]}}, {{"title": "第二页标题", "points": ["核心要点一", "核心要点二", "核心要点三"]}}]
 
 2. Part-based format (with major sections):
-[{{"part": "Part 1", "pages": [{{"title": "...", "points": [...]}}]}}, ...]
+[{{"part": "第一部分", "pages": [{{"title": "页面标题", "points": ["核心要点一", "核心要点二"]}}]}}]
 
 Constraints:
 - First page should be simple (title, subtitle, presenter only)
 - No page number in title
 - 必须恰好生成指定页数，不要多也不要少
 - Use the planning context as the primary source of page planning
+- 每页 points 最多3条，只保留最核心的要点
+- **points 必须是纯字符串数组**，每个元素都是一段简短的中文文本
+- **严禁**在 points 中返回对象、字典、JSON嵌套结构
+- 错误示例（禁止）："points": [{{"type": "summary", "content": "xxx"}}]
+- 正确示例（必须）："points": ["核心要点一", "核心要点二", "核心要点三"]
 - Output only the JSON array, no other text
 - 请使用全中文输出。"""
 
@@ -1136,7 +1172,8 @@ Constraints:
                             if page_data.get("part"):
                                 cfg["part"] = page_data["part"]
                             if page_data.get("points") is not None:
-                                cfg["points"] = page_data.get("points", [])
+                                raw_points = page_data.get("points", [])
+                                cfg["points"] = _sanitize_points(raw_points)
 
                             page = PPTPage(
                                 project_id=project_id,
@@ -2625,11 +2662,16 @@ async def generate_outline_from_dialog(
 请以JSON格式返回，格式如下：
 {{
   "pages": [
-    {{"title": "页面标题", "points": ["要点1", "要点2"]}}
+    {{"title": "页面标题", "points": ["核心要点一", "核心要点二", "核心要点三"]}}
   ]
 }}
 
-只返回JSON，不要其他内容。"""
+格式强制要求：
+- 每页 points 最多3条，只写最核心的内容
+- **points 必须是纯字符串数组**，每个元素是一段简短的中文文本
+- **严禁**返回对象或嵌套结构，如 {{"type": "summary", "content": "xxx"}} 是错误格式
+- 正确示例："points": ["时间跨度：自2025年10月至今", "主要内容概述", "核心收获总结"]
+- 只返回JSON，不要其他任何内容。"""
 
     try:
         response = await get_text_provider_singleton().agenerate_text(prompt)
@@ -2643,12 +2685,18 @@ async def generate_outline_from_dialog(
         else:
             outline_data = {"pages": []}
 
+        # 删除该项目现有页面，避免重复累加
+        existing = await db.execute(select(PPTPage).where(PPTPage.project_id == project_id))
+        for ep in existing.scalars().all():
+            await db.delete(ep)
+        await db.flush()
+
         # 创建页面
         pages = outline_data.get("pages", [])
         for i, page_data in enumerate(pages):
             config = {}
             if page_data.get("points") is not None:
-                config["points"] = page_data.get("points", [])
+                config["points"] = _sanitize_points(page_data.get("points", []))
             page = PPTPage(
                 project_id=project_id,
                 page_number=i + 1,
@@ -3219,10 +3267,10 @@ async def regenerate_page_renovation(
         project.outline_text = "\n\n".join(outline_parts)
         project.description_text = "\n\n".join(desc_parts)
 
-        # 如果之前 project 是 FAILED 且现在有成功页，更新为 DESCRIPTIONS_GENERATED
+        # 如果之前 project 是 FAILED 且现在有成功页，更新为 COMPLETED
         success_count = sum(1 for p in all_pages if p.renovation_status == "completed")
         if success_count > 0 and project.status == "FAILED":
-            project.status = "DESCRIPTIONS_GENERATED"
+            project.status = "COMPLETED"
 
         await db.commit()
         await db.refresh(page)

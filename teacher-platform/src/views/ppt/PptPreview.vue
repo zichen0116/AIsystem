@@ -576,7 +576,7 @@ function _pollEditableExport() {
       clearInterval(editableExportPollTimer)
       editableExportStatus.value = 'error'
     }
-  }, 2000)
+  }, 3000)
 }
 
 async function handleExportImages() {
@@ -616,7 +616,7 @@ function _pollImagesExport() {
       clearInterval(imagesExportPollTimer)
       imagesExportStatus.value = 'error'
     }
-  }, 2000)
+  }, 3000)
 }
 
 // 统一导出结果下载（兼容 OSS URL 和 is_local 本地路径）
@@ -692,7 +692,7 @@ function _pollEditTask() {
       editStatus.value = 'error'
       editErrorMsg.value = '查询任务状态失败'
     }
-  }, 2000)
+  }, 3000)
 }
 
 function retryEdit() {
@@ -874,7 +874,7 @@ function _pollMaterialTask() {
       clearInterval(materialPollTimer)
       materialGenerating.value = false
     }
-  }, 2000)
+  }, 3000)
 }
 
 function toggleMaterialPanel() {
