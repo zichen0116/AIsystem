@@ -145,9 +145,11 @@ function toggleAdminDigitalHumanVoice() {
     <!-- 一级侧边栏 -->
     <aside class="primary" :class="{ collapsed: sidebarCollapsed }">
       <div class="primary-top" @click="router.push('/')" role="button" tabindex="0">
-        <div class="brand-icon" aria-hidden="true">📖</div>
+        <div class="brand-icon" aria-hidden="true">
+          <img data-test="sidebar-brand-logo" class="brand-logo" src="/logo.svg" alt="" />
+        </div>
         <div v-if="!sidebarCollapsed" class="brand-text">
-          <div class="brand-name">EduPrep</div>
+          <img data-test="sidebar-brand-name" class="brand-character" src="/character.svg" alt="智课坊" />
         </div>
       </div>
 
@@ -594,23 +596,30 @@ function toggleAdminDigitalHumanVoice() {
 }
 
 .brand-icon {
-  width: 30px;
-  height: 20px;
-  border-radius: 10px;
+  width: 60px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
-  font-size: 26px;
+  flex: 0 0 auto;
+  overflow: hidden;
 }
 
-.brand-name {
-  font-size: 21px;
-  font-weight: 700;
-  color: #0f172a;
-  line-height: 1.1;
+.brand-logo {
+  width: 60px;
+  height: 60px;
+  display: block;
+  object-fit: contain;
 }
 
+.brand-character {
+  width: 96px;
+  height: 32px;
+  display: block;
+  object-fit: contain;
+  object-position: left center;
+}
 .primary-nav {
   padding: 10px 6px;
   display: flex;
