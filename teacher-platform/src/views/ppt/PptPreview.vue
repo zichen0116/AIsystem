@@ -1778,8 +1778,8 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 }
 
 .multiselect-toggle.active {
-  background: #FEF3C7;
-  color: #92400e;
+  background: #dbeafe;
+  color: #2563eb;
 }
 
 .select-all-btn {
@@ -1930,8 +1930,8 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 }
 
 .thumbnail-status.status-generating {
-  background: #fef3c7;
-  color: #92400e;
+  background: #dbeafe;
+  color: #2563eb;
 }
 
 .thumbnail-status.status-pending {
@@ -2048,10 +2048,12 @@ const currentPage = computed(() => pages.value[currentPageIndex.value])
 }
 
 .placeholder-logo {
-  width: 112px;
-  height: 48px;
+  width: 360px;
+  height: 64px;
   object-fit: contain;
   display: block;
+  position: relative;
+  left: 25px;
 }
 
 .placeholder-text {

@@ -62,7 +62,13 @@ const stylePresets = [
 const templates = ref([
   { id: '1', name: '复古卷轴', preview: '/templates/template_y.png', thumb: '/templates/template_y-thumb.webp' },
   { id: '2', name: '矢量插画', preview: '/templates/template_vector_illustration.png', thumb: '/templates/template_vector_illustration-thumb.webp' },
-  { id: '3', name: '玻璃感', preview: '/templates/template_glass.png', thumb: '/templates/template_glass-thumb.webp' }
+  { id: '3', name: '玻璃感', preview: '/templates/template_glass.png', thumb: '/templates/template_glass-thumb.webp' },
+  {
+    id: '4',
+    name: '环境保护',
+    preview: '/templates/template_environmental_protection.png',
+    thumb: '/templates/template_environmental_protection.png'
+  }
 ])
 
 // 从 API 加载用户模板
@@ -257,6 +263,11 @@ async function deleteUserTemplate(templateId) {
   // 确保 templateId 是数字类型（API 返回的是整数，local 模板是字符串）
   const numericId = Number(templateId)
   const template = userTemplates.value.find(t => Number(t.id) === numericId)
+  const templateName = template?.name || '该模板'
+  if (!window.confirm(`确定删除“${templateName}”吗？`)) {
+    return
+  }
+
   // 如果是本地模板（未持久化），直接删除
   if (template && template.isLocal) {
     userTemplates.value = userTemplates.value.filter(t => Number(t.id) !== numericId)
@@ -276,6 +287,7 @@ async function deleteUserTemplate(templateId) {
     }
   } catch (error) {
     console.error('删除模板失败:', error)
+    alert('删除模板失败，请重试')
   }
 }
 
@@ -940,7 +952,10 @@ async function handleNext() {
                   <span class="template-selected-text">已选择</span>
                 </div>
                 <button
+                  type="button"
                   class="template-remove"
+                  :data-test="`delete-user-template-${template.id}`"
+                  :aria-label="`删除模板 ${template.name}`"
                   @click.stop="deleteUserTemplate(template.id)"
                   title="删除模板"
                 >
@@ -1921,6 +1936,7 @@ async function handleNext() {
   justify-content: center;
   border-radius: 12px;
   backdrop-filter: blur(2px);
+  pointer-events: none;
 }
 
 .template-selected-text {
@@ -1939,7 +1955,8 @@ async function handleNext() {
   right: 8px;
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border: none;
+  border-radius: 8px;
   background: rgba(239, 68, 68, 0.9);
   color: #FFFFFF;
   display: inline-flex;
@@ -1948,9 +1965,9 @@ async function handleNext() {
   font-size: 16px;
   font-weight: 700;
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.96;
   transition: all 0.2s ease;
-  z-index: 2;
+  z-index: 4;
   box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
 }
 

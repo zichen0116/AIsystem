@@ -146,10 +146,10 @@ function toggleAdminDigitalHumanVoice() {
     <aside class="primary" :class="{ collapsed: sidebarCollapsed }">
       <div class="primary-top" @click="router.push('/')" role="button" tabindex="0">
         <div class="brand-icon" aria-hidden="true">
-          <img data-test="sidebar-brand-logo" class="brand-logo" src="/logo-character.svg" alt="" />
+          <img data-test="sidebar-brand-logo" class="brand-logo" src="/logo.svg" alt="" />
         </div>
         <div v-if="!sidebarCollapsed" class="brand-text">
-          <div data-test="sidebar-brand-name" class="brand-name">智课坊</div>
+          <img data-test="sidebar-brand-name" class="brand-character" src="/character.svg" alt="智课坊" />
         </div>
       </div>
 
@@ -596,8 +596,8 @@ function toggleAdminDigitalHumanVoice() {
 }
 
 .brand-icon {
-  width: 34px;
-  height: 34px;
+  width: 60px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -607,18 +607,18 @@ function toggleAdminDigitalHumanVoice() {
 }
 
 .brand-logo {
-  width: 34px;
-  height: 34px;
+  width: 60px;
+  height: 60px;
   display: block;
   object-fit: contain;
 }
 
-.brand-name {
-  font-size: 22px;
-  font-weight: 800;
-  color: #0f172a;
-  line-height: 1.1;
-  letter-spacing: 0.02em;
+.brand-character {
+  width: 96px;
+  height: 32px;
+  display: block;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .primary-nav {

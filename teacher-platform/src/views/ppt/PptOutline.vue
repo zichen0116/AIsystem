@@ -1235,7 +1235,7 @@ async function saveCard(index) {
 
 .input-textarea {
   width: 100%;
-  min-height: 160px;
+  min-height: 300px;
   border: none;
   font-size: 14px;
   line-height: 1.6;

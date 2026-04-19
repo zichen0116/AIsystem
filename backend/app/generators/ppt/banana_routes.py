@@ -2805,6 +2805,15 @@ async def delete_user_template(
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
 
+    cover_url = str(template.cover_url or "")
+    oss_key = _extract_oss_key(cover_url)
+    if oss_key and oss_key.startswith(f"ppt/templates/{current_user.id}/"):
+        try:
+            from app.generators.ppt.file_service import get_oss_service
+            get_oss_service().delete_file(oss_key)
+        except Exception as exc:
+            logger.warning("用户模板 OSS 文件删除失败: template_id=%s, oss_key=%s, error=%s", template_id, oss_key, exc)
+
     await db.delete(template)
     await db.commit()
 
