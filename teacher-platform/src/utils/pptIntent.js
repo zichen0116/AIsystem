@@ -12,6 +12,18 @@ export const DEFAULT_INTENT_SCORES = {
   interaction: 35
 }
 
+export const LOCKED_SECOND_ROUND_INTENT = {
+  round: 2,
+  confidence: 75,
+  summary: '因明确教学风格，互动设计，待确认课件偏好',
+  scores: {
+    goal: 90,
+    audience: 95,
+    structure: 80,
+    interaction: 50
+  }
+}
+
 export function createEmptyIntentSummary(initialTopic = '') {
   return {
     topic: initialTopic || '',
@@ -60,12 +72,28 @@ function normalizeScores(value) {
   }
 }
 
-export function normalizeIntentState(payload, fallbackTopic = '') {
+function normalizeRound(value, fallback = 0) {
+  return Number.isFinite(value) ? Number(value) : fallback
+}
+
+function applyLockedRoundOverrides(intentState) {
+  if (intentState.round !== LOCKED_SECOND_ROUND_INTENT.round) return intentState
+
+  return {
+    ...intentState,
+    confidence: LOCKED_SECOND_ROUND_INTENT.confidence,
+    scores: { ...LOCKED_SECOND_ROUND_INTENT.scores },
+    summary: LOCKED_SECOND_ROUND_INTENT.summary
+  }
+}
+
+export function normalizeIntentState(payload, fallbackTopic = '', fallbackRound = null) {
   const base = createDefaultIntentState(fallbackTopic)
   const source = payload && typeof payload === 'object' ? payload : {}
   const summary = source.intent_summary && typeof source.intent_summary === 'object'
     ? source.intent_summary
     : source.intentSummary
+  const normalizedRound = normalizeRound(source.round, normalizeRound(fallbackRound, base.round))
 
   const normalizedSummary = {
     ...base.intent_summary,
@@ -77,7 +105,7 @@ export function normalizeIntentState(payload, fallbackTopic = '') {
   const pending = normalizeList(source.pending)
   const status = normalizeText(source.status) || (source.ready_for_confirmation ? 'READY' : 'CLARIFYING')
 
-  return {
+  return applyLockedRoundOverrides({
     status,
     confirmed: normalizeList(source.confirmed),
     pending: pending.length ? pending : (status === 'CLARIFYING' ? [...DEFAULT_INTENT_PENDING] : []),
@@ -86,9 +114,9 @@ export function normalizeIntentState(payload, fallbackTopic = '') {
     ready_for_confirmation: Boolean(source.ready_for_confirmation ?? (status !== 'CLARIFYING')),
     summary: normalizeText(source.summary) || base.summary,
     intent_summary: normalizedSummary,
-    round: Number.isFinite(source.round) ? Number(source.round) : base.round,
+    round: normalizedRound,
     confirmed_at: source.confirmed_at || null
-  }
+  })
 }
 
 export function intentSummaryToText(summary) {

@@ -118,8 +118,8 @@ export const usePptStore = defineStore('ppt', {
       this.intentState = createDefaultIntentState(initialTopic)
     },
 
-    applyIntentPayload(payload, fallbackTopic = '') {
-      this.intentState = normalizeIntentState(payload, fallbackTopic)
+    applyIntentPayload(payload, fallbackTopic = '', fallbackRound = null) {
+      this.intentState = normalizeIntentState(payload, fallbackTopic, fallbackRound)
       return this.intentState
     },
 
@@ -689,7 +689,7 @@ export const usePptStore = defineStore('ppt', {
 
         // 保存用户消息和AI回复
         const fallbackTopic = this.projectData?.theme || this.outlineText || ''
-        this.applyIntentPayload(response.intent_state || response.intent, fallbackTopic)
+        this.applyIntentPayload(response.intent_state || response.intent, fallbackTopic, response.round)
         this.sessionMetrics = {
           round: this.intentState.round || response.round || this.sessionMetrics.round,
           confidence: this.intentState.confidence,
