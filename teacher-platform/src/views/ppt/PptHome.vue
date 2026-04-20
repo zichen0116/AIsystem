@@ -1141,18 +1141,12 @@ async function handleNext() {
 </template>
 
 <style scoped>
-/* 引入现代字体 - 使用国内 CDN 镜像 */
-@import url('https://fonts.loli.net/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
-/* 备用方案：字节跳动 CDN */
-/* @import url('https://sf1-cdn-tos.bytegoofy.com/obj/iconpark/fonts/PlusJakartaSans.css'); */
-
 .ppt-home {
   flex: 1;
   overflow-y: auto;
   background: linear-gradient(180deg, #F8FAFC 0%, #FFFFFF 100%);
   position: relative;
-  /* 使用现代系统字体栈，无需外部字体文件 */
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 .history-entry-btn {
@@ -1195,6 +1189,9 @@ async function handleNext() {
   padding: 68px 0 44px;
   animation: rise 0.55s ease;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .hero::before {
@@ -1220,11 +1217,13 @@ async function handleNext() {
 }
 
 .hero-title-editorial {
-  display: inline-block;
+  display: block;
   position: relative;
   padding: 0 0.08em;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
-  white-space: nowrap;
+  white-space: normal;
+  text-wrap: balance;
+  margin: 0 auto;
 }
 
 .hero-title-editorial::after {
@@ -1251,16 +1250,17 @@ async function handleNext() {
 
 .hero-subtitle-editorial {
   position: relative;
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 0 20px;
-  width: fit-content;
-  max-width: none;
+  width: min(100%, 720px);
+  max-width: 720px;
   white-space: normal;
   text-align: center;
+  margin: 22px auto 0;
 }
 
 .hero-subtitle-editorial::before,
