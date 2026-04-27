@@ -26,7 +26,8 @@ describe('LayoutWithNav', () => {
   it('renders the Zhikefang brand logo in the sidebar', () => {
     const wrapper = mount(LayoutWithNav)
 
-    expect(wrapper.get('[data-test="sidebar-brand-logo"]').attributes('src')).toBe('/logo-character.svg')
-    expect(wrapper.get('[data-test="sidebar-brand-name"]').text()).toBe('智课坊')
+    expect(wrapper.get('[data-test="sidebar-brand-logo"]').attributes('src')).toBe('/logo.svg')
+    expect(wrapper.get('[data-test="sidebar-brand-name"]').attributes('src')).toBe('/character.svg')
+    expect(wrapper.get('[data-test="sidebar-brand-name"]').attributes('alt')).toBe('智课坊')
   })
 })
