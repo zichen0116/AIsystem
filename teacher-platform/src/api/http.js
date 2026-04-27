@@ -7,11 +7,21 @@ function isAuthPath(path) {
   return AUTH_PATHS.some(p => path.includes(p))
 }
 
-export function resolveApiUrl(path) {
-  if (!path) return ''
-  // already absolute
+export function buildApiUrl(base, path) {
+  if (!path) return base || ''
   if (/^https?:\/\//i.test(path)) return path
-  return `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+
+  const normalizedBase = (base || '').replace(/\/$/, '')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+
+  if (!normalizedBase) return normalizedPath
+  if (normalizedBase === '/api' && normalizedPath.startsWith('/api/')) return normalizedPath
+
+  return `${normalizedBase}${normalizedPath}`
+}
+
+export function resolveApiUrl(path) {
+  return buildApiUrl(API_BASE, path)
 }
 
 export function getToken() {
@@ -38,7 +48,7 @@ function getAuthHeaders(extra = {}) {
  * 自动附加 Authorization header，非 auth 路径 401 时清 token 跳登录页
  */
 export async function authFetch(path, options = {}) {
-  const url = path.startsWith('http') ? path : `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+  const url = buildApiUrl(API_BASE, path)
   const headers = getAuthHeaders(options.headers || {})
 
   const res = await fetch(url, { ...options, headers })
@@ -56,7 +66,7 @@ export async function authFetch(path, options = {}) {
  * JSON API 请求封装
  */
 export async function apiRequest(path, { method = 'GET', headers = {}, body } = {}) {
-  const url = `${API_BASE}${path.startsWith('/') ? '' : '/'}${path}`
+  const url = buildApiUrl(API_BASE, path)
   const finalHeaders = getAuthHeaders(headers)
   // 自动为字符串body添加Content-Type（避免FormData需要手动设置）
   if (typeof body === 'string' && body && !finalHeaders['Content-Type']) {

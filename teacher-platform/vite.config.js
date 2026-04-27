@@ -9,6 +9,11 @@ export default defineConfig({
     },
   },
   plugins: [vue()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+  },
   server: {
     proxy: {
       // 将前端开发环境的 /api 请求转发到后端 FastAPI

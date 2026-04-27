@@ -1057,11 +1057,10 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
                 async with AsyncSessionLocal() as db2:
                     await _update_task_status(db2, task_id_str, "PROCESSING", 50)
 
-            pptx_bytes = export_svc.create_pptx_from_images(
+            pptx_bytes, export_meta = export_svc.create_editable_pptx(
                 image_paths,
                 aspect_ratio=aspect_ratio,
                 pages_data=pages_data,
-                add_text_layer=True,
             )
             if not pptx_bytes:
                 raise ValueError("可编辑PPTX生成失败")
@@ -1076,6 +1075,12 @@ def export_editable_pptx_task(self: Task, project_id: int, task_id_str: str = No
             if is_local:
                 result["is_local"] = True
                 result["warning"] = "OSS不可用，文件已保存到本地"
+            if export_meta:
+                result["mode"] = export_meta.get("mode")
+                result["warnings"] = export_meta.get("warnings") or []
+                result["warning_details"] = export_meta.get("warning_details") or {}
+                if export_meta.get("warning"):
+                    result["warning"] = export_meta["warning"]
             if task_id_str:
                 async with AsyncSessionLocal() as db3:
                     await _update_task_status(db3, task_id_str, "COMPLETED", 100, result)
@@ -1766,10 +1771,19 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
     chunks_meta = []
     text_parts = []
     all_image_descriptions: list[dict] = []
+    video_summary = ""
 
     for chunk in parse_result.chunks:
         raw_content = str(chunk.content or "")
         chunk_metadata = dict(chunk.metadata or {})
+        if not video_summary:
+            candidate_summary = str(
+                chunk_metadata.get("video_summary")
+                or chunk_metadata.get("summary")
+                or ""
+            ).strip()
+            if candidate_summary:
+                video_summary = candidate_summary
         image_descriptions = _normalize_image_descriptions(chunk_metadata.get("image_descriptions"))
 
         cleaned_content = _clean_chunk_text(raw_content)
@@ -1791,10 +1805,14 @@ def _normalize_parse_result(parse_result) -> tuple[str, dict]:
 
     parsed_content = {
         "normalized_text": normalized_text,
+        "searchable_text": normalized_text,
         "chunks_meta": chunks_meta,
         "images": list(parse_result.images),
         "image_descriptions": all_image_descriptions,
     }
+    if video_summary:
+        parsed_content["video_summary"] = video_summary
+        parsed_content["summary"] = video_summary
 
     return normalized_text, parsed_content
 
@@ -1840,6 +1858,72 @@ async def _parse_reference_file_content(
         raise parse_error
 
     raise RuntimeError(f"Unsupported or empty parse result for file: {filename or tmp_path}")
+
+
+async def _download_reference_file_to_path(oss_path: str, destination_path: str) -> None:
+    oss_svc = _get_oss_service_safe()
+    if oss_svc is not None:
+        oss_svc.download_file(oss_path, destination_path)
+        return
+
+    if not os.path.exists(oss_path):
+        raise FileNotFoundError("OSS unavailable and local reference file does not exist")
+
+    shutil.copy2(oss_path, destination_path)
+
+
+async def _parse_reference_file_and_persist(file_id: int) -> tuple[str, dict]:
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import select
+    from app.generators.ppt.banana_models import PPTReferenceFile
+
+    tmp_dir = tempfile.mkdtemp(prefix="ppt_reference_parse_")
+    try:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+            ref_file = res.scalar_one_or_none()
+            if not ref_file:
+                raise FileNotFoundError(f"Reference file {file_id} not found")
+
+            ref_file.parse_status = "processing"
+            ref_file.parse_error = None
+            await db.commit()
+
+            oss_path = ref_file.oss_path
+            filename = ref_file.filename
+            file_type = ref_file.file_type
+
+        tmp_path = os.path.join(tmp_dir, filename)
+        await _download_reference_file_to_path(oss_path, tmp_path)
+        normalized_text, parsed_content = await _parse_reference_file_content(
+            tmp_path,
+            filename=filename,
+            file_type=file_type,
+        )
+        if not normalized_text.strip():
+            raise ValueError("Unsupported file type or empty parse result")
+
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+            ref_file = res.scalar_one_or_none()
+            if ref_file:
+                ref_file.parsed_content = parsed_content
+                ref_file.parse_status = "completed"
+                ref_file.parse_error = None
+                await db.commit()
+
+        return normalized_text, parsed_content
+    except Exception as exc:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(PPTReferenceFile).where(PPTReferenceFile.id == file_id))
+            ref_file = res.scalar_one_or_none()
+            if ref_file:
+                ref_file.parse_status = "failed"
+                ref_file.parse_error = str(exc)
+                await db.commit()
+        raise
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _combine_outline_source(
@@ -1903,6 +1987,52 @@ def _parse_outline_pages(data) -> list[dict]:
 # ---------------------------------------------------------------------------
 # 任务：文件生成（解析文件 → 组合文本 → 生成大纲 → 创建页面骨架）
 # ---------------------------------------------------------------------------
+
+@celery_app.task(bind=True, name="banana-slides.reference_parse")
+def reference_parse_task(
+    self: Task,
+    project_id: int,
+    file_id: int,
+    task_id_str: str | None = None,
+):
+    from app.core.database import AsyncSessionLocal
+
+    async def _run():
+        try:
+            if task_id_str:
+                async with AsyncSessionLocal() as db:
+                    await _update_task_status(db, task_id_str, "PROCESSING", 10)
+
+            normalized_text, parsed_content = await _parse_reference_file_and_persist(file_id)
+
+            if task_id_str:
+                async with AsyncSessionLocal() as db:
+                    await _update_task_status(
+                        db,
+                        task_id_str,
+                        "COMPLETED",
+                        100,
+                        {
+                            "status": "completed",
+                            "file_id": file_id,
+                            "normalized_text_preview": normalized_text[:300],
+                            "chunks_count": len(parsed_content.get("chunks_meta") or []),
+                        },
+                    )
+        except Exception as exc:
+            logger.exception("Reference parse task failed: project_id=%d file_id=%d", project_id, file_id)
+            if task_id_str:
+                async with AsyncSessionLocal() as db:
+                    await _update_task_status(
+                        db,
+                        task_id_str,
+                        "FAILED",
+                        30,
+                        {"error": f"参考资料解析失败: {exc}", "file_id": file_id},
+                    )
+
+    asyncio.run(_run())
+
 
 @celery_app.task(bind=True, name="banana-slides.file_generation")
 def file_generation_task(

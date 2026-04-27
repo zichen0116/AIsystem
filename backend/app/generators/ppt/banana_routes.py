@@ -13,7 +13,7 @@ import uuid
 import zipfile
 from datetime import datetime
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Query, Path, Form
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -60,9 +60,11 @@ from app.generators.ppt.banana_schemas import (
     GenerateDescriptionsStreamRequest, ExportRequest, ExportTaskResponse,
     MaterialGenerateRequest,
     FileGenerationResponse,
+    PlanningContextRefreshResponse,
 )
 from app.generators.ppt.task_dispatcher import (
     dispatch_file_generation_task,
+    dispatch_reference_parse_task,
     dispatch_renovation_parse_task,
     ensure_pending_task_started,
 )
@@ -99,6 +101,11 @@ def _normalize_file_ext(filename: Optional[str], content_type: Optional[str] = N
         "image/jpg": "jpg",
         "image/webp": "webp",
         "image/gif": "gif",
+        "video/mp4": "mp4",
+        "video/quicktime": "mov",
+        "video/x-msvideo": "avi",
+        "video/x-matroska": "mkv",
+        "video/x-flv": "flv",
         "application/pdf": "pdf",
         "application/vnd.ms-powerpoint": "ppt",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
@@ -304,6 +311,69 @@ def _download_image_urls_to_local_paths(image_urls: list[str]) -> tuple[str, lis
     return tmp_dir, local_paths
 
 
+def _store_reference_file_bytes(content: bytes, project_id: int, filename: str) -> tuple[str, str]:
+    from pathlib import Path
+    from app.generators.ppt.file_service import get_oss_service
+
+    ext = Path(filename or "reference.bin").suffix or ".bin"
+    safe_name = Path(filename or f"reference{ext}").name
+    oss_key = f"ppt/{project_id}/reference/{uuid.uuid4().hex}_{safe_name}"
+
+    try:
+        oss_svc = get_oss_service()
+        file_url = oss_svc.upload_bytes(content, oss_key)
+        return oss_key, file_url
+    except Exception as exc:
+        logger.warning("Reference file OSS upload unavailable, fallback to local storage: %s", exc)
+
+    local_root = Path(__file__).resolve().parents[3] / "media" / "ppt_reference_uploads" / str(project_id)
+    local_root.mkdir(parents=True, exist_ok=True)
+    local_path = local_root / f"{uuid.uuid4().hex}_{safe_name}"
+    local_path.write_bytes(content)
+    return str(local_path), str(local_path)
+
+
+async def _get_or_build_planning_context_text(
+    db: AsyncSession,
+    project: PPTProject,
+    user_id: int,
+) -> str:
+    from app.generators.ppt.planning_context_service import (
+        get_saved_planning_context,
+        persist_planning_context,
+    )
+
+    saved = get_saved_planning_context(project)
+    saved_text = str(saved.get("planning_context_text") or "").strip()
+    if saved_text:
+        return saved_text
+
+    context = await persist_planning_context(db, project, user_id)
+    return str(context.get("planning_context_text") or "").strip()
+
+
+async def _build_page_generation_context(
+    db: AsyncSession,
+    project: PPTProject,
+    user_id: int,
+    *,
+    page_title: str,
+    page_points: list[str],
+) -> tuple[str, str]:
+    from app.generators.ppt.planning_context_service import build_generation_evidence
+
+    extra_query = " ".join([page_title or "", *[str(point or "") for point in page_points or []]]).strip()
+    evidence = await build_generation_evidence(
+        db,
+        project,
+        user_id,
+        extra_query=extra_query,
+        material_limit=3,
+        knowledge_k=3,
+    )
+    return evidence["materials_text"], evidence["knowledge_text"]
+
+
 def _build_export_download_urls(export_url: str, *, is_local: bool, api_base: str) -> dict:
     """Build download URLs for both OSS-hosted and local fallback exports."""
     if is_local:
@@ -319,6 +389,14 @@ def _build_export_download_urls(export_url: str, *, is_local: bool, api_base: st
         "download_url": export_url,
         "download_url_absolute": export_url,
     }
+
+
+def _build_attachment_content_disposition(filename: str) -> str:
+    """Build an ASCII-safe attachment header that preserves Unicode filenames."""
+    quoted_filename = quote(filename)
+    if quoted_filename != filename:
+        return f"attachment; filename*=utf-8''{quoted_filename}"
+    return f'attachment; filename="{filename}"'
 
 
 def _clamp_score(value: object, default: int = 35) -> int:
@@ -562,11 +640,6 @@ async def create_project(
     settings = dict(data.settings or {})
     template_style_raw = data.template_style if data.template_style is not None else settings.get("template_style")
     template_style = str(template_style_raw or "").strip() or None
-
-    if has_text:
-        parsed_settings["file_generation_source_text"] = source_text.strip()
-    else:
-        parsed_settings.pop("file_generation_source_text", None)
 
     project = PPTProject(
         user_id=current_user.id,
@@ -993,22 +1066,35 @@ async def generate_outline_stream(
     async def event_generator():
         try:
             # 如果有 idea_prompt，先用它来生成大纲文本
-            idea_prompt = data.idea_prompt or project.outline_text or ""
+            planning_context_text = str(
+                data.planning_context_text
+                or (project.settings or {}).get("planning_context_text")
+                or ""
+            ).strip()
+            if not planning_context_text:
+                planning_context_text = await _get_or_build_planning_context_text(db, project, current_user.id)
+            additional_requirements = str(data.idea_prompt or "").strip()
 
-            if idea_prompt:
+            if planning_context_text:
                 # 构建生成大纲的提示（JSON格式，便于直接创建页面）
                 style_prompt = _get_project_style_prompt(project)
                 theme_hint = f"\nStyle: {style_prompt}" if style_prompt else ""
 
-                # 从 idea_prompt 中提取页数约束（如"8页"、"10页以内"）
+                # 从 Planning Context 与补充要求中提取页数约束（如"8页"、"10页以内"）
                 import re
-                page_match = re.search(r'页数[：:]\s*([0-9]+页(?:以内)?)', idea_prompt)
+                page_match = re.search(
+                    r'页数[：:]\s*([0-9]+页(?:以内)?)',
+                    f"{planning_context_text}\n{additional_requirements}",
+                )
                 page_hint = f"\n重要：必须生成恰好 {page_match.group(1)}，不要多也不要少。" if page_match else ""
 
                 prompt = f"""You are a helpful assistant that generates an outline for a PPT.
 
-User request:
-{idea_prompt}{theme_hint}{page_hint}
+Planning Context Summary:
+{planning_context_text}
+
+Additional user requirements:
+{additional_requirements or "None"}{theme_hint}{page_hint}
 
 Output the outline as a JSON array. Choose the format that best fits the content:
 
@@ -1022,6 +1108,7 @@ Constraints:
 - First page should be simple (title, subtitle, presenter only)
 - No page number in title
 - 必须恰好生成指定页数，不要多也不要少
+- Use the planning context as the primary source of page planning
 - 每页 points 最多3条，只保留最核心的要点
 - **points 必须是纯字符串数组**，每个元素都是一段简短的中文文本
 - **严禁**在 points 中返回对象、字典、JSON嵌套结构
@@ -1038,6 +1125,9 @@ Constraints:
                 outline_content = banana_svc._extract_description(response)
 
                 # 保存到项目
+                settings = dict(project.settings or {})
+                settings["planning_context_text"] = planning_context_text
+                project.settings = settings
                 project.outline_text = outline_content
                 await db.commit()
 
@@ -1167,6 +1257,7 @@ async def generate_descriptions(
 
     result = await db.execute(query)
     pages = result.scalars().all()
+    planning_context_text = await _get_or_build_planning_context_text(db, project, current_user.id)
 
     for page in pages:
         page.is_description_generating = True
@@ -1179,11 +1270,21 @@ async def generate_descriptions(
                 "title": page.title or "",
                 "points": _extract_page_points(page),
             }
+            materials_context, knowledge_context = await _build_page_generation_context(
+                db,
+                project,
+                current_user.id,
+                page_title=page_data["title"],
+                page_points=page_data["points"],
+            )
             description = await banana_svc.generate_description(
                 page_data,
                 theme=_get_project_style_prompt(project),
                 language=language,
                 extra_fields_config=extra_fields_config,
+                planning_context_text=planning_context_text,
+                materials_context=materials_context,
+                knowledge_context=knowledge_context,
             )
             _apply_generated_description(page, description, extra_fields_config)
         except Exception as e:
@@ -1231,6 +1332,7 @@ async def generate_descriptions_stream(
         result = await db.execute(query)
         pages = result.scalars().all()
         total = len(pages)
+        planning_context_text = await _get_or_build_planning_context_text(db, project, current_user.id)
 
         for page in pages:
             page.is_description_generating = True
@@ -1243,6 +1345,13 @@ async def generate_descriptions_stream(
                     "title": page.title or "",
                     "points": _extract_page_points(page)
                 }
+                materials_context, knowledge_context = await _build_page_generation_context(
+                    db,
+                    project,
+                    current_user.id,
+                    page_title=page_data["title"],
+                    page_points=page_data["points"],
+                )
 
                 description = await banana_svc.generate_description(
                     page_data,
@@ -1250,6 +1359,9 @@ async def generate_descriptions_stream(
                     language=language,
                     detail_level=detail_level,
                     extra_fields_config=extra_fields_config,
+                    planning_context_text=planning_context_text,
+                    materials_context=materials_context,
+                    knowledge_context=knowledge_context,
                 )
 
                 _apply_generated_description(page, description, extra_fields_config)
@@ -1592,14 +1704,22 @@ async def export_project(
             return StreamingResponse(
                 iter([content]),
                 media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                headers={"Content-Disposition": f"attachment; filename={project.title}.pptx"}
+                headers={
+                    "Content-Disposition": _build_attachment_content_disposition(
+                        f"{project.title}.pptx"
+                    )
+                }
             )
         elif format == "pdf":
             content = export_service.create_pdf_from_images(local_paths, aspect_ratio=aspect_ratio)
             return StreamingResponse(
                 iter([content]),
                 media_type="application/pdf",
-                headers={"Content-Disposition": f"attachment; filename={project.title}.pdf"}
+                headers={
+                    "Content-Disposition": _build_attachment_content_disposition(
+                        f"{project.title}.pdf"
+                    )
+                }
             )
         else:
             # images 导出走异步任务接口：POST /api/v1/ppt/projects/{id}/export/images
@@ -1887,7 +2007,7 @@ async def file_generation(
         raise HTTPException(status_code=400, detail="请上传文件或输入文本内容")
 
     # 校验文件类型
-    ALLOWED_FILE_EXTS = {"pdf", "doc", "docx"}
+    ALLOWED_FILE_EXTS = {"pdf", "doc", "docx", "mp4", "mov", "avi", "mkv", "flv"}
     file_ext = None
     if has_file:
         file_ext = _normalize_file_ext(file.filename, file.content_type)
@@ -1987,6 +2107,28 @@ async def file_generation(
 
 # ============= Reference Files =============
 
+@router.get("/projects/{project_id}/reference-files", response_model=list[PPTReferenceFileResponse])
+async def list_reference_files(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(PPTProject)
+        .where(PPTProject.id == project_id, PPTProject.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    result = await db.execute(
+        select(PPTReferenceFile)
+        .where(PPTReferenceFile.project_id == project_id, PPTReferenceFile.user_id == current_user.id)
+        .order_by(PPTReferenceFile.created_at.asc())
+    )
+    return result.scalars().all()
+
+
 @router.post("/projects/{project_id}/reference-files", response_model=PPTReferenceFileResponse)
 async def upload_reference_file(
     project_id: int,
@@ -2004,14 +2146,21 @@ async def upload_reference_file(
         raise HTTPException(status_code=404, detail="项目不存在")
 
     file_ext = _normalize_file_ext(file.filename, file.content_type)
+    content = await file.read()
+    oss_path, file_url = _store_reference_file_bytes(
+        content,
+        project_id,
+        file.filename or f"reference.{file_ext}",
+    )
 
     ref_file = PPTReferenceFile(
         project_id=project_id,
         user_id=current_user.id,
         filename=file.filename,
-        oss_path=f"ppt/{project_id}/reference/{uuid.uuid4()}/{file.filename}",
-        url=f"https://example.com/oss/{file.filename}",
+        oss_path=oss_path,
+        url=file_url,
         file_type=file_ext,
+        file_size=len(content),
         parse_status="pending"
     )
     db.add(ref_file)
@@ -2044,7 +2193,7 @@ async def parse_reference_file(
     task = PPTTask(
         project_id=project_id,
         task_id=task_id,
-        task_type="file_generation",
+        task_type="reference_parse",
         status="PENDING",
     )
     db.add(task)
@@ -2053,10 +2202,9 @@ async def parse_reference_file(
     ref_file.parse_error = None
     await db.commit()
 
-    dispatch_file_generation_task(
+    dispatch_reference_parse_task(
         project_id=project_id,
         file_id=file_id,
-        source_text=None,
         task_id_str=task_id,
     )
 
@@ -2115,6 +2263,25 @@ async def get_reference_file_preview(
     if not ref_file:
         raise HTTPException(status_code=404, detail="文件不存在")
     return {"url": ref_file.url, "filename": ref_file.filename}
+
+
+@router.post("/projects/{project_id}/planning-context/refresh", response_model=PlanningContextRefreshResponse)
+async def refresh_planning_context(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(PPTProject)
+        .where(PPTProject.id == project_id, PPTProject.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    from app.generators.ppt.planning_context_service import persist_planning_context
+
+    return await persist_planning_context(db, project, current_user.id)
 
 
 # ============= Sessions (Dialog) =============
@@ -2637,6 +2804,15 @@ async def delete_user_template(
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
+
+    cover_url = str(template.cover_url or "")
+    oss_key = _extract_oss_key(cover_url)
+    if oss_key and oss_key.startswith(f"ppt/templates/{current_user.id}/"):
+        try:
+            from app.generators.ppt.file_service import get_oss_service
+            get_oss_service().delete_file(oss_key)
+        except Exception as exc:
+            logger.warning("用户模板 OSS 文件删除失败: template_id=%s, oss_key=%s, error=%s", template_id, oss_key, exc)
 
     await db.delete(template)
     await db.commit()

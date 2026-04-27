@@ -14,10 +14,6 @@ from sqlalchemy.orm import Session
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.celery import celery_app
-from app.services.parsers.factory import ParserFactory
-from app.services.rag.vector_store import VectorStore
-from app.services.rag.text_splitter import split_documents, split_documents_semantic
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +80,9 @@ class KnowledgeAssetProcessor:
             dict: 处理结果
         """
         from app.models.knowledge_asset import KnowledgeAsset
+        from app.services.parsers.factory import ParserFactory
+        from app.services.rag.text_splitter import split_documents, split_documents_semantic
+        from app.services.rag.vector_store import VectorStore
 
         db = get_sync_db()
         try:

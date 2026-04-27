@@ -2,12 +2,12 @@
 阿里云百炼视觉理解服务
 用于分析图片内容，生成描述文本
 """
-import os
 import base64
 import logging
 from typing import Optional
 
 import httpx
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +23,9 @@ class VisionService:
     """
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
-        self.model = os.getenv("VISION_MODEL", "qwen-vl-plus")
+        settings = get_settings()
+        self.api_key = api_key or settings.DASHSCOPE_API_KEY
+        self.model = settings.VISION_MODEL or "qwen-vl-plus"
         self.base_url = DASHSCOPE_BASE_URL
 
         if not self.api_key:

@@ -70,8 +70,8 @@ function buildInitialAiMessage() {
 3. 教学目标：这节课最希望学生学会什么，或者带走什么？`
 }
 
-function syncIntentState(intentState, pushSummary = true) {
-  const normalized = pptStore.applyIntentPayload(intentState, resolveProjectTopic())
+function syncIntentState(intentState, pushSummary = true, fallbackRound = state.round) {
+  const normalized = pptStore.applyIntentPayload(intentState, resolveProjectTopic(), fallbackRound)
   state.confirmed = normalized.confirmed
   state.pending = normalized.pending
   state.scores = { ...normalized.scores }
@@ -165,9 +165,9 @@ function formatTime(value) {
   return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
-function applyIntentState(intentState, pushSummary = true) {
+function applyIntentState(intentState, pushSummary = true, fallbackRound = state.round) {
   if (!intentState || typeof intentState !== 'object') return
-  syncIntentState(intentState, pushSummary)
+  syncIntentState(intentState, pushSummary, fallbackRound)
   return
 
   if (Array.isArray(intentState.confirmed)) {
@@ -228,7 +228,7 @@ async function sendMessage() {
     state.round = Number.isFinite(response?.round) ? Number(response.round) : (state.round + 1)
 
     if (response?.intent_state || response?.intent) {
-      applyIntentState(response.intent_state || response.intent)
+      applyIntentState(response.intent_state || response.intent, true, response.round)
     }
 
     // 保存意图摘要
@@ -389,10 +389,12 @@ onMounted(async () => {
     if (!pptStore.isIntentConfirmed) {
       const allConfirmed = new Set()
       let latestIntentState = null
+      let latestIntentRound = state.round
 
       for (const session of sessions) {
         if (session.role === 'assistant' && session.metadata?.intent_state) {
           latestIntentState = session.metadata.intent_state
+          latestIntentRound = Number.isFinite(Number(session.round)) ? Number(session.round) : latestIntentRound
           const confirmed = latestIntentState.confirmed || []
           confirmed.forEach(item => {
             if (typeof item === 'string' && item.trim()) allConfirmed.add(item)
@@ -401,7 +403,7 @@ onMounted(async () => {
       }
 
       if (latestIntentState) {
-        applyIntentState(latestIntentState, false)
+        applyIntentState(latestIntentState, false, latestIntentRound)
         state.confirmed = [...allConfirmed]
       }
     }

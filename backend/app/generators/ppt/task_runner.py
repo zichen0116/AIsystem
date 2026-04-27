@@ -29,6 +29,11 @@ def main() -> int:
     renovation.add_argument("--task-id", required=True)
     renovation.add_argument("--file-id", type=int, required=True)
 
+    reference = subparsers.add_parser("reference_parse")
+    reference.add_argument("--project-id", type=int, required=True)
+    reference.add_argument("--task-id", required=True)
+    reference.add_argument("--file-id", type=int, required=True)
+
     args = parser.parse_args()
     _load_env()
 
@@ -50,6 +55,19 @@ def main() -> int:
         from app.generators.ppt.celery_tasks import renovation_parse_task
 
         renovation_parse_task.apply(
+            kwargs={
+                "project_id": args.project_id,
+                "file_id": args.file_id,
+                "task_id_str": args.task_id,
+            },
+            throw=False,
+        )
+        return 0
+
+    if args.task_type == "reference_parse":
+        from app.generators.ppt.celery_tasks import reference_parse_task
+
+        reference_parse_task.apply(
             kwargs={
                 "project_id": args.project_id,
                 "file_id": args.file_id,

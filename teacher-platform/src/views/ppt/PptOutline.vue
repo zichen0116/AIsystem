@@ -2,7 +2,8 @@
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue'
 import { usePptStore } from '@/stores/ppt'
 import { createPage, deletePage, updatePage, reorderPages, refineOutline } from '@/api/ppt'
-import { buildOutlinePromptFromIntent, intentSummaryToText } from '@/utils/pptIntent'
+import { intentSummaryToText } from '@/utils/pptIntent'
+import { mergeReferenceSummariesIntoPlanningContext } from '@/utils/pptPlanningContext'
 
 const pptStore = usePptStore()
 
@@ -17,8 +18,11 @@ const generateError = ref('')
 const refineSuccess = ref(false)
 const isPanelOpen = ref(true)
 const isInputDirty = ref(false)
-const saveTimer = ref(null)
 const outlinePages = ref([])
+const isRefreshingPlanningContext = ref(false)
+const planningContextPartial = ref(false)
+const pendingReferenceFiles = ref([])
+const planningContextNotice = ref('')
 
 // 文件生成 / 翻新 任务状态
 const isFileGenerationMode = computed(() => pptStore.creationType === 'file')
@@ -70,6 +74,7 @@ onMounted(async () => {
     // 文件生成/翻新模式下，页面数据由后端任务生成，不走意图流程
     if (isFileGenerationMode.value || isRenovationMode.value) {
       await pptStore.fetchPages(pptStore.projectId)
+      await pptStore.fetchReferenceFiles(pptStore.projectId).catch(() => {})
       syncOutlinePages()
       return
     }
@@ -79,20 +84,19 @@ onMounted(async () => {
       await pptStore.fetchIntent(pptStore.projectId)
     }
 
-    // 构建意图摘要用于左侧构想框
+    await pptStore.fetchReferenceFiles(pptStore.projectId).catch(() => {})
     const confirmedIntent = pptStore.intentSummary
-    if (confirmedIntent && Object.keys(confirmedIntent).length > 0) {
+    if (pptStore.planningContext) {
+      ideaPrompt.value = mergeReferenceSummariesIntoPlanningContext(
+        pptStore.planningContext,
+        pptStore.referenceFiles
+      )
+    } else if (confirmedIntent && Object.keys(confirmedIntent).length > 0) {
       ideaPrompt.value = intentSummaryToText(confirmedIntent)
     }
-
     await pptStore.fetchPages(pptStore.projectId)
     syncOutlinePages()
-
-    // 如果有已确认的意图摘要但还没有大纲，自动生成
-    if (confirmedIntent && Object.keys(confirmedIntent).length > 0 && outlinePages.value.length === 0) {
-      const prompt = buildOutlinePromptFromIntent(confirmedIntent)
-      await handleGenerateOutline(prompt)
-    }
+    await handleRefreshPlanningContext(false)
   }
 })
 
@@ -121,7 +125,7 @@ function syncOutlinePages() {
 const pageCount = computed(() => outlinePages.value.length)
 
 // 构建意图摘要用于左侧构想框展示
-function buildIntentDisplay(intent) {
+function _legacyBuildIntentDisplay(intent) {
   if (!intent || Object.keys(intent).length === 0) return ''
   const parts = []
   if (intent.topic) parts.push(`主题：${intent.topic}`)
@@ -136,7 +140,7 @@ function buildIntentDisplay(intent) {
 }
 
 // 构建生成大纲用的提示词
-function buildIntentPrompt(intent) {
+function _legacyBuildIntentPrompt(intent) {
   if (!intent || Object.keys(intent).length === 0) return ''
   const parts = []
   if (intent.topic) parts.push(`主题：${intent.topic}`)
@@ -150,7 +154,7 @@ function buildIntentPrompt(intent) {
   return parts.join('\n')
 }
 
-async function handleGenerateOutline(prompt) {
+async function _legacyHandleGenerateOutline(prompt) {
   generateError.value = ''
   // 追加 requirements 额外约束
   const extra = requirements.value.trim()
@@ -171,6 +175,76 @@ async function handleGenerateOutline(prompt) {
     }
   } catch (error) {
     console.error('生成大纲失败:', error)
+    generateError.value = error.message || '生成大纲失败，请重试'
+  } finally {
+    isGenerating.value = false
+  }
+}
+
+function handleIdeaInput() {
+  isInputDirty.value = true
+  pptStore.planningContextDirty = true
+}
+
+async function handleRefreshPlanningContext(forceOverwrite = true) {
+  if (!pptStore.projectId || isRefreshingPlanningContext.value) return
+
+  isRefreshingPlanningContext.value = true
+  planningContextNotice.value = ''
+  try {
+    await pptStore.fetchReferenceFiles(pptStore.projectId).catch(() => {})
+    const response = await pptStore.refreshPlanningContext(pptStore.projectId)
+    const planningContextText = mergeReferenceSummariesIntoPlanningContext(
+      response?.planning_context_text || '',
+      pptStore.referenceFiles
+    )
+    pptStore.planningContext = planningContextText
+    planningContextPartial.value = !!response?.partial
+    pendingReferenceFiles.value = response?.pending_reference_files || []
+    if (forceOverwrite || !isInputDirty.value) {
+      ideaPrompt.value = planningContextText
+      isInputDirty.value = false
+      pptStore.planningContextDirty = false
+    } else if (planningContextText) {
+      planningContextNotice.value = '有新的资料解析结果可用，点击“刷新构想”即可更新。'
+    }
+    if (response?.partial) {
+      planningContextNotice.value = '当前构想基于已完成解析内容生成，剩余资料完成后可再次刷新。'
+    }
+  } catch (error) {
+    console.error('refresh planning context failed:', error)
+    planningContextNotice.value = error?.message || '刷新构想失败，请稍后重试'
+  } finally {
+    isRefreshingPlanningContext.value = false
+  }
+}
+
+async function handleGenerateOutline() {
+  generateError.value = ''
+  const planningContextText = ideaPrompt.value.trim()
+  const extraRequirements = requirements.value.trim()
+
+  if (!planningContextText) {
+    generateError.value = '请先刷新或填写 PPT 构想，再生成大纲'
+    return
+  }
+
+  isGenerating.value = true
+  try {
+    await pptStore.generateOutlineStream(pptStore.projectId, {
+      ideaPrompt: extraRequirements,
+      planningContextText
+    })
+    pptStore.planningContext = planningContextText
+    pptStore.planningContextDirty = false
+    isInputDirty.value = false
+    await pptStore.fetchPages(pptStore.projectId)
+    syncOutlinePages()
+    if (outlinePages.value.length === 0) {
+      generateError.value = 'AI 未能生成大纲，请检查 PPT 构想后重试'
+    }
+  } catch (error) {
+    console.error('generate outline failed:', error)
     generateError.value = error.message || '生成大纲失败，请重试'
   } finally {
     isGenerating.value = false
@@ -503,15 +577,22 @@ async function saveCard(index) {
           </svg>
           添加页面
         </button>
+        <button class="action-btn secondary" :disabled="isRefreshingPlanningContext" @click="handleRefreshPlanningContext(true)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+            <polyline points="21 3 21 9 15 9"/>
+          </svg>
+          {{ isRefreshingPlanningContext ? '刷新中...' : '刷新构想' }}
+        </button>
         <button
           class="action-btn secondary"
           :disabled="isGenerating"
-          @click="handleGenerateOutline(topAiPrompt || buildOutlinePromptFromIntent(pptStore.intentSummary || {}) || ideaPrompt)"
+          @click="handleGenerateOutline()"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
           </svg>
-          {{ isGenerating ? '生成中...' : outlinePages.length === 0 ? '自动生成大纲' : '重新生成' }}
+          {{ isGenerating ? '生成中...' : outlinePages.length === 0 ? '生成大纲' : '重新生成' }}
         </button>
         <button class="action-btn secondary" :disabled="outlinePages.length === 0 || isGenerating" @click="exportOutline">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -573,6 +654,7 @@ async function saveCard(index) {
               <textarea
                 v-model="ideaPrompt"
                 class="input-textarea"
+                @input="handleIdeaInput"
                 placeholder="输入你的 PPT 构想...
 例如：
 - 主题：人工智能发展历程
@@ -580,6 +662,12 @@ async function saveCard(index) {
 - 页数：8-10页
 - 风格：科技感、简约专业"
               ></textarea>
+              <div v-if="planningContextNotice" class="planning-context-notice">
+                {{ planningContextNotice }}
+              </div>
+              <div v-if="planningContextPartial" class="planning-context-partial">
+                当前构想基于已完成解析的资料生成，生成大纲时会继续使用这些内容。
+              </div>
             </div>
           </div>
 
@@ -598,8 +686,12 @@ async function saveCard(index) {
                   </svg>
                 </div>
                 <div class="ref-file-info">
-                  <div class="ref-file-name">{{ file.name }}</div>
-                  <div class="ref-file-meta">{{ (file.size / 1024 / 1024).toFixed(2) }} MB</div>
+                  <div class="ref-file-name">{{ file.filename || file.name }}</div>
+                  <div class="ref-file-meta">
+                    {{ file.parse_status || 'pending' }}
+                    <span v-if="file.file_size"> · {{ (file.file_size / 1024 / 1024).toFixed(2) }} MB</span>
+                  </div>
+                  <div v-if="file.parse_error" class="ref-file-error">{{ file.parse_error }}</div>
                 </div>
               </div>
             </div>
@@ -1143,7 +1235,7 @@ async function saveCard(index) {
 
 .input-textarea {
   width: 100%;
-  min-height: 160px;
+  min-height: 300px;
   border: none;
   font-size: 14px;
   line-height: 1.6;
@@ -1155,6 +1247,25 @@ async function saveCard(index) {
 
 .input-textarea::placeholder {
   color: #94a3b8;
+}
+
+.planning-context-notice,
+.planning-context-partial {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.planning-context-notice {
+  background: #eef6ff;
+  color: #1d4ed8;
+}
+
+.planning-context-partial {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .ref-files-card {
@@ -1210,6 +1321,12 @@ async function saveCard(index) {
 .ref-file-meta {
   font-size: 11px;
   color: #94a3b8;
+}
+
+.ref-file-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #dc2626;
 }
 
 /* Right Panel */
