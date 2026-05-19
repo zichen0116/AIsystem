@@ -48,11 +48,8 @@ async def create_library(
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     """创建知识库。is_system/is_public 仅管理员可设置。"""
-    is_system = False
-    is_public = False
-    if current_user.is_admin:
-        is_system = data.is_system
-        is_public = data.is_public
+    is_system = current_user.is_admin
+    is_public = data.is_public if current_user.is_admin else False
 
     library = KnowledgeLibrary(
         owner_id=current_user.id,

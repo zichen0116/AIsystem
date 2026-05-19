@@ -621,6 +621,13 @@ function toggleAdminDigitalHumanVoice() {
   object-position: left center;
 }
 
+.brand-character {
+  width: 96px;
+  height: 32px;
+  display: block;
+  object-fit: contain;
+  object-position: left center;
+}
 .primary-nav {
   padding: 10px 6px;
   display: flex;

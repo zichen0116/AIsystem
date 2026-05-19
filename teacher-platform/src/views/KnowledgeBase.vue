@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
@@ -191,14 +191,14 @@ function createTagFromManager() {
 
 // ---- Add/Edit Modal ----
 const showAddModal = ref(false)
-const addForm = ref({ title: '', desc: '', tags: '' })
+const addForm = ref({ title: '', desc: '', tags: '', isPublic: false })
 const isEditMode = ref(false)
 const editingId = ref(null)
 
 function openAddModal() {
   isEditMode.value = false
   editingId.value = null
-  addForm.value = { title: '', desc: '', tags: '' }
+  addForm.value = { title: '', desc: '', tags: '', isPublic: false }
   showAddModal.value = true
 }
 
@@ -210,13 +210,14 @@ function openEditModal(resource, e) {
   addForm.value = {
     title: resource.title,
     desc: resource.desc || '',
-    tags: (resource.tags || []).join(', ')
+    tags: (resource.tags || []).join(', '),
+    isPublic: resource._raw?.is_public === true,
   }
   showAddModal.value = true
 }
 
 async function submitAdd() {
-  const { title, desc, tags } = addForm.value
+  const { title, desc, tags, isPublic } = addForm.value
   if (!title.trim()) return
   const parsedTags = tags ? tags.split(/[,，\s]+/).filter(Boolean) : []
 
@@ -226,12 +227,14 @@ async function submitAdd() {
         name: title.trim(),
         description: desc.trim() || null,
         tags: parsedTags,
+        isPublic: isAdmin.value ? isPublic : undefined,
       })
     } else {
       await store.createLibrary({
         name: title.trim(),
         description: desc.trim() || null,
         tags: parsedTags,
+        isPublic: isAdmin.value ? isPublic : undefined,
       })
     }
     showAddModal.value = false
@@ -395,7 +398,7 @@ function getIconLetter(title) {
               <input
                 v-model="tagSearchQuery"
                 type="text"
-                placeholder="搜索或者创建"
+                placeholder="搜索或创建标签"
                 @keydown.enter.prevent="createAndAddTag(resource)"
               />
               <button v-if="tagSearchQuery" class="clear-search" @click="tagSearchQuery = ''">
@@ -452,7 +455,7 @@ function getIconLetter(title) {
         </div>
 
         <!-- Bottom info -->
-        <div class="card-footer">
+        <!-- <div class="card-footer">
           <span class="card-stat">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
             {{ resource.fileCount || 0 }}
@@ -463,7 +466,7 @@ function getIconLetter(title) {
           </span>
           <span class="card-time-sep">·</span>
           <span class="card-time">{{ resource.time }}</span>
-        </div>
+        </div> -->
       </div>
 
       <!-- Empty state -->
@@ -477,14 +480,18 @@ function getIconLetter(title) {
     <Teleport to="body">
       <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
         <div class="modal-box">
-          <h3>{{ isEditMode ? '编辑知识库' : '添加知识库' }}</h3>
+          <h3>{{ isEditMode ? '编辑知识库' : '创建知识库' }}</h3>
           <div class="modal-form">
-            <label for="kb-title">标题</label>
-            <input id="kb-title" v-model="addForm.title" type="text" placeholder="输入标题" />
+            <label for="kb-title">知识库名称</label>
+            <input id="kb-title" v-model="addForm.title" type="text" placeholder="请输入知识库名称" />
             <label for="kb-desc">描述</label>
             <input id="kb-desc" v-model="addForm.desc" type="text" placeholder="选填" />
-            <label for="kb-tags">标签（逗号分隔）</label>
-            <input id="kb-tags" v-model="addForm.tags" type="text" placeholder="数学, 课程" />
+            <label for="kb-tags">标签（多个标签用逗号分隔）</label>
+            <input id="kb-tags" v-model="addForm.tags" type="text" placeholder="教学设计, 语文" />
+            <label v-if="isAdmin" class="modal-checkbox">
+              <input v-model="addForm.isPublic" type="checkbox" />
+              <span>公开知识库</span>
+            </label>
           </div>
           <div class="modal-actions">
             <button class="btn-cancel" @click="showAddModal = false">取消</button>
@@ -1147,6 +1154,27 @@ function getIconLetter(title) {
   border-color: #2563EB;
 }
 
+.modal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.modal-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #2563EB;
+}
+
+.modal-checkbox span {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .file-input-hidden {
   position: absolute;
   width: 0;
@@ -1359,3 +1387,4 @@ function getIconLetter(title) {
   }
 }
 </style>
+

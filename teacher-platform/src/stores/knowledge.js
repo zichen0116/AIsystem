@@ -31,8 +31,10 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     }
   }
 
-  async function createLibrary({ name, description, tags }) {
-    const body = JSON.stringify({ name, description, tags: tags || [] })
+  async function createLibrary({ name, description, tags, isPublic }) {
+    const payload = { name, description, tags: tags || [] }
+    if (isPublic !== undefined) payload.is_public = isPublic
+    const body = JSON.stringify(payload)
     const data = await apiRequest('/api/v1/libraries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -41,11 +43,12 @@ export const useKnowledgeStore = defineStore('knowledge', () => {
     return data
   }
 
-  async function updateLibrary(id, { name, description, tags }) {
+  async function updateLibrary(id, { name, description, tags, isPublic }) {
     const payload = {}
     if (name !== undefined) payload.name = name
     if (description !== undefined) payload.description = description
     if (tags !== undefined) payload.tags = tags
+    if (isPublic !== undefined) payload.is_public = isPublic
     const body = JSON.stringify(payload)
     const data = await apiRequest(`/api/v1/libraries/${id}`, {
       method: 'PATCH',
