@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
 
     # ========== 阿里云 TTS 语音合成 ==========
-    TTS_MODEL: str = "qwen3-tts-flash"
+    TTS_MODEL: str = ""
     TTS_VOICE: str = "Cherry"
 
     # ========== 课堂预演图片生成 ==========
